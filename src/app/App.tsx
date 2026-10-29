@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
+import { Network } from "@capacitor/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
 import { bootstrap } from "../net/token";
 import { configureProxy, markRelay, readProxyConfig, refreshProxy } from "../net/server";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay, ensureRelay } from "../net/relay";
+import { withTimeout } from "../net/http";
 import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
 import { ChatScreen } from "../chat/ChatScreen";
 import { SessionList } from "./SessionList";
@@ -62,7 +64,7 @@ export function App() {
       // needless switch to LAN.
       if (known?.mode === "relay" && known.relayDevice) {
         try {
-          await ensureRelay(known.relayDevice);
+          await withTimeout(ensureRelay(known.relayDevice), 45_000, "relay did not open in time");
         } catch {
           // the probe below still runs; LAN is the other door
         }
@@ -85,7 +87,7 @@ export function App() {
           const device = known.relayDevice || loadRelayDevice();
           if (device) {
             try {
-              await ensureRelay(device);
+              await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
               configRef.current = await markRelay(device);
               saveRelayDevice(device);
               await connection.refresh();
@@ -103,7 +105,7 @@ export function App() {
         const device = known.relayDevice || loadRelayDevice();
         if (device) {
           try {
-            await ensureRelay(device);
+            await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
             configRef.current = await markRelay(device);
             saveRelayDevice(device);
             await connection.refresh();
@@ -223,20 +225,18 @@ export function App() {
     if (boot !== "ready" || !Capacitor.isNativePlatform()) return;
     let cancelled = false;
     let remove: (() => void) | undefined;
-    void import("@capacitor/network").then(({ Network }) =>
-      Network.addListener("networkStatusChange", (status) => {
-        if (!status.connected) return;
-        void recover();
-      }).then((handle) => {
-        if (cancelled) {
-          void handle.remove();
-          return;
-        }
-        remove = () => {
-          void handle.remove();
-        };
-      }),
-    );
+    void Network.addListener("networkStatusChange", (status) => {
+      if (!status.connected) return;
+      void recover();
+    }).then((handle) => {
+      if (cancelled) {
+        void handle.remove();
+        return;
+      }
+      remove = () => {
+        void handle.remove();
+      };
+    });
     return () => {
       cancelled = true;
       remove?.();
@@ -261,6 +261,13 @@ export function App() {
     let cancelled = false;
     let remove: (() => void) | undefined;
     void NativeApp.addListener("backButton", () => {
+      // A sheet is the topmost surface even though it is rendered beside the
+      // screen, not inside it. Without this, back exits the app while a sheet
+      // is visibly open.
+      if (sheet) {
+        setSheet(null);
+        return;
+      }
       if (showConnect) {
         setShowConnect(false);
         return;
@@ -283,7 +290,7 @@ export function App() {
       cancelled = true;
       remove?.();
     };
-  }, [openRuntime, showConnect]);
+  }, [openRuntime, sheet, showConnect]);
 
   useEffect(() => {
     if (!openRuntime || Capacitor.isNativePlatform()) return;
