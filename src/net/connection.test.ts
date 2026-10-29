@@ -53,4 +53,68 @@ describe("Connection", () => {
     await connection.refresh();
     expect(seen).toEqual(["unknown", "ok"]);
   });
+
+  it("does not let a slow refresh overwrite a newer one", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      ),
+    );
+    const connection = new Connection();
+    const older = connection.refresh();
+    const newer = connection.refresh();
+
+    const body = (id: string) =>
+      new Response(JSON.stringify([{ id, base: `/rt/${id}`, root: `/${id}`, name: id }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    resolvers[1]?.(body("newer"));
+    await newer;
+    resolvers[0]?.(body("older"));
+    await older;
+
+    expect(connection.current.runtimes.map((runtime) => runtime.id)).toEqual(["newer"]);
+  });
+
+  it("drops the previous pane's last event when the screen detaches", async () => {
+    class Source {
+      static latest: Source | null = null;
+      onopen: (() => void) | null = null;
+      onmessage: ((message: { data: string; lastEventId: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        Source.latest = this;
+      }
+      close() {}
+    }
+    vi.stubGlobal("EventSource", Source);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const connection = new Connection();
+    await connection.refresh();
+    connection.attach("r1");
+    Source.latest?.onmessage?.({
+      data: JSON.stringify({ kind: "text", text: "from A" }),
+      lastEventId: "1",
+    });
+    expect(connection.current.lastEvent).toEqual({ kind: "text", text: "from A" });
+
+    connection.detach();
+    expect(connection.current.lastEvent).toBeUndefined();
+  });
 });

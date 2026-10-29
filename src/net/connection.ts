@@ -41,6 +41,20 @@ export class Connection {
   };
   private stream: RuntimeStream | null = null;
   private activeRuntime: string | null = null;
+  private activeBase: string | null = null;
+  /** A slow refresh must not overwrite the answer of a newer one. */
+  private refreshSeq = 0;
+
+  /**
+   * `lastEvent` belongs to the pane that was attached when it arrived. A new
+   * attach must not fold the previous pane's last frame into this transcript.
+   */
+  private clearLastEvent(): void {
+    if (this.snapshot.lastEvent === undefined) return;
+    const { lastEvent: _previous, ...rest } = this.snapshot;
+    this.snapshot = rest;
+    for (const listener of this.listeners) listener(this.snapshot);
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -59,8 +73,11 @@ export class Connection {
 
   /** Refresh the runtime list. This is the reachability probe as well. */
   async refresh(): Promise<void> {
+    const seq = ++this.refreshSeq;
+    const stale = () => seq !== this.refreshSeq;
     try {
       const response = await fetch("/runtimes", { credentials: "same-origin" });
+      if (stale()) return;
       if (response.status === 401 || response.status === 403) {
         this.publish({ reach: { kind: "unauthorized" }, runtimes: [] });
         return;
@@ -70,8 +87,11 @@ export class Connection {
         return;
       }
       const runtimes = (await response.json()) as RuntimeView[];
+      if (stale()) return;
       this.publish({ reach: { kind: "ok" }, runtimes });
+      this.reattachIfBaseMoved();
     } catch (error) {
+      if (stale()) return;
       this.publish({
         reach: {
           kind: "unreachable",
@@ -79,6 +99,25 @@ export class Connection {
         },
       });
     }
+  }
+
+  /**
+   * A pane can move when the kernel is reached through another origin or the
+   * relay; keeping a stream on its old URL would silently stop delivering
+   * events while the list above it refreshed.
+   */
+  private reattachIfBaseMoved(): void {
+    const active = this.activeRuntime;
+    if (active === null) return;
+    const runtime = this.snapshot.runtimes.find((candidate) => candidate.id === active);
+    if (!runtime) {
+      this.stream?.stop();
+      this.stream = null;
+      this.activeBase = null;
+      this.publish({ stream: { kind: "closed", reason: "runtime went away" } });
+      return;
+    }
+    if (this.activeBase !== runtime.base) this.attach(active);
   }
 
   /**
@@ -90,12 +129,14 @@ export class Connection {
   attach(runtimeId: string): void {
     this.stream?.stop();
     this.stream = null;
+    this.clearLastEvent();
     this.activeRuntime = runtimeId;
     const runtime = this.snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
     if (!runtime) {
       this.publish({ stream: { kind: "closed", reason: "no such runtime" } });
       return;
     }
+    this.activeBase = runtime.base;
     const stream = new RuntimeStream(absolute(streamUrl(runtime.base)), {
       onEvent: (event) => this.publish({ lastEvent: event }),
       onState: (state) => this.publish({ stream: state }),
@@ -108,7 +149,9 @@ export class Connection {
   detach(): void {
     this.stream?.stop();
     this.stream = null;
+    this.clearLastEvent();
     this.activeRuntime = null;
+    this.activeBase = null;
   }
 
   get attachedRuntime(): string | null {

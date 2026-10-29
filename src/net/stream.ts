@@ -73,7 +73,16 @@ export class RuntimeStream {
     // reconnects. A connection we create fresh needs it on the query, which
     // the kernel reads through lastEventID.
     const url = this.lastEventId > 0 ? `${this.url}?lastEventId=${this.lastEventId}` : this.url;
-    const source = new EventSource(url, { withCredentials: true });
+    let source: EventSource;
+    try {
+      source = new EventSource(url, { withCredentials: true });
+    } catch {
+      // During a relay -> LAN switch the relay wrapper can be gone before the
+      // stream has reconnected. Retry through the transport installed by then
+      // instead of letting the constructor throw out of the timer.
+      this.scheduleRetry();
+      return;
+    }
     this.source = source;
 
     source.onopen = () => {

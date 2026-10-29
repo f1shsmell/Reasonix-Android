@@ -116,4 +116,21 @@ describe("RuntimeStream", () => {
 
     expect(states.at(-1)?.kind).toBe("closed");
   });
+
+  it("retries instead of throwing when the transport cannot construct a source", () => {
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        constructor() {
+          throw new Error("relay is not connected");
+        }
+      },
+    );
+    const { states, handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+
+    expect(states.at(-1)?.kind).toBe("retrying");
+    stream.stop();
+  });
 });
