@@ -1,21 +1,23 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Capacitor builds its plugin bridge by reflection, so R8 must keep the
+# annotated plugin classes and the methods JS calls by name.
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    @com.getcapacitor.PluginMethod public *;
+}
+-keep class com.getcapacitor.** { *; }
+-keep class com.capacitorjs.** { *; }
+-keep class com.reasonix.mobile.** { *; }
+-keep class org.json.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
-
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# OkHttp is used by the native relay socket; its consumer rules cover the rest.
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.apache.**
+# The barcode-scanner AAR references Gson annotations without bundling them.
+-dontwarn com.google.gson.annotations.**
+-dontwarn com.outsystems.**
+# Its scan parameters are reflected over by the plugin; keep them even if the
+# shrinker cannot see that use.
+-keep class com.outsystems.** { *; }

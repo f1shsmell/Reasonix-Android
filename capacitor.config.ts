@@ -8,9 +8,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * folder name later.
  *
  * The phone talks to a Reasonix kernel over plain HTTP on a LAN. The Android
- * project opts into cleartext for that reason; the WebView is served from
- * `https://localhost`, so a request to `http://<kernel>` is mixed content and
- * has to be allowed explicitly as well.
+ * project opts into cleartext for that reason. The WebView itself is served
+ * from the loopback proxy (`http://127.0.0.1:8788`), so the kernel is the
+ * same origin and no mixed-content exception is needed.
  */
 const config: CapacitorConfig = {
   appId: "com.reasonix.mobile",
@@ -24,7 +24,11 @@ const config: CapacitorConfig = {
     cleartext: true,
   },
   android: {
-    allowMixedContent: true,
+    // The WebView itself is http://127.0.0.1:8788 and the kernel is plain
+    // HTTP on a LAN, so a request from one to the other is not mixed content.
+    // Keeping this off stops an https page inside the WebView from pulling
+    // arbitrary http subresources.
+    allowMixedContent: false,
   },
 };
 
