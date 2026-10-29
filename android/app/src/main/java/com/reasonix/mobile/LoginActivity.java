@@ -59,7 +59,7 @@ public class LoginActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         String url = getIntent().getStringExtra("url");
-        if (url == null || url.isEmpty()) {
+        if (!Urls.isWebUrl(url)) {
             finish();
             return;
         }

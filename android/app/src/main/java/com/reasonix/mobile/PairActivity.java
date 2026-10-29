@@ -39,7 +39,7 @@ public class PairActivity extends Activity {
         super.onCreate(savedInstanceState);
         String url = getIntent().getStringExtra("url");
         origin = getIntent().getStringExtra("origin");
-        if (url == null || url.isEmpty() || origin == null || origin.isEmpty()) {
+        if (!Urls.isWebUrl(url) || !Urls.isWebUrl(origin)) {
             finish();
             return;
         }
