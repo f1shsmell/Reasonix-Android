@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "./Markdown";
 
 /**
@@ -63,5 +63,29 @@ describe("Markdown", () => {
     render('<img src=x onerror="alert(1)">\n\n<script>alert(2)</script>');
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("highlights fenced code and offers a copy action", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render("```js\nconst x = 1;\n```");
+
+    const code = container.querySelector("pre code");
+    expect(code?.className).toContain("hljs");
+    expect(code?.querySelector(".hljs-keyword")?.textContent).toBe("const");
+
+    const copy = container.querySelector(".code-block > .copy") as HTMLButtonElement | null;
+    expect(copy).toBeTruthy();
+    await act(async () => {
+      copy?.click();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith("const x = 1;");
+
+    delete (navigator as { clipboard?: unknown }).clipboard;
   });
 });

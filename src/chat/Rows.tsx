@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
 import { Markdown } from "./Markdown";
+import { CopyButton } from "./CopyButton";
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -104,6 +105,11 @@ export function AssistantBubble({ row }: { row: AssistantRow }) {
           ) : (
             <Markdown text={row.text} />
           )
+        ) : null}
+        {!row.streaming && row.text ? (
+          <div className="bubble-actions">
+            <CopyButton text={row.text} label="复制回答" />
+          </div>
         ) : null}
       </div>
     </div>
@@ -225,6 +231,9 @@ function AskQuestionBlock({
   onToggle: (label: string) => void;
 }) {
   const multi = question.multi === true;
+  // A newer kernel could omit options for a question type this build does not
+  // know. Drawing nothing is correct; crashing the whole transcript is not.
+  const options = Array.isArray(question.options) ? question.options : [];
   return (
     <div className="question">
       <div className="q">{question.header ?? question.prompt}</div>
@@ -235,23 +244,27 @@ function AskQuestionBlock({
         <div className="why">需要你补一个值，agent 自己找不到。</div>
       ) : null}
       {pending ? (
-        <div className="choices">
-          {question.options.map((option) => {
-            const active = chosen.includes(option.label);
-            return (
-              <button
-                key={option.label}
-                type="button"
-                className={active ? "chosen" : undefined}
-                aria-pressed={multi ? active : undefined}
-                onClick={() => onToggle(option.label)}
-              >
-                {option.label}
-                {option.description ? <small>{option.description}</small> : null}
-              </button>
-            );
-          })}
-        </div>
+        options.length === 0 ? (
+          <div className="why">这个问题没有可选项。</div>
+        ) : (
+          <div className="choices">
+            {options.map((option) => {
+              const active = chosen.includes(option.label);
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  className={active ? "chosen" : undefined}
+                  aria-pressed={multi ? active : undefined}
+                  onClick={() => onToggle(option.label)}
+                >
+                  {option.label}
+                  {option.description ? <small>{option.description}</small> : null}
+                </button>
+              );
+            })}
+          </div>
+        )
       ) : null}
     </div>
   );

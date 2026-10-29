@@ -549,6 +549,52 @@
   font-weight: 600;
 }
 
+/* Code blocks carry their own copy action and a fixed dark syntax palette:
+   the token colours come from one theme, so the background must match it in
+   both app themes. */
+.md pre {
+  background: #0d1117;
+  border-color: #242b36;
+  color: #c9d1d9;
+}
+.md pre code.hljs {
+  background: transparent;
+  color: inherit;
+}
+.code-block {
+  position: relative;
+}
+.code-block > .copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 9px;
+  font-size: 11px;
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+  opacity: 0.85;
+}
+.code-block > .copy:active {
+  opacity: 1;
+}
+.bubble-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.bubble-actions .copy {
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  opacity: 0.75;
+}
+
 .prompt .confirm:disabled {
   opacity: 0.5;
 }
