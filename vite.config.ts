@@ -58,5 +58,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // React 19's `act` refuses to work unless the environment says it is a
+    // test build. Without this every component test warns, and the batching
+    // that makes them deterministic quietly stops applying.
+    setupFiles: ["./src/test-setup.ts"],
   },
 });

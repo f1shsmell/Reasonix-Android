@@ -55,6 +55,12 @@ export interface AskRow {
   ask: WireAsk;
   /** Cleared once answered; the row stays as the record of what was asked. */
   pending: boolean;
+  /**
+   * What the person picked, by question id. Kept so a row answered on another
+   * device — which therefore never saw its own reply — still reads as answered
+   * rather than as a prompt nobody got to.
+   */
+  selected?: Record<string, string[]>;
 }
 
 export interface ApprovalRow {
@@ -62,6 +68,8 @@ export interface ApprovalRow {
   id: string;
   approval: WireApproval;
   pending: boolean;
+  /** How it was settled, once something said so. */
+  outcome?: string;
 }
 
 export type Row =
@@ -143,6 +151,83 @@ function closeStreaming(rows: Row[]): Row[] {
     if (row.kind === "tool" && row.running) return { ...row, running: false };
     return row;
   });
+}
+
+/**
+ * Close the prompt with this id, and only that one.
+ *
+ * Returns the array it was given when nothing matched, so a receipt for a
+ * prompt this transcript never drew costs no re-render.
+ */
+function closePrompt(rows: Row[], id: string, outcome: string): Row[] {
+  let changed = false;
+  const next = rows.map((row) => {
+    if (row.kind === "ask" && row.pending && row.id === id) {
+      changed = true;
+      return { ...row, pending: false };
+    }
+    if (row.kind === "approval" && row.pending && row.id === id) {
+      changed = true;
+      return { ...row, pending: false, outcome };
+    }
+    return row;
+  });
+  return changed ? next : rows;
+}
+
+/**
+ * Close every prompt still waiting.
+ *
+ * A turn that ended cannot be waiting on a question: the ask broker settles
+ * anything it was blocked on when the turn goes away. So a prompt left pending
+ * past `turn_done` is one whose receipt was lost, and leaving it pending would
+ * show a question that can never be answered.
+ */
+function closePending(rows: Row[]): Row[] {
+  let changed = false;
+  const next = rows.map((row) => {
+    if (row.kind === "ask" && row.pending) {
+      changed = true;
+      return { ...row, pending: false };
+    }
+    if (row.kind === "approval" && row.pending) {
+      changed = true;
+      return { ...row, pending: false, outcome: "turn_ended" };
+    }
+    return row;
+  });
+  return changed ? next : rows;
+}
+
+/**
+ * Close an approval this screen settled itself.
+ *
+ * The kernel also sends a receipt for it, but that is a separate round trip
+ * through the stream: without this the card keeps its buttons until the
+ * receipt arrives, and a person who taps twice sends two answers.
+ */
+export function closeApproval(
+  transcript: Transcript,
+  approvalId: string,
+  outcome: string,
+): Transcript {
+  const rows = closePrompt(transcript.rows, approvalId, outcome);
+  return rows === transcript.rows ? transcript : { ...transcript, rows };
+}
+
+/** Record what was picked, so the row can say it after the fact. */
+export function markAnswered(
+  transcript: Transcript,
+  askId: string,
+  selected: Record<string, string[]>,
+): Transcript {
+  let changed = false;
+  const rows = transcript.rows.map((row) => {
+    if (row.kind !== "ask" || row.id !== askId) return row;
+    changed = true;
+    return { ...row, pending: false, selected: { ...row.selected, ...selected } };
+  });
+  return changed ? { ...transcript, rows } : transcript;
 }
 
 function toolRow(tool: WireTool, fallbackId: string, running: boolean): ToolRow {
@@ -288,27 +373,26 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       };
     }
 
-    case "notice": {
-      if (isOperatorNotice(event)) return transcript;
-      const text = typeof event.text === "string" ? event.text : "";
-      if (!text) return transcript;
-      const row: NoticeRow = {
-        kind: "notice",
-        id: nextId("notice"),
-        text,
-        level: typeof event.level === "string" ? event.level : "info",
-      };
-      if (typeof event.detail === "string" && event.detail) row.detail = event.detail;
-      return { ...transcript, rows: [...transcript.rows, row] };
-    }
-
     case "ask_request": {
       const ask = event.ask;
       if (!ask) return transcript;
+      // The kernel sends `questions`, never a single prompt. An ask with none
+      // is a shape this client does not know; drawing it would be a prompt
+      // with no buttons, so it is left to the contract rule and ignored.
+      if (!Array.isArray(ask.questions) || ask.questions.length === 0) return transcript;
       return {
         ...transcript,
         rows: [...transcript.rows, { kind: "ask", id: ask.id, ask, pending: true }],
       };
+    }
+
+    case "ask_engaged": {
+      // Someone else picked the question up. It is still unanswered, but it is
+      // no longer this screen's to answer, and drawing it as waiting on the
+      // person here would be a lie.
+      const id = typeof event.ask?.id === "string" ? event.ask.id : "";
+      if (!id) return transcript;
+      return { ...transcript, rows: closePrompt(transcript.rows, id, "engaged") };
     }
 
     case "approval_request": {
@@ -323,11 +407,38 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       };
     }
 
+    case "notice": {
+      // A decision receipt rides a notice and is the only frame that says a
+      // prompt was settled somewhere — including on another device, which is
+      // the normal case for a phone: the desktop asks, the phone answers, or
+      // the reverse. Without this a row stays pending forever.
+      const receipt = event.decisionReceipt as
+        | { id?: string; kind?: string; outcome?: string }
+        | undefined;
+      if (receipt && typeof receipt.id === "string" && receipt.id !== "") {
+        const settled = closePrompt(transcript.rows, receipt.id, receipt.outcome ?? "settled");
+        if (settled !== transcript.rows) {
+          return { ...transcript, rows: settled };
+        }
+      }
+      if (isOperatorNotice(event)) return transcript;
+      const text = typeof event.text === "string" ? event.text : "";
+      if (!text) return transcript;
+      const row: NoticeRow = {
+        kind: "notice",
+        id: nextId("notice"),
+        text,
+        level: typeof event.level === "string" ? event.level : "info",
+      };
+      if (typeof event.detail === "string" && event.detail) row.detail = event.detail;
+      return { ...transcript, rows: [...transcript.rows, row] };
+    }
+
     case "turn_done": {
       const error = typeof event.err === "string" && event.err ? event.err : undefined;
       return {
         ...transcript,
-        rows: closeStreaming(transcript.rows),
+        rows: closePending(closeStreaming(transcript.rows)),
         running: false,
         ended: {
           cancelled: event.cancelled === true,

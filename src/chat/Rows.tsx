@@ -6,6 +6,8 @@
  * collapsed, and only the detail it exists to hide is inside.
  */
 
+import { useState } from "react";
+import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
 
 export function UserBubble({ row }: { row: UserRow }) {
@@ -83,33 +85,114 @@ export function NoticeCard({ row }: { row: NoticeRow }) {
 }
 
 export interface PromptHandlers {
-  onAnswer: (askId: string, labels: string[]) => void;
-  onApprove: (approvalId: string, allow: boolean, remember: boolean) => void;
+  /** Every question in one ask, answered together — the kernel settles them as one. */
+  onAnswer: (askId: string, selected: Record<string, string[]>) => void;
+  /**
+   * `session` grants the rest of this conversation, `persist` writes a rule
+   * that outlives it. They are separate because the kernel honours them
+   * separately, and a phone that conflated them would silently over-grant.
+   */
+  onApprove: (approvalId: string, allow: boolean, session: boolean, persist: boolean) => void;
+}
+
+/**
+ * One question, and the options it offers.
+ *
+ * Multi-select questions exist (`multi: true`), and a phone that rendered them
+ * as single-select would send one answer where the person picked two. So the
+ * selection is local state and is only sent when it is complete.
+ */
+function AskQuestionBlock({
+  question,
+  pending,
+  chosen,
+  onToggle,
+}: {
+  question: WireAskQuestion;
+  pending: boolean;
+  chosen: string[];
+  onToggle: (label: string) => void;
+}) {
+  const multi = question.multi === true;
+  return (
+    <div className="question">
+      <div className="q">{question.header ?? question.prompt}</div>
+      {question.header && question.header !== question.prompt ? (
+        <div className="why">{question.prompt}</div>
+      ) : null}
+      {question.reason === "missing_value" ? (
+        <div className="why">需要你补一个值，agent 自己找不到。</div>
+      ) : null}
+      {pending ? (
+        <div className="choices">
+          {question.options.map((option) => {
+            const active = chosen.includes(option.label);
+            return (
+              <button
+                key={option.label}
+                type="button"
+                className={active ? "chosen" : undefined}
+                aria-pressed={multi ? active : undefined}
+                onClick={() => onToggle(option.label)}
+              >
+                {option.label}
+                {option.description ? <small>{option.description}</small> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandlers }) {
+  // A form with several questions is answered once, so the selection for all
+  // of them is held here rather than inside one question block.
+  const [chosen, setChosen] = useState<Record<string, string[]>>({});
+  const questions = row.ask.questions;
+
+  const toggle = (question: WireAskQuestion, label: string) => {
+    setChosen((current) => {
+      const already = current[question.id] ?? [];
+      if (question.multi !== true) {
+        return { ...current, [question.id]: [label] };
+      }
+      const next = already.includes(label)
+        ? already.filter((entry) => entry !== label)
+        : [...already, label];
+      return { ...current, [question.id]: next };
+    });
+  };
+
+  const ready = questions.every((question) => (chosen[question.id] ?? []).length > 0);
+
   return (
     <div className="row prompt">
-      <div className="q">{row.ask.header ?? row.ask.prompt}</div>
-      {row.ask.header && row.ask.prompt !== row.ask.header ? (
-        <div className="why">{row.ask.prompt}</div>
-      ) : null}
-      {row.ask.reason ? <div className="why">{row.ask.reason}</div> : null}
+      {questions.map((question) => (
+        <AskQuestionBlock
+          key={question.id}
+          question={question}
+          pending={row.pending}
+          chosen={chosen[question.id] ?? question.default ?? []}
+          onToggle={(label) => toggle(question, label)}
+        />
+      ))}
       {row.pending ? (
-        <div className="choices">
-          {row.ask.options.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => handlers.onAnswer(row.ask.id, [option.label])}
-            >
-              {option.label}
-              {option.description ? <small>{option.description}</small> : null}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="confirm"
+          disabled={!ready}
+          onClick={() => handlers.onAnswer(row.ask.id, chosen)}
+        >
+          确认
+        </button>
       ) : (
-        <div className="answered">已回答</div>
+        <div className="answered">
+          {row.selected
+            ? `已回答：${Object.values(row.selected).flat().join("、")}`
+            : "已结束，不用再答"}
+        </div>
       )}
     </div>
   );
@@ -127,27 +210,37 @@ export function ApprovalCard({
     <div className="row prompt">
       <div className="q">{approval.subject}</div>
       {approval.reason ? <div className="why">{approval.reason}</div> : null}
-      {approval.reasonCode ? <div className="why"><code>{approval.reasonCode}</code></div> : null}
+      {approval.reasonCode ? (
+        <div className="why">
+          <code>{approval.reasonCode}</code>
+        </div>
+      ) : null}
       {row.pending ? (
         <div className="choices">
           <button
             type="button"
-            onClick={() => handlers.onApprove(approval.id, true, approval.allowsSession === true)}
+            onClick={() => handlers.onApprove(approval.id, true, false, false)}
           >
             允许一次
           </button>
           {approval.allowsSession ? (
-            <button type="button" onClick={() => handlers.onApprove(approval.id, true, true)}>
+            <button type="button" onClick={() => handlers.onApprove(approval.id, true, true, false)}>
               本会话都允许
               <small>{approval.tool}</small>
             </button>
           ) : null}
-          <button type="button" onClick={() => handlers.onApprove(approval.id, false, false)}>
+          {approval.allowsPersist ? (
+            <button type="button" onClick={() => handlers.onApprove(approval.id, true, true, true)}>
+              以后都允许
+              <small>写进规则，跨会话生效</small>
+            </button>
+          ) : null}
+          <button type="button" onClick={() => handlers.onApprove(approval.id, false, false, false)}>
             拒绝
           </button>
         </div>
       ) : (
-        <div className="answered">已处理</div>
+        <div className="answered">{row.outcome === "turn_ended" ? "这一轮已结束" : "已处理"}</div>
       )}
     </div>
   );

@@ -10,7 +10,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import type { SendState } from "../net/submit";
-import { emptyTranscript, reduce } from "./transcript";
+import { answer, approve } from "../net/prompts";
+import { closeApproval, emptyTranscript, markAnswered, reduce } from "./transcript";
 import type { Transcript } from "./transcript";
 import {
   ApprovalCard,
@@ -29,7 +30,30 @@ export interface ChatScreenProps {
   onBack: () => void;
 }
 
-function useTranscript(snapshot: ConnectionSnapshot): Transcript {
+/**
+ * The transcript on screen: the stored conversation, then the live stream.
+ *
+ * Both are needed and neither stands alone. The kernel answers a first
+ * connection with initial notices only — it does not replay the session — so
+ * without the history read a session that has been running for days opens
+ * empty. And the history read is a snapshot taken at one instant, so anything
+ * that happens after it arrives as events.
+ *
+ * History is folded in as a prefix rather than replacing what is there: a frame
+ * that landed while the read was in flight must not be thrown away, and it must
+ * not end up above the messages it follows.
+ */
+/**
+ * The transcript on screen, folded from the live stream.
+ *
+ * `setTranscript` is handed back because the prompt handlers close a row the
+ * moment the kernel confirms it: waiting for the receipt instead would leave
+ * the buttons live long enough for a second tap to answer twice.
+ */
+function useTranscript(snapshot: ConnectionSnapshot): {
+  transcript: Transcript;
+  setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
+} {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
   const lastEvent = snapshot.lastEvent;
 
@@ -38,14 +62,14 @@ function useTranscript(snapshot: ConnectionSnapshot): Transcript {
     setTranscript((current) => reduce(current, lastEvent));
   }, [lastEvent]);
 
-  return transcript;
+  return { transcript, setTranscript };
 }
-
 export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  const transcript = useTranscript(snapshot);
+  const { transcript, setTranscript } = useTranscript(snapshot);
   const [draft, setDraft] = useState("");
   const [send, setSend] = useState<SendState>({ kind: "idle" });
+  const [promptError, setPromptError] = useState("");
   const [atBottom, setAtBottom] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -126,26 +150,37 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
 
   const handlers = useMemo<PromptHandlers>(
     () => ({
-      onAnswer: (askId, labels) => {
+      onAnswer: (askId, selected) => {
         if (!runtime) return;
-        void fetch(`${runtime.base}/answer`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({ id: askId, answers: labels }),
+        const answers = Object.entries(selected).map(([questionId, labels]) => ({
+          QuestionID: questionId,
+          Selected: labels,
+        }));
+        // The row is marked answered only once the kernel says so. Optimism
+        // here would show a question as settled when the POST was refused —
+        // and the kernel's refusal is exactly what the person needs to see.
+        void answer(runtime.base, askId, answers).then((result) => {
+          if (!result.ok) {
+            setPromptError(`没答上：${result.code ?? "unknown"}`);
+            return;
+          }
+          setPromptError("");
+          setTranscript((current) => markAnswered(current, askId, selected));
         });
       },
-      onApprove: (approvalId, allow, remember) => {
+      onApprove: (approvalId, allow, session, persist) => {
         if (!runtime) return;
-        void fetch(`${runtime.base}/approve`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({ id: approvalId, allow, remember }),
+        void approve(runtime.base, approvalId, allow, session, persist).then((result) => {
+          if (!result.ok) {
+            setPromptError(`没处理成：${result.code ?? "unknown"}`);
+            return;
+          }
+          setPromptError("");
+          setTranscript((current) => closeApproval(current, approvalId, allow ? "allowed" : "denied"));
         });
       },
     }),
-    [runtime],
+    [runtime, setTranscript],
   );
 
   if (!runtime) {
@@ -223,6 +258,15 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
           </div>
         ) : null}
       </div>
+
+      {promptError ? (
+        <div className="sendfail">
+          <span>{promptError}</span>
+          <button type="button" onClick={() => setPromptError("")}>
+            知道了
+          </button>
+        </div>
+      ) : null}
 
       {send.kind === "failed" ? (
         <div className="sendfail">

@@ -72,15 +72,54 @@ export interface WireAskOption {
   description?: string;
 }
 
-export interface WireAsk {
+/**
+ * One question inside an ask. The kernel's `eventwire.Ask` carries a list of
+ * these, not one prompt: a form with three questions arrives as a single event
+ * with three entries, and every answer names the question it settles.
+ */
+export interface WireAskQuestion {
   id: string;
   header?: string;
   prompt: string;
+  /** Why only the person can answer: `user_decision` | `missing_value`. */
   reason?: string;
   options: WireAskOption[];
   multi?: boolean;
+  /** A prefilled answer, for a form sent back to be corrected. */
   default?: string[];
   callId?: string;
+}
+
+/**
+ * An `ask_request` payload, as `eventwire.Ask` writes it.
+ *
+ * This was modelled flat once — one prompt carrying its own options — which
+ * the kernel never sends. A flat model draws a question with no options and
+ * answers with the wrong body; both were live bugs, found by asking a real
+ * kernel rather than by reading the struct.
+ */
+export interface WireAsk {
+  id: string;
+  questions: WireAskQuestion[];
+  origin?: {
+    kind?: string;
+    source?: string;
+    message?: string;
+    note?: string;
+    url?: string;
+  };
+  skipInMs?: number;
+}
+
+/**
+ * One answer to one question. The Go type carries no json tags, so the wire
+ * keys are the Go field names. Verified against a real kernel: a bare string
+ * list is refused with `request.missing_field`, this shape is accepted.
+ */
+export interface WireAskAnswer {
+  QuestionID: string;
+  Selected: string[];
+  Value?: Record<string, unknown>;
 }
 
 export interface WireApproval {

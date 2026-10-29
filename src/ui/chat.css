@@ -288,6 +288,29 @@
   color: var(--fg-dim);
 }
 
+/* A form with several questions is one prompt, so the questions are spaced
+   apart and the confirm button sits under all of them. */
+.prompt .question + .question {
+  margin-top: 12px;
+}
+
+/* A chosen option has to look chosen: multi-select sends what is highlighted,
+   and a phone gives no hover to confirm a tap landed. */
+.prompt .choices button.chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.prompt .confirm {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+
+.prompt .confirm:disabled {
+  opacity: 0.5;
+}
+
 /* ---- composer ---- */
 
 .composer {

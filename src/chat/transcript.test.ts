@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { emptyTranscript, reduce, reduceAll, resetIds } from "./transcript";
+import { emptyTranscript, markAnswered, reduce, reduceAll, resetIds } from "./transcript";
 import type { Transcript } from "./transcript";
 import type { EventPayload } from "../wire/events";
 
@@ -156,20 +156,109 @@ describe("transcript", () => {
   });
 
   it("carries a pending question until something answers it", () => {
+    // The kernel's shape: an ask holds questions, and each question holds its
+    // own options. The flat shape this used to assert was never sent.
     const result = feed([
       {
         kind: "ask_request",
-        ask: { id: "a1", prompt: "which file?", options: [{ label: "a" }, { label: "b" }] },
+        ask: {
+          id: "a1",
+          questions: [
+            { id: "q1", prompt: "which file?", options: [{ label: "a" }, { label: "b" }] },
+          ],
+        },
       },
     ]);
     const row = result.rows[0];
-    expect(row?.kind === "ask");
+    expect(row?.kind).toBe("ask");
     if (row?.kind === "ask") {
       expect(row.pending).toBe(true);
-      expect(row.ask.options).toHaveLength(2);
+      expect(row.ask.questions[0]?.options).toHaveLength(2);
     }
   });
 
+  it("keeps every question of a multi-question ask", () => {
+    const result = feed([
+      {
+        kind: "ask_request",
+        ask: {
+          id: "a1",
+          questions: [
+            { id: "q1", prompt: "one?", options: [{ label: "a" }] },
+            { id: "q2", prompt: "two?", options: [{ label: "b" }], multi: true },
+          ],
+        },
+      },
+    ]);
+    const row = result.rows[0];
+    if (row?.kind === "ask") {
+      expect(row.ask.questions.map((q) => q.id)).toEqual(["q1", "q2"]);
+      expect(row.ask.questions[1]?.multi).toBe(true);
+    }
+  });
+
+  it("ignores an ask that carries no questions", () => {
+    // A prompt with no buttons is not a prompt. Drawing it would leave the
+    // person with a question they cannot answer.
+    const start = feed([{ kind: "text", text: "a" }]);
+    const after = reduce(start, { kind: "ask_request", ask: { id: "a1", questions: [] } });
+    expect(after).toBe(start);
+  });
+
+  it("closes a question a decision receipt says was settled elsewhere", () => {
+    // The normal phone case: the desktop asked, the phone is looking at it, and
+    // someone answers on the desktop. Without the receipt this row waits forever.
+    const result = feed([
+      {
+        kind: "ask_request",
+        ask: { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] },
+      },
+      { kind: "notice", decisionReceipt: { id: "a1", kind: "ask", outcome: "answered" } },
+    ]);
+
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row?.kind === "ask" && row.pending).toBe(false);
+  });
+
+  it("leaves a receipt for another prompt alone", () => {
+    const result = feed([
+      {
+        kind: "ask_request",
+        ask: { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] },
+      },
+      { kind: "notice", decisionReceipt: { id: "other", kind: "ask", outcome: "answered" } },
+    ]);
+    const row = result.rows[0];
+    expect(row?.kind === "ask" && row.pending).toBe(true);
+  });
+
+  it("does not let a question outlive the turn that asked it", () => {
+    // A lost receipt would otherwise leave a prompt that can never be answered.
+    const result = feed([
+      { kind: "turn_started", text: "q" },
+      {
+        kind: "ask_request",
+        ask: { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] },
+      },
+      { kind: "turn_done" },
+    ]);
+    const row = result.rows.find((candidate) => candidate.kind === "ask");
+    expect(row?.kind === "ask" && row.pending).toBe(false);
+  });
+
+  it("records what was picked so the row can say it afterwards", () => {
+    const asked = feed([
+      {
+        kind: "ask_request",
+        ask: { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] },
+      },
+    ]);
+    const after = markAnswered(asked, "a1", { q1: ["茶"] });
+    const row = after.rows[0];
+    expect(row?.kind === "ask" && row.pending).toBe(false);
+    expect(row?.kind === "ask" && row.selected?.q1).toEqual(["茶"]);
+  });
   it("records a turn that failed rather than looking finished", () => {
     const result = feed([
       { kind: "turn_started", text: "q" },
