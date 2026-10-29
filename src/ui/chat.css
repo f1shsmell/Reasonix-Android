@@ -1,0 +1,381 @@
+/* The transcript: one column, thumb reach, and room for the software keyboard. */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: env(safe-area-inset-top);
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+  /* Above the transcript so a long answer scrolls under it, not over it. */
+  position: relative;
+  z-index: 2;
+}
+
+.chat-head .title {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-head .title strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-head .title span {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconbtn {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* The keyboard resizes the viewport; this keeps the newest row visible
+     instead of letting the scroll position drift upward. */
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: 12px;
+}
+
+/* ---- rows ---- */
+
+.row {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+/* A person's own words sit right, and never span the full width: the ragged
+   edge is what tells the two speakers apart without a label. */
+.row.user {
+  align-items: flex-end;
+}
+
+.bubble {
+  padding: 10px 12px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.row.user .bubble {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 6px;
+  max-width: 86%;
+}
+
+.row.assistant .bubble {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 6px;
+  max-width: 96%;
+  white-space: normal;
+}
+
+.bubble .md > :first-child { margin-top: 0; }
+.bubble .md > :last-child { margin-bottom: 0; }
+
+/* A caret that exists only while text is still arriving. */
+.streaming .bubble::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
+}
+
+.reasoning {
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.reasoning summary {
+  cursor: pointer;
+  padding: 4px 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reasoning .body {
+  white-space: pre-wrap;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ---- tool calls ---- */
+
+.tool {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.tool > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  min-height: var(--tap);
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool > summary::-webkit-details-marker { display: none; }
+
+.tool .name {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool .status {
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.tool .status.running { color: var(--warn); border-color: var(--warn); }
+.tool .status.failed { color: var(--bad); border-color: var(--bad); }
+.tool .status.done { color: var(--ok); border-color: var(--ok); }
+
+.tool pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 46vh;
+  overflow: auto;
+  color: var(--fg-dim);
+}
+
+.tool pre.out { color: var(--fg); }
+
+/* A refusal is an identity, not a sentence, so the code leads and the words
+   follow. */
+.tool .refusal {
+  padding: 8px 12px;
+  border-top: 1px solid var(--bad);
+  color: var(--bad);
+  font-size: 13px;
+}
+
+.tool .refusal code {
+  display: block;
+  font-size: 11px;
+  opacity: 0.8;
+  margin-bottom: 2px;
+}
+
+/* ---- notices ---- */
+
+.notice {
+  font-size: 13px;
+  color: var(--fg-dim);
+  padding: 8px 12px;
+  border-left: 2px solid var(--line);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
+}
+
+.notice.warn { border-left-color: var(--warn); }
+.notice.error { border-left-color: var(--bad); color: var(--bad); }
+
+.notice details { margin-top: 4px; }
+.notice summary { cursor: pointer; min-height: 28px; display: flex; align-items: center; }
+
+/* ---- prompts ---- */
+
+.prompt {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prompt .q {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.prompt .why {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.prompt .choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt .choices button {
+  text-align: left;
+  padding: 10px 12px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.prompt .choices button small {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+.prompt .answered {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+/* ---- composer ---- */
+
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--bg-raised);
+  padding: 8px 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: var(--tap);
+  /* Grows with content up to a third of the screen, then scrolls: a composer
+     that eats the transcript is worse than one that scrolls. */
+  max-height: 33vh;
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+}
+
+.composer textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.composer .send {
+  flex: none;
+  width: var(--tap);
+  min-width: var(--tap);
+  padding: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-size: 16px;
+}
+
+.composer .send:disabled {
+  opacity: 0.4;
+}
+
+.composer .stop {
+  background: var(--bg);
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.sendfail {
+  font-size: 13px;
+  color: var(--bad);
+  padding: 0 12px 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sendfail button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+/* ---- states ---- */
+
+.centered {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.centered strong {
+  color: var(--fg);
+  display: block;
+  margin-bottom: 6px;
+  font-size: 16px;
+}

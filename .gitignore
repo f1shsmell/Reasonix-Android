@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+.vite/
+
+# Capacitor's generated Android project is a build product: `npx cap sync` is
+# what produces it, and a checked-in copy drifts from capacitor.config.json.
+android/
+ios/
+
+# Incremental build output from `tsc -b`: a cache, not a source file.
+*.tsbuildinfo
