@@ -11,8 +11,20 @@ screens.
 
 ## Status
 
-Milestone 1 of 5: the connection layer. It authenticates, lists runtimes, and
-subscribes to a runtime's event stream with resume. There is no chat UI yet.
+Milestones 1–4 are written: token bootstrap, runtime list, SSE with resume,
+the chat transcript, tool cards, todos, approval and question prompts, and
+cancel. The connection, chat, tool-card and prompt paths have been exercised
+in a browser against a real `reasonix serve`.
+
+The phone build has also run on a physical device: LAN pairing (through the
+Studio page in a hidden WebView), the session list, history, account sign-in
+and the cloud connection work there. Assistant answers now render Markdown
+(`react-markdown` + `remark-gfm`): headings, lists, tables, fenced code and
+links; raw HTML stays text, and streaming deltas remain plain until the answer
+finishes. Tool output flagged as a diff is split into lines with added,
+removed and hunk tones instead of one monospace block. The latest proxy fix —
+sending `Origin` on forwarded POSTs — is built but has not been re-tested on
+the phone yet.
 
 **Pick up here: [docs/HANDOFF.md](docs/HANDOFF.md).** It lists the environment
 traps, the decisions that will look wrong if you undo them, and what is *not*
@@ -20,6 +32,9 @@ verified.
 
 See [docs/PLAN.md](docs/PLAN.md) for scope and milestones, and
 [docs/PRIOR_ART.md](docs/PRIOR_ART.md) for the survey this design answers to.
+[docs/SELF_HOST.md](docs/SELF_HOST.md) records the decision to reach this
+Studio through a Cloudflare Tunnel instead of the account relay, and what it
+costs.
 
 ## Running it
 
@@ -48,7 +63,34 @@ only grows: fields and event kinds are added, never renamed or removed. The
 client ignores what it does not know, and nothing is inferred from wording — an
 error a caller must tell apart carries a code, not a sentence.
 
-## No Android SDK yet
+## Android shell
 
-`ANDROID_HOME` is unset on this machine and `adb` is absent, so milestones 1–4
-run in a browser. Packaging (milestone 5) needs the SDK installed first.
+Capacitor 8.6.0 (`capacitor.config.ts`). The `android/` project is checked in
+because it holds the loopback proxy that makes the kernel same-origin with the
+WebView, not only generated files. Build an APK with:
+
+```bash
+npm run build
+node ./node_modules/@capacitor/cli/bin/capacitor sync android
+cd android && ./gradlew assembleDebug
+```
+
+The debug APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`
+(36.97 MB, version 0.1.0). The WebView serves the bundle from `127.0.0.1:8788`
+and forwards kernel routes through `LoopbackProxy`; the first screen scans a
+Studio LAN QR code or takes an address. The loopback listener requires a
+per-install HttpOnly cookie that `MainActivity` installs before the WebView
+starts; a missing or foreign cookie gets `403 proxy.unauthorized`. Verified on
+an API 36 emulator (first screen, auth 403/200, session list, chat, SSE), and
+the operator has run the phone build on a physical device. The Internet relay
+channel is implemented in `src/net/relay.ts`: account grant through the in-app
+login cookie, X25519/HKDF/AES-GCM, request transport, polled events, and a
+native OkHttp WebSocket that sends the `Origin: https://reasonix.io` the relay
+requires. The operator reports a live cloud connection working; a formal
+end-to-end relay run is still not recorded.
+
+The launcher icon and splash are app-owned: adaptive icon
+(`drawable/ic_launcher_foreground.xml`, dark `#0F172A` background) and a
+layer-list launch background. A release build is unsigned unless
+`android/keystore.properties` exists; copy `keystore.properties.example` and
+fill it in before `./gradlew assembleRelease`.

@@ -215,3 +215,107 @@ One environment note: React 19 refuses to batch inside `act` unless
 jsdom's missing `Element.prototype.scrollTo`. Without the first, every
 component test warns and the batching that makes it deterministic stops
 applying — a green run would prove less than it looks like.
+
+### 3. Todos — done (the other half of milestone 3)
+
+The checklist is the kernel's, not the transcript's. `complete_step` advances
+it without writing a `todo_write`, and a refused `todo_write` stays in the
+conversation, so folding the transcript would show work the kernel never
+accepted or miss work it did. `src/net/todos.ts` therefore reads
+`GET /rt/{id}/todos`, and a `todo_progress` frame is only a notification: its
+three revisions decide whether a re-read is needed.
+
+Written: `src/wire/todos.ts` (the list and the progress payload),
+`src/net/todos.ts` (`loadTodos`, `todoRevision`), `src/chat/TodoPanel.tsx`
+(one collapsed line above the transcript, open for the checklist), and
+`useTodos` in `ChatScreen.tsx`. A newer read always wins — a response that
+arrives after the screen moved to another pane is dropped rather than drawn.
+A failed refresh keeps the last list and marks it stale; the next frame with
+the same clocks is allowed to try again, rather than waiting for a clock to
+move.
+
+Tests: 9 for the read layer and the revision rule, 6 for the panel, and 8 more
+in `ChatScreen.test.tsx` (first load, refresh, a frame whose clocks did not
+move, a failed read, a pane switch, a stale list after a failed refresh, two
+overlapping reads, and a retry on the next frame with the same clocks).
+Typecheck clean.
+
+Against a real `reasonix serve`: `POST /auth/token` → 204, `GET /runtimes` →
+the open pane, and `GET /rt/r1/todos` → 200 `application/json` with `[]` on a
+fresh pane. A **non-empty** list was not produced — that needs a keyed turn —
+so the refresh path is still tested against fixtures rather than a live
+advance.
+
+### 5. Packaging and the connection bridge — LAN loop closed
+
+Capacitor 8.6.0, `appId=com.reasonix.mobile`, minSdk 26 (the barcode-scanner
+library requires it), versionName 0.1.0. The Android project is checked in
+because it now holds native code, not only generated files.
+`./gradlew assembleDebug` produces a **36.97 MB** debug APK at
+`android/app/build/outputs/apk/debug/app-debug.apk`. The launcher icon and
+splash are app-owned (adaptive vector icon and a dark `launch_background`);
+`assembleRelease` produces an unsigned **32.16 MB** APK unless
+`android/keystore.properties` exists (see `keystore.properties.example`).
+
+The WebView loads `http://127.0.0.1:8788`, served by `LoopbackProxy`: it serves
+the bundle from the APK, forwards every other path to the configured kernel,
+keeps kernel cookies in a CookieManager, relays SSE with chunked encoding, and
+exposes `/__reasonix/*` for configuration, pairing, candidate retries and the
+account device flow. That is the piece that makes the kernel's cookie session
+and EventSource usable from a WebView without CORS.
+
+The Connect screen scans a QR code (`@capacitor/barcode-scanner`), accepts a
+`reasonix://` deep link (`@capacitor/app`), or takes a manual origin. A LAN
+code is `http://<ip>:<port>/#pair=<code>`; the proxy spends it with
+`POST /pair` and keeps the device cookie. The Internet code (`https://reasonix.io/remote/?device=<id>`) is recognised.
+`src/net/relay.ts` implements its controller protocol: account grant through
+the proxy, `wss://remote.reasonix.io/v1/sessions/connect` with the ticket
+subprotocol, X25519/HKDF/AES-GCM sealed `desktop.request` frames, and a polled
+`/events/replay` stream. The Connect screen lists signed-in devices and can
+start a cloud link.
+
+The phone's session/project action is one bottom sheet: `GET
+/rt/{id}/workspaces` supplies the current project and the host's remembered
+projects, and `POST /runtimes {root}` opens a fresh conversation. A paired
+device may only open roots the host already knows; there is no folder picker and
+no copy of desktop settings.
+
+Images use `POST /rt/{id}/attachments` with a JSON/base64 body because the
+installed kernel refused the raw `/attachments/upload` route with `415
+request.bad_content_type`; the returned `@ref` goes into the draft and the
+transcript fetches it through `/workspace/image`. The cap is 10 MB.
+
+Against a real kernel, `GET /rt/r1/workspaces` returned
+current/canSwitch/recents; `POST /runtimes {root}` opened `r2`; `POST
+/rt/r1/attachments` returned 200 with an `@ref`; and `GET
+/rt/r1/workspace/image?path=...` returned 200 `image/png`.
+
+Account sign-in uses the device flow, but the approval page is hosted by the
+app's own WebView (`LoginActivity`), because `/me/remote-grants` wants the
+account cookie and only an app-owned WebView shares its cookie store with the
+proxy. The proxy reads that cookie for the grant; the Bearer token from
+`/device/poll` is used for `/me/devices` only. Revoked devices are hidden, and
+a device without the `desktop` capability is disabled in the list.
+
+The same-Wi-Fi retry is real but limited: candidate origins are remembered and
+`/__reasonix/refresh` probes them after a network change. If the computer's IP
+changes, no candidate answers and a new scan is required — automatic discovery
+needs mDNS/UDP advertisement in the kernel.
+
+Verified on a Pixel 6 / API 36 emulator: the Connect screen renders; after
+configuring `http://127.0.0.1:8791` through `adb reverse`, the session list
+loads, a chat opens, and its stream indicator is green (SSE through the
+proxy). Screenshots: `docs/screenshots/{connect,sessions,chat}.png`.
+
+Not verified: the camera scanner (the emulator has no camera), the relay
+against a live account or online Studio, and an IP change beyond the candidate
+retry. The relay's request/event transport is unit-tested; the account grant
+and encrypted handshake have not met the real service.
+
+Build commands:
+
+```bash
+npm run build
+node ./node_modules/@capacitor/cli/bin/capacitor sync android
+cd android && ./gradlew assembleDebug
+```
