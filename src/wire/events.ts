@@ -8,6 +8,8 @@
  * schedules, so the contract only grows.
  */
 
+import type { WireTodoProgress } from "./todos";
+
 export type EventKind =
   | "turn_started"
   | "reasoning"
@@ -167,8 +169,11 @@ export interface EventPayload {
   source?: string;
   /** `turn_started` / `steer`: the person's own message for this turn. */
   attachments?: unknown[];
-  /** `todo_progress` and friends carry their payload under this key. */
-  todoProgress?: { items?: unknown[] };
+  /**
+   * `todo_progress`: counters and three revisions. It never carries the list —
+   * that is read from `GET /rt/{id}/todos`.
+   */
+  todoProgress?: WireTodoProgress;
   /** Transport frames carry the sequence they vouch for. */
   seq?: number;
   [field: string]: unknown;

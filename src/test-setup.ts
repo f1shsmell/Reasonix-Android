@@ -25,4 +25,15 @@ if (!Element.prototype.scrollTo) {
   Element.prototype.scrollTo = () => {};
 }
 
+/**
+ * jsdom has no object URLs. The composer creates one for an image preview and
+ * revokes it when the image leaves; production WebViews implement both.
+ */
+if (!URL.createObjectURL) {
+  URL.createObjectURL = () => "blob:test";
+}
+if (!URL.revokeObjectURL) {
+  URL.revokeObjectURL = () => {};
+}
+
 export {};

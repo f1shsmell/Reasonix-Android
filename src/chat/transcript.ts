@@ -39,6 +39,8 @@ export interface UserRow {
   kind: "user";
   id: string;
   text: string;
+  /** Drawn before the kernel's `turn_started` confirms the send. */
+  local?: boolean;
 }
 
 export interface NoticeRow {
@@ -102,6 +104,60 @@ function nextId(prefix: string): string {
 /** Reset the id counter. Tests only: ids must stay stable within a session. */
 export function resetIds(): void {
   counter = 0;
+}
+
+/**
+ * A row the phone draws while `POST /submit` is in flight.
+ *
+ * The stream eventually confirms the turn with `turn_started`, which normally
+ * carries the same text. That frame must mark this row confirmed rather than
+ * append a second copy: the person should see their words immediately, once.
+ */
+export function optimisticUser(text: string): UserRow {
+  return { kind: "user", id: nextId("local"), text, local: true };
+}
+
+/** Remove an unconfirmed row when its submit failed. Confirmed rows stay. */
+export function removeLocalUser(transcript: Transcript, id: string): Transcript {
+  const rows = transcript.rows.filter(
+    (row) => !(row.kind === "user" && row.local === true && row.id === id),
+  );
+  return rows.length === transcript.rows.length ? transcript : { ...transcript, rows };
+}
+
+/** The last local row with this text is the one this turn started. */
+function confirmLocalUser(rows: Row[], text: string): Row[] | null {
+  let at = -1;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row?.kind === "user" && row.local === true && row.text === text) {
+      at = index;
+      break;
+    }
+  }
+  if (at < 0) return null;
+  const next = rows.slice();
+  const row = rows[at];
+  if (row?.kind === "user") next[at] = { ...row, local: false };
+  return next;
+}
+
+/**
+ * A reasoning-only bubble is a step, not an answer: once its tool call starts,
+ * the tool card is the useful record. Keeping the thought bubble too makes a
+ * long agent turn read as a wall of empty "思考了" cards on a phone.
+ */
+function dropTrailingThought(rows: Row[]): Row[] {
+  let end = rows.length;
+  while (end > 0) {
+    const row = rows[end - 1];
+    if (row?.kind === "assistant" && row.text === "" && row.reasoning !== "") {
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  return end === rows.length ? rows : rows.slice(0, end);
 }
 
 /**
@@ -266,6 +322,8 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       };
       const text = typeof event.text === "string" ? event.text : "";
       if (!text) return next;
+      const confirmed = confirmLocalUser(rows, text);
+      if (confirmed) return { ...next, rows: confirmed };
       return { ...next, rows: [...rows, { kind: "user", id: nextId("user"), text }] };
     }
 
@@ -306,6 +364,9 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       // The finished answer, replacing whatever the deltas built up.
       const text = typeof event.text === "string" ? event.text : "";
       const reasoning = typeof event.reasoning === "string" ? event.reasoning : "";
+      // A tool-call-only step produces a `message` with nothing to say. Its
+      // tool rows carry the work; an empty bubble would be a blank strip.
+      if (!text && !reasoning) return transcript;
       const thoughtMs = typeof event.thoughtMs === "number" ? event.thoughtMs : undefined;
       const rows = appendOrExtend(
         transcript.rows,
@@ -334,7 +395,7 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       if (!tool) return transcript;
       return {
         ...transcript,
-        rows: [...transcript.rows, toolRow(tool, nextId("tool"), true)],
+        rows: [...dropTrailingThought(transcript.rows), toolRow(tool, nextId("tool"), true)],
       };
     }
 
@@ -369,7 +430,7 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       }
       return {
         ...transcript,
-        rows: [...transcript.rows, toolRow(tool, nextId("tool"), false)],
+        rows: [...dropTrailingThought(transcript.rows), toolRow(tool, nextId("tool"), false)],
       };
     }
 
@@ -436,9 +497,12 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
 
     case "turn_done": {
       const error = typeof event.err === "string" && event.err ? event.err : undefined;
+      const rows = closePending(closeStreaming(transcript.rows)).filter(
+        (row) => !(row.kind === "assistant" && row.text === "" && row.reasoning === ""),
+      );
       return {
         ...transcript,
-        rows: closePending(closeStreaming(transcript.rows)),
+        rows,
         running: false,
         ended: {
           cancelled: event.cancelled === true,

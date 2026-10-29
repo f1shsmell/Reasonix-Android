@@ -2,8 +2,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApprovalCard, AskCard } from "./Rows";
-import type { ApprovalRow, AskRow } from "./transcript";
+import { ApprovalCard, AskCard, AssistantBubble, ToolCard, UserBubble } from "./Rows";
+import type { ApprovalRow, AskRow, ToolRow } from "./transcript";
 
 /**
  * The prompt cards are the only place a phone can act on the kernel, and they
@@ -23,6 +23,8 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   container.remove();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function render(node: React.ReactElement): void {
@@ -73,6 +75,20 @@ describe("AskCard", () => {
   it("will not send before a question has an answer", () => {
     render(<AskCard row={askRow()} handlers={noop} />);
     expect(byText("确认").disabled).toBe(true);
+  });
+
+  it("counts a prefilled answer as ready and submits it", () => {
+    const onAnswer = vi.fn();
+    const row = askRow();
+    const question = row.ask.questions[0];
+    if (!question) throw new Error("test question missing");
+    question.default = ["茶"];
+
+    render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
+    expect(byText("确认").disabled).toBe(false);
+    act(() => byText("确认").click());
+
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["茶"] });
   });
 
   it("sends the picked label under its question id", () => {
@@ -206,5 +222,94 @@ describe("ApprovalCard", () => {
     render(<ApprovalCard row={approvalRow({ pending: false, outcome: "turn_ended" })} handlers={noop} />);
     expect(container.textContent).toContain("这一轮已结束");
     expect(buttons()).toHaveLength(0);
+  });
+});
+
+function toolRow(overrides: Partial<ToolRow> = {}): ToolRow {
+  return {
+    kind: "tool",
+    id: "tool-1",
+    name: "edit_file",
+    outputDiff: true,
+    readOnly: false,
+    running: false,
+    ...overrides,
+  };
+}
+
+describe("ToolCard", () => {
+  it("marks added, removed and hunk lines in a diff", () => {
+    render(
+      <ToolCard
+        row={toolRow({
+          output: "--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new\n context",
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll(".line.add")).toHaveLength(1);
+    expect(container.querySelectorAll(".line.del")).toHaveLength(1);
+    expect(container.querySelectorAll(".line.hunk")).toHaveLength(1);
+    expect(container.querySelectorAll(".line.meta")).toHaveLength(2);
+    expect(container.querySelector(".line.add")?.textContent?.trim()).toBe("+new");
+    expect(container.querySelector(".line.del")?.textContent?.trim()).toBe("-old");
+  });
+
+  it("leaves a non-diff output as one block", () => {
+    render(<ToolCard row={toolRow({ output: "plain\noutput", outputDiff: false })} />);
+
+    expect(container.querySelector("pre.out.diff")).toBeNull();
+    expect(container.querySelector("pre.out")?.textContent).toBe("plain\noutput");
+  });
+
+  it("keeps the tool summary in a normal details box, not a flex row", () => {
+    // `details` is display:flex'd by `.row`; Android WebView then collapses a
+    // closed card to its border, which is the one-pixel strip seen on a phone.
+    render(<ToolCard row={toolRow({ name: "bash", output: "ok" })} />);
+
+    const details = container.querySelector("details.tool");
+    expect(details).toBeTruthy();
+    expect(details?.parentElement?.classList.contains("row")).toBe(true);
+    expect(details?.classList.contains("row")).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toContain("bash");
+  });
+
+  it("draws nothing for an assistant row with neither answer nor reasoning", () => {
+    render(
+      <AssistantBubble
+        row={{ kind: "assistant", id: "a1", text: "", reasoning: "", streaming: false }}
+      />,
+    );
+
+    expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("UserBubble", () => {
+  it("renders an uploaded image and hides its @reference", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["png"], { type: "image/png" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:message");
+
+    render(
+      <UserBubble
+        row={{ kind: "user", id: "u1", text: "看看\n@.reasonix/attachments/photo.png" }}
+        base="/rt/r1"
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("看看");
+    expect(container.textContent).not.toContain("@.reasonix");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:message");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/rt/r1/workspace/image?path="),
+      expect.anything(),
+    );
   });
 });

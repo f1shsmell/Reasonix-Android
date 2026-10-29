@@ -79,7 +79,12 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
     if (message.role === "assistant") {
       const text = clean(message.content);
       const reasoning = clean(message.reasoning ?? "");
-      if (text || reasoning) {
+      const toolCalls = message.toolCalls ?? [];
+      // A tool step's reasoning is useful while it runs, but in a stored
+      // conversation the tool card is the record. Drawing a bubble per step
+      // gives the phone a wall of empty "思考了" cards; only a thought that
+      // never went on to call a tool stands on its own.
+      if ((text || reasoning) && (text !== "" || toolCalls.length === 0)) {
         rows.push({
           kind: "assistant",
           id: historyId(index, 0),
@@ -91,7 +96,7 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
           streaming: false,
         });
       }
-      for (const [ordinal, call] of (message.toolCalls ?? []).entries()) {
+      for (const [ordinal, call] of toolCalls.entries()) {
         const id = historyId(index, ordinal + 1);
         if (call.id) calls.set(call.id, rows.length);
         rows.push(toolRow(call, id));

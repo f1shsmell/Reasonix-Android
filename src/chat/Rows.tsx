@@ -6,20 +6,83 @@
  * collapsed, and only the detail it exists to hide is inside.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
+import { Markdown } from "./Markdown";
 
-export function UserBubble({ row }: { row: UserRow }) {
+const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
+
+function imageRefs(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(IMAGE_REF)) {
+    const path = match[1];
+    if (path && !found.includes(path)) found.push(path);
+  }
+  return found;
+}
+
+function withoutImageRefs(text: string): string {
+  return text
+    .replace(IMAGE_REF, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Fetch the stored image through the same transport as the rest of the app. */
+function MessageImage({ base, path }: { base: string; path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    const controller = new AbortController();
+    void fetch(`${base}/workspace/image?path=${encodeURIComponent(path)}`, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then((response) => (response.ok ? response.blob() : null))
+      .then((blob) => {
+        if (!active || !blob) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        // The text reference remains the fallback if the image cannot load.
+      });
+    return () => {
+      active = false;
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [base, path]);
+
+  return url ? <img className="message-image" src={url} alt="图片附件" loading="lazy" /> : null;
+}
+
+export function UserBubble({ row, base }: { row: UserRow; base?: string }) {
+  const refs = base ? imageRefs(row.text) : [];
+  const text = refs.length > 0 ? withoutImageRefs(row.text) : row.text;
   return (
     <div className="row user">
-      <div className="bubble">{row.text}</div>
+      <div className="bubble">
+        {text || null}
+        {base && refs.length > 0 ? (
+          <div className="message-images">
+            {refs.map((ref) => (
+              <MessageImage key={ref} base={base} path={ref} />
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
 
 export function AssistantBubble({ row }: { row: AssistantRow }) {
   const showReasoning = row.reasoning.trim().length > 0;
+  if (!showReasoning && !row.text) return null;
   return (
     <div className={`row assistant${row.streaming ? " streaming" : ""}`}>
       <div className="bubble">
@@ -33,7 +96,15 @@ export function AssistantBubble({ row }: { row: AssistantRow }) {
             <div className="body">{row.reasoning}</div>
           </details>
         ) : null}
-        {row.text ? <div className="md">{row.text}</div> : null}
+        {row.text ? (
+          row.streaming ? (
+            // Markdown is parsed once the answer is finished: re-parsing the
+            // whole growing text on every delta makes a long answer stutter.
+            <div className="md streaming-text">{row.text}</div>
+          ) : (
+            <Markdown text={row.text} />
+          )
+        ) : null}
       </div>
     </div>
   );
@@ -45,28 +116,68 @@ function toolStatus(row: ToolRow): { label: string; tone: string } {
   return { label: "完成", tone: "done" };
 }
 
+function diffTone(line: string): string {
+  if (line.startsWith("@@")) return "hunk";
+  if (
+    /^(diff --git |index |--- |\+\+\+ |new file |deleted file |similarity index |rename |\\ No newline)/.test(
+      line,
+    )
+  ) {
+    return "meta";
+  }
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "del";
+  return "";
+}
+
+/**
+ * Unified diff output: the `+`/`-`/`@@` lines are the whole point of a code
+ * tool, and a wall of monospace text hides them. Kept inside the collapsed
+ * tool card so the transcript does not grow a second screen of code.
+ */
+function DiffOutput({ text }: { text: string }) {
+  const lines = text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+  return (
+    <pre className="out diff">
+      {lines.map((line, index) => {
+        const tone = diffTone(line);
+        return (
+          <span key={index} className={tone ? `line ${tone}` : "line"}>
+            {line}
+            {index === lines.length - 1 ? "" : "\n"}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+
 export function ToolCard({ row }: { row: ToolRow }) {
   const status = toolStatus(row);
   return (
-    <details className="row tool">
-      <summary>
-        <span className={`status ${status.tone}`}>{status.label}</span>
-        <span className="name">{row.name}</span>
-        {row.readOnly ? <span className="status">只读</span> : null}
-      </summary>
-      {row.args ? <pre>{row.args}</pre> : null}
-      {row.err || row.refusalCode ? (
-        <div className="refusal">
-          {row.refusalCode ? <code>{row.refusalCode}</code> : null}
-          {row.err}
-        </div>
-      ) : null}
-      {row.output ? (
-        <pre className="out" data-diff={row.outputDiff ? "" : undefined}>
-          {row.output}
-        </pre>
-      ) : null}
-    </details>
+    <div className="row">
+      <details className="tool">
+        <summary>
+          <span className={`status ${status.tone}`}>{status.label}</span>
+          <span className="name">{row.name}</span>
+          {row.readOnly ? <span className="status">只读</span> : null}
+        </summary>
+        {row.args ? <pre>{row.args}</pre> : null}
+        {row.err || row.refusalCode ? (
+          <div className="refusal">
+            {row.refusalCode ? <code>{row.refusalCode}</code> : null}
+            {row.err}
+          </div>
+        ) : null}
+        {row.output ? (
+          row.outputDiff ? (
+            <DiffOutput text={row.output} />
+          ) : (
+            <pre className="out">{row.output}</pre>
+          )
+        ) : null}
+      </details>
+    </div>
   );
 }
 
@@ -165,7 +276,17 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
     });
   };
 
-  const ready = questions.every((question) => (chosen[question.id] ?? []).length > 0);
+  const valueOf = (question: WireAskQuestion): string[] =>
+    chosen[question.id] ?? question.default ?? [];
+  const ready = questions.every((question) => valueOf(question).length > 0);
+  const submit = () => {
+    const answers: Record<string, string[]> = {};
+    for (const question of questions) {
+      const value = valueOf(question);
+      if (value.length > 0) answers[question.id] = value;
+    }
+    handlers.onAnswer(row.ask.id, answers);
+  };
 
   return (
     <div className="row prompt">
@@ -174,7 +295,7 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
           key={question.id}
           question={question}
           pending={row.pending}
-          chosen={chosen[question.id] ?? question.default ?? []}
+          chosen={valueOf(question)}
           onToggle={(label) => toggle(question, label)}
         />
       ))}
@@ -183,7 +304,7 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
           type="button"
           className="confirm"
           disabled={!ready}
-          onClick={() => handlers.onAnswer(row.ask.id, chosen)}
+          onClick={submit}
         >
           确认
         </button>

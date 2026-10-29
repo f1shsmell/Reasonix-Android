@@ -121,6 +121,22 @@ describe("foldHistory", () => {
     }
   });
 
+  it("uses the tool card instead of a thought bubble for a tool step", () => {
+    const rows = foldHistory([
+      message({
+        role: "assistant",
+        content: "",
+        reasoning: "先读文件",
+        thoughtMs: 1200,
+        toolCalls: [{ id: "c1", name: "read_file" }],
+        msgIndex: 1,
+      }),
+      message({ role: "tool", content: "ok", toolCallId: "c1", msgIndex: 2 }),
+    ]);
+
+    expect(rows.map((row) => row.kind)).toEqual(["tool"]);
+  });
+
   it("gives history rows ids that cannot collide with live ones", () => {
     // Both folds feed one renderer keyed by id; a collision drops a row.
     const rows = foldHistory([

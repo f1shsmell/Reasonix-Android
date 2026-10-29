@@ -10,9 +10,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import type { SendState } from "../net/submit";
+import { clearDraft, loadDraft, saveDraft } from "./drafts";
+import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { loadHistory } from "../net/history";
-import { closeApproval, emptyTranscript, markAnswered, reduce } from "./transcript";
+import { loadTodos, todoRevision } from "../net/todos";
+import type { WireTodo } from "../wire/todos";
+import type { EventPayload } from "../wire/events";
+import { closeApproval, emptyTranscript, markAnswered, optimisticUser, reduce, removeLocalUser } from "./transcript";
 import type { Transcript } from "./transcript";
 import {
   ApprovalCard,
@@ -23,12 +28,33 @@ import {
   UserBubble,
 } from "./Rows";
 import type { PromptHandlers } from "./Rows";
+import { TodoPanel } from "./TodoPanel";
+import type { TodosState } from "./TodoPanel";
 
 export interface ChatScreenProps {
   connection: Connection;
   snapshot: ConnectionSnapshot;
   runtimeId: string;
   onBack: () => void;
+  /** Open the session/project sheet. */
+  onNewSession?: () => void;
+}
+
+function imageMessage(code: string): string {
+  switch (code) {
+    case "attachment.too_large":
+      return `图片太大，上限 ${MAX_IMAGE_MB} MB。`;
+    case "attachment.unsupported_image":
+      return "这个图片格式不支持。";
+    case "attachment.write_failed":
+      return "桌面端保存图片失败，检查磁盘空间和写入权限。";
+    case "attachment.shape":
+      return "桌面端返回了无法识别的图片。";
+    case "client.offline":
+      return "上传失败：连不上电脑。";
+    default:
+      return `上传失败：${code}`;
+  }
 }
 
 /**
@@ -87,19 +113,107 @@ function useTranscript(
   return { transcript, history, setTranscript };
 }
 
-export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScreenProps) {
+/**
+ * The task list, read from the kernel rather than folded out of the transcript.
+ *
+ * Two facts make this a separate read. `complete_step` advances the list
+ * without writing a `todo_write`, so the conversation is missing updates; and
+ * a refused `todo_write` is still in the conversation, so folding it would
+ * draw work the kernel never accepted. The frame is only a notification —
+ * counters and three revision clocks — so the list itself always comes from
+ * `GET /todos`.
+ *
+ * The three clocks are also the coalescing rule: frames whose clocks did not
+ * move cannot have changed the answer, and a turn that emits one per step
+ * must not become one request per step.
+ */
+interface TodoList {
+  base: string;
+  todos: WireTodo[];
+  state: TodosState;
+}
+
+function useTodos(
+  base: string | undefined,
+  lastEvent: EventPayload | undefined,
+): { todos: WireTodo[]; state: TodosState } {
+  const [list, setList] = useState<TodoList | null>(null);
+  const loadedBase = useRef<string | null>(null);
+  const seenRevision = useRef("");
+  const failed = useRef(false);
+  const request = useRef(0);
+  const progress = lastEvent?.kind === "todo_progress" ? lastEvent.todoProgress : undefined;
+  const revision = todoRevision(progress);
+
+  useEffect(() => {
+    if (!base) return;
+    const switched = base !== loadedBase.current;
+    if (switched) {
+      // Another pane's checklist is not this pane's. This records the new
+      // base; the render below already hides the old list in the same commit,
+      // because an effect runs after paint.
+      loadedBase.current = base;
+      seenRevision.current = "";
+      failed.current = false;
+      setList({ base, todos: [], state: "loading" });
+    } else if (!progress || (revision === seenRevision.current && !failed.current)) {
+      // Not a todo_progress frame, or a repeat whose clocks have not moved
+      // and whose last read succeeded.
+      return;
+    }
+    if (revision !== "") seenRevision.current = revision;
+
+    // A newer read wins outright. Two can overlap — the screen's first load
+    // and a frame that arrived while it was in flight — and an older answer
+    // must not land on top of a newer one.
+    const at = ++request.current;
+    void loadTodos(base).then((result) => {
+      if (at !== request.current) return;
+      if (!result.ok) {
+        // A failed read has not seen this revision. The next frame carrying
+        // the same clocks is allowed to try again rather than waiting for a
+        // clock to move.
+        failed.current = true;
+        setList((current) =>
+          current?.base === base
+            ? { ...current, state: "failed" }
+            : { base, todos: [], state: "failed" },
+        );
+        return;
+      }
+      failed.current = false;
+      setList({ base, todos: result.items, state: "loaded" });
+    });
+  }, [base, lastEvent, progress, revision]);
+
+  // The first render after a base change still holds the old list — the effect
+  // that clears it runs after paint. Hiding a mismatched list here is what
+  // keeps one pane's checklist from flashing on another.
+  const shown = base !== undefined && list?.base === base ? list : null;
+  return { todos: shown?.todos ?? [], state: shown?.state ?? "loading" };
+}
+
+export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSession }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   const { transcript, history, setTranscript } = useTranscript(
     snapshot,
     runtimeId,
     runtime?.base,
   );
-  const [draft, setDraft] = useState("");
+  const { todos, state: todosState } = useTodos(runtime?.base, snapshot.lastEvent);
+  // App keys this screen by runtimeId, so this initial value is that pane's
+  // draft and no other pane can read it. The save effect below mirrors every
+  // keystroke to the same key.
+  const [draft, setDraft] = useState(() => loadDraft(runtimeId));
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
+  const [attachment, setAttachment] = useState<{ ref: string; name: string; url: string } | null>(null);
+  const [attachError, setAttachError] = useState("");
+  const [attaching, setAttaching] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageRef = useRef<HTMLInputElement | null>(null);
   const lastRetry = useRef<string>("");
 
   // Attaching is the screen's job, not the caller's: a screen that is mounted
@@ -136,14 +250,89 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
     input.style.height = `${input.scrollHeight}px`;
   }, []);
 
+  useEffect(() => {
+    saveDraft(runtimeId, draft);
+  }, [draft, runtimeId]);
+
+  // A restored draft may be several lines; one row would hide most of it.
+  useEffect(() => {
+    const timer = window.setTimeout(grow, 0);
+    return () => window.clearTimeout(timer);
+  }, [grow]);
+
+  // The preview URL is ours to release. Rerunning on every attachment change
+  // revokes the image that was just replaced.
+  useEffect(() => {
+    const url = attachment?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [attachment?.url]);
+
+  // Editing the reference out of the draft is also removing the attachment;
+  // otherwise the chip would stay but the turn would not mention the image.
+  useEffect(() => {
+    if (attachment && !draft.includes(attachment.ref)) setAttachment(null);
+  }, [attachment, draft]);
+
+  const pickImage = useCallback(() => {
+    imageRef.current?.click();
+  }, []);
+
+  const onImage = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file || !runtime) return;
+      setAttachError("");
+      setAttaching(true);
+      const preview = URL.createObjectURL(file);
+      const result = await uploadImage(runtime.base, file);
+      if (!result.ok) {
+        URL.revokeObjectURL(preview);
+        setAttaching(false);
+        setAttachError(imageMessage(result.code));
+        return;
+      }
+      setAttaching(false);
+      setAttachment({ ref: result.attachment.ref, name: file.name, url: preview });
+      // The trailing newline is load-bearing: the caret goes to the end, so
+      // anything typed next starts on its own line instead of becoming part
+      // of the reference token.
+      setDraft((current) => {
+        const base = current.replace(/\s+$/, "");
+        return base ? `${base}\n${result.attachment.ref}\n` : `${result.attachment.ref}\n`;
+      });
+      window.setTimeout(grow, 0);
+    },
+    [runtime, grow],
+  );
+
+  const removeAttachment = useCallback(() => {
+    if (!attachment) return;
+    setDraft((current) => current.replace(attachment.ref, "").replace(/[ \t]+\n/g, "\n").trimEnd());
+    setAttachment(null);
+    setAttachError("");
+  }, [attachment]);
+
   const doSend = useCallback(
     async (text: string) => {
       if (!runtime) return;
+      const outgoing = isolateImageRefs(text).trim();
+      if (!outgoing) return;
+      // The kernel takes a round trip to confirm a turn. Draw the person's own
+      // words now; `turn_started` later confirms this row by matching its text
+      // instead of appending a second copy.
+      const local = optimisticUser(outgoing);
+      setTranscript((current) => ({ ...current, rows: [...current.rows, local] }));
       setSend({ kind: "sending" });
-      const result = await submit(runtime.base, text);
+      const result = await submit(runtime.base, outgoing);
       if (result.ok) {
         setSend({ kind: "sent" });
+        clearDraft(runtimeId);
         setDraft("");
+        setAttachment(null);
+        setAttachError("");
         lastRetry.current = "";
         // The turn itself will report through the stream; the composer clears
         // now so the next thought can be typed while the answer arrives.
@@ -158,7 +347,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
         detail: result.code ?? "unknown",
         retryable: result.retryable === true,
       });
-      lastRetry.current = text;
+      setTranscript((current) => removeLocalUser(current, local.id));
+      lastRetry.current = outgoing;
     },
     [runtime, scrollToBottom],
   );
@@ -246,8 +436,15 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
             {transcript.modelRef ?? runtime.root}
           </span>
         </div>
+        {onNewSession ? (
+          <button type="button" className="iconbtn" onClick={onNewSession} aria-label="新建会话或切换项目">
+            ＋
+          </button>
+        ) : null}
         <span className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`} />
       </div>
+
+      <TodoPanel todos={todos} state={todosState} />
 
       <div className="transcript" ref={listRef} onScroll={onScroll}>
         {transcript.rows.length === 0 ? (
@@ -275,7 +472,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
           transcript.rows.map((row) => {
             switch (row.kind) {
               case "user":
-                return <UserBubble key={row.id} row={row} />;
+                return <UserBubble key={row.id} row={row} base={runtime.base} />;
               case "assistant":
                 return <AssistantBubble key={row.id} row={row} />;
               case "tool":
@@ -320,7 +517,42 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
         </div>
       ) : null}
 
+      {attachment && draft.includes(attachment.ref) ? (
+        <div className="attachment">
+          <img src={attachment.url} alt="已选择的图片" />
+          <span>{attachment.name}</span>
+          <button type="button" aria-label="移除图片" onClick={removeAttachment}>
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {attachError ? (
+        <div className="sendfail">
+          <span>{attachError}</span>
+          <button type="button" onClick={() => setAttachError("")}>
+            知道了
+          </button>
+        </div>
+      ) : null}
+
       <div className="composer">
+        <input
+          ref={imageRef}
+          className="file-input"
+          type="file"
+          accept="image/*"
+          onChange={(event) => void onImage(event)}
+        />
+        <button
+          type="button"
+          className="attach"
+          aria-label="添加图片"
+          onClick={pickImage}
+          disabled={runtime.readOnly === true || attaching || attachment !== null}
+        >
+          {attaching ? "…" : "📎"}
+        </button>
         <textarea
           ref={inputRef}
           value={draft}
@@ -347,7 +579,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
             type="button"
             className="send"
             aria-label="发送"
-            disabled={!draft.trim() || send.kind === "sending"}
+            disabled={!draft.trim() || send.kind === "sending" || attaching}
             onClick={() => void doSend(draft)}
           >
             ↑

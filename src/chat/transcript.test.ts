@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { emptyTranscript, markAnswered, reduce, reduceAll, resetIds } from "./transcript";
+import {
+  emptyTranscript,
+  markAnswered,
+  optimisticUser,
+  reduce,
+  reduceAll,
+  removeLocalUser,
+  resetIds,
+} from "./transcript";
 import type { Transcript } from "./transcript";
 import type { EventPayload } from "../wire/events";
 
@@ -305,5 +313,38 @@ describe("transcript", () => {
       { kind: "turn_started", text: "q", modelRef: "deepseek/deepseek-flash" },
     ]);
     expect(result.modelRef).toBe("deepseek/deepseek-flash");
+  });
+
+  it("confirms an optimistic message instead of drawing it twice", () => {
+    const local = optimisticUser("hello");
+    const pending: Transcript = { ...emptyTranscript, rows: [local] };
+
+    const result = reduce(pending, { kind: "turn_started", text: "hello" });
+
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row?.kind === "user" && row.local).toBe(false);
+  });
+
+  it("removes an optimistic message whose submit failed", () => {
+    const local = optimisticUser("hello");
+    const pending: Transcript = { ...emptyTranscript, rows: [local] };
+
+    expect(removeLocalUser(pending, local.id).rows).toHaveLength(0);
+  });
+
+  it("does not draw a tool-call-only step as an empty bubble", () => {
+    const result = feed([{ kind: "message", text: "", reasoning: "" }]);
+
+    expect(result.rows).toHaveLength(0);
+  });
+
+  it("drops a reasoning-only step when its tool starts", () => {
+    const result = feed([
+      { kind: "reasoning", reasoning: "think" },
+      { kind: "tool_dispatch", tool: { id: "c1", name: "read_file" } },
+    ]);
+
+    expect(result.rows.map((row) => row.kind)).toEqual(["tool"]);
   });
 });
