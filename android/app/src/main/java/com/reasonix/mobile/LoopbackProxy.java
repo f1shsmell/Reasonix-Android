@@ -32,7 +32,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A loopback HTTP proxy that makes a LAN kernel same-origin with the WebView.
@@ -63,6 +66,13 @@ public final class LoopbackProxy {
     private static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
     private static final String IDENTITY = "https://id.reasonix.io";
     private static final String USER_AGENT = "reasonix-android/0.1";
+
+    /** A 10 MB image becomes ~13.3 MB of base64 inside a JSON envelope. */
+    private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_HEADER_LINE = 8192;
+    private static final int SOCKET_READ_TIMEOUT_MS = 20_000;
+    /** A normal API call must not wait forever; only SSE may. */
+    private static final int FORWARD_READ_TIMEOUT_MS = 60_000;
 
     private static final Set<String> HOP_BY_HOP = new HashSet<>(Arrays.asList(
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -116,7 +126,15 @@ public final class LoopbackProxy {
     private final Context context;
     private final SharedPreferences prefs;
     private final ServerSocket server;
-    private final ExecutorService pool = Executors.newCachedThreadPool();
+    private final ExecutorService pool = new ThreadPoolExecutor(
+            4, 32, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(64),
+            runnable -> {
+                Thread thread = new Thread(runnable, "reasonix-proxy");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
     private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
     private final String secret;
 
@@ -134,7 +152,18 @@ public final class LoopbackProxy {
             while (!server.isClosed()) {
                 try {
                     Socket socket = server.accept();
-                    pool.execute(() -> handle(socket));
+                    try {
+                        pool.execute(() -> handle(socket));
+                    } catch (RejectedExecutionException e) {
+                        // A burst of aborted navigations must not exhaust the
+                        // app; refusing one connection is better than dying.
+                        Log.w(TAG, "too many connections; closing one");
+                        try {
+                            socket.close();
+                        } catch (IOException ignored) {
+                            // already gone
+                        }
+                    }
                 } catch (IOException e) {
                     if (!server.isClosed()) Log.e(TAG, "accept failed", e);
                 }
@@ -144,6 +173,9 @@ public final class LoopbackProxy {
 
     private void handle(Socket socket) {
         try (Socket s = socket) {
+            // Bound the request-head phase. This timeout does not affect an
+            // SSE response, which is written to this socket, not read from it.
+            s.setSoTimeout(SOCKET_READ_TIMEOUT_MS);
             InputStream in = s.getInputStream();
             String requestLine = readLine(in);
             if (requestLine == null || requestLine.isEmpty()) return;
@@ -160,11 +192,19 @@ public final class LoopbackProxy {
                             line.substring(colon + 1).trim());
                 }
             }
-            byte[] body = readBody(in, headers);
             String path = target.split("\\?", 2)[0];
             if (!authorized(headers)) {
                 Log.w(TAG, "rejected unauthenticated " + path);
                 writeJson(s, 403, "{\"code\":\"proxy.unauthorized\"}");
+                return;
+            }
+            // Authenticate before reading a body: an unauthenticated request
+            // must not be able to make the app allocate its 32 MB budget.
+            byte[] body;
+            try {
+                body = readBody(in, headers);
+            } catch (PayloadTooLargeException e) {
+                writeJson(s, 413, "{\"code\":\"request.too_large\"}");
                 return;
             }
             if (path.startsWith("/__reasonix/")) {
@@ -206,6 +246,14 @@ public final class LoopbackProxy {
 
     private void control(Socket socket, String method, String path, byte[] body) throws IOException {
         try {
+            // A control route that changes state must not be reachable by a
+            // plain GET. The loopback cookie is HttpOnly, but a page rendered
+            // inside the app's own WebView still carries it, and an <img> can
+            // issue a GET without an Origin header.
+            if (!controlMethodAllowed(path, method)) {
+                methodNotAllowed(socket);
+                return;
+            }
             switch (path) {
                 case "/__reasonix/config":
                     if ("GET".equals(method)) {
@@ -253,6 +301,27 @@ public final class LoopbackProxy {
             writeJson(socket, 400, "{\"code\":\"proxy.bad_request\"}");
         } catch (IOException e) {
             writeJson(socket, 502, "{\"code\":\"proxy.upstream_unreachable\"}");
+        }
+    }
+
+    static boolean controlMethodAllowed(String path, String method) {
+        switch (path) {
+            case "/__reasonix/config":
+                return "GET".equals(method) || "POST".equals(method);
+            case "/__reasonix/account":
+            case "/__reasonix/account/devices":
+                return "GET".equals(method);
+            case "/__reasonix/refresh":
+            case "/__reasonix/account/grant":
+            case "/__reasonix/account/start":
+            case "/__reasonix/account/poll":
+            case "/__reasonix/account/logout":
+            case "/__reasonix/relay":
+            case "/__reasonix/relay/clear":
+                return "POST".equals(method);
+            default:
+                // The switch below answers 404 for unknown control paths.
+                return true;
         }
     }
 
@@ -374,7 +443,8 @@ public final class LoopbackProxy {
         JSONObject out = new JSONObject();
         out.put("origin", origin);
         out.put("candidates", new JSONArray(prefs.getString(KEY_CANDIDATES, "[]")));
-        out.put("paired", !origin.isEmpty() && hasCookie(origin));
+        out.put("paired", !origin.isEmpty()
+                && (hasCookie(origin) || !webCookie(origin.endsWith("/") ? origin : origin + "/").isEmpty()));
         out.put("mode", prefs.getString(KEY_MODE, "lan"));
         out.put("relayDevice", prefs.getString(KEY_RELAY_DEVICE, ""));
         out.put("account", accountJson());
@@ -576,8 +646,17 @@ public final class LoopbackProxy {
         if (!hasExtension && !name.equals("index.html")) return false;
         try {
             InputStream in = context.getAssets().open("public/" + name);
-            byte[] bytes = readAll(in);
-            writeResponse(socket, 200, contentType(name), bytes);
+            byte[] bytes;
+            try (InputStream stream = in) {
+                bytes = readAll(stream);
+            }
+            Map<String, String> extra = new LinkedHashMap<>();
+            // Hashed asset names are safe to cache; the entry document is not,
+            // or an update would keep loading the old bundle.
+            extra.put("Cache-Control", "index.html".equals(name)
+                    ? "no-store"
+                    : "public, max-age=86400");
+            writeResponse(socket, 200, contentType(name), bytes, extra);
             return true;
         } catch (IOException e) {
             return false;
@@ -611,55 +690,82 @@ public final class LoopbackProxy {
         }
         URI uri = URI.create(origin + target);
         HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
-        conn.setRequestMethod(method);
-        conn.setInstanceFollowRedirects(false);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(0);
-        conn.setUseCaches(false);
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            String key = entry.getKey();
-            if (HOP_BY_HOP.contains(key) || key.equals("host") || key.equals("content-length")
-                    || key.equals("accept-encoding") || key.equals("cookie") || key.equals("origin")
-                    || key.equals("referer") || key.startsWith("sec-fetch-")) {
-                // The kernel's CSRF guard judges Origin; a WebView origin is
-                // not the kernel's, so the proxy speaks as its own client.
-                // Cookies come from the proxy's jar, never from the WebView.
-                continue;
+        try {
+            conn.setRequestMethod(method);
+            conn.setInstanceFollowRedirects(false);
+            conn.setConnectTimeout(10000);
+            // Only SSE is allowed to wait forever. A normal API call whose
+            // kernel accepted the TCP connection and then went quiet must
+            // fail rather than freeze the WebView's fetch.
+            conn.setReadTimeout(isEventStream(target, headers) ? 0 : FORWARD_READ_TIMEOUT_MS);
+            conn.setUseCaches(false);
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                String key = entry.getKey();
+                if (HOP_BY_HOP.contains(key) || key.equals("host") || key.equals("content-length")
+                        || key.equals("accept-encoding") || key.equals("cookie") || key.equals("origin")
+                        || key.equals("referer") || key.startsWith("sec-fetch-")) {
+                    // The kernel's CSRF guard judges Origin; a WebView origin is
+                    // not the kernel's, so the proxy speaks as its own client.
+                    // Cookies come from the proxy's jar, never from the WebView.
+                    continue;
+                }
+                conn.setRequestProperty(key, entry.getValue());
             }
-            conn.setRequestProperty(key, entry.getValue());
-        }
-        conn.setRequestProperty("Accept-Encoding", "identity");
-        // DeviceGate's loopbackOriginAllowed accepts an empty Origin only for
-        // GET/HEAD: a state change must name the listener. The browser sends
-        // this; the proxy speaks as the kernel's own client.
-        conn.setRequestProperty("Origin", origin);
-        conn.setRequestProperty("Referer", origin + "/");
-        String web = webCookie(origin.endsWith("/") ? origin : origin + "/");
-        if (!web.isEmpty()) {
-            // The Studio page was paired in this app's WebView; its cookie is
-            // the device credential the kernel actually minted.
-            conn.setRequestProperty("Cookie", web);
-        } else {
-            applyCookies(conn, uri);
-        }
-        if (body.length > 0) {
-            conn.setDoOutput(true);
-            conn.setFixedLengthStreamingMode(body.length);
-            try (OutputStream out = conn.getOutputStream()) {
-                out.write(body);
+            conn.setRequestProperty("Accept-Encoding", "identity");
+            // DeviceGate's loopbackOriginAllowed accepts an empty Origin only for
+            // GET/HEAD: a state change must name the listener. The browser sends
+            // this; the proxy speaks as the kernel's own client.
+            conn.setRequestProperty("Origin", origin);
+            conn.setRequestProperty("Referer", origin + "/");
+            String web = webCookie(origin.endsWith("/") ? origin : origin + "/");
+            if (!web.isEmpty()) {
+                // The Studio page was paired in this app's WebView; its cookie is
+                // the device credential the kernel actually minted.
+                conn.setRequestProperty("Cookie", web);
+            } else {
+                applyCookies(conn, uri);
             }
+            if (body.length > 0) {
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(body.length);
+                try (OutputStream out = conn.getOutputStream()) {
+                    out.write(body);
+                }
+            }
+            int status = conn.getResponseCode();
+            String contentType = conn.getContentType();
+            storeCookies(uri, conn);
+            if (contentType != null && contentType.startsWith("text/event-stream")) {
+                streamSse(socket, conn, status, contentType);
+                return;
+            }
+            byte[] payload;
+            try (InputStream response = status >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+                payload = response == null ? new byte[0] : readAll(response);
+            }
+            // A redirect or a download is useless if only Content-Type is
+            // copied: the WebView follows a Location, and a file needs its name.
+            Map<String, String> forwarded = new LinkedHashMap<>();
+            copyHeader(conn, forwarded, "Location");
+            copyHeader(conn, forwarded, "Content-Disposition");
+            copyHeader(conn, forwarded, "ETag");
+            copyHeader(conn, forwarded, "Last-Modified");
+            copyHeader(conn, forwarded, "Cache-Control");
+            writeResponse(socket, status, contentType, payload, forwarded);
+        } finally {
+            conn.disconnect();
         }
-        int status = conn.getResponseCode();
-        String contentType = conn.getContentType();
-        storeCookies(uri, conn);
-        if (contentType != null && contentType.startsWith("text/event-stream")) {
-            streamSse(socket, conn, status, contentType);
-            return;
-        }
-        InputStream response = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        byte[] payload = response == null ? new byte[0] : readAll(response);
-        writeResponse(socket, status, contentType, payload);
-        conn.disconnect();
+    }
+
+    private static boolean isEventStream(String target, Map<String, String> headers) {
+        if (target.contains("/events")) return true;
+        String accept = headers.get("accept");
+        return accept != null && accept.contains("text/event-stream");
+    }
+
+    private static void copyHeader(HttpURLConnection conn, Map<String, String> out, String name) {
+        String value = conn.getHeaderField(name);
+        if (value != null && !value.isEmpty()) out.put(name, value);
     }
 
     private void applyCookies(HttpURLConnection conn, URI uri) {
@@ -705,7 +811,7 @@ public final class LoopbackProxy {
             String head = "HTTP/1.1 " + status + " " + reason(status) + "\r\n"
                     + "Content-Type: " + contentType + "\r\n"
                     + "Cache-Control: no-cache\r\n"
-                    + "Connection: keep-alive\r\n"
+                    + "Connection: close\r\n"
                     + "Transfer-Encoding: chunked\r\n\r\n";
             out.write(head.getBytes(StandardCharsets.ISO_8859_1));
             out.flush();
@@ -722,7 +828,17 @@ public final class LoopbackProxy {
             out.flush();
         } catch (IOException e) {
             // The phone went away or the kernel closed the stream; nothing to
-            // report to a client that is no longer reading.
+            // report to a client that is no longer reading. If it is still
+            // there, a terminating chunk is the difference between "the turn
+            // ended" and "the connection was cut".
+            try {
+                if (out != null) {
+                    out.write("0\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                    out.flush();
+                }
+            } catch (IOException ignored) {
+                // the client is gone
+            }
         } finally {
             conn.disconnect();
             try {
@@ -735,18 +851,25 @@ public final class LoopbackProxy {
 
     // ---- HTTP helpers --------------------------------------------------
 
-    private static String readLine(InputStream in) throws IOException {
+    static String readLine(InputStream in) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         int b;
         while ((b = in.read()) != -1) {
             if (b == '\n') break;
-            if (b != '\r') out.write(b);
+            if (b != '\r') {
+                out.write(b);
+                if (out.size() > MAX_HEADER_LINE) throw new IOException("header line too long");
+            }
         }
         if (b == -1 && out.size() == 0) return null;
         return new String(out.toByteArray(), StandardCharsets.ISO_8859_1);
     }
 
-    private static byte[] readBody(InputStream in, Map<String, String> headers) throws IOException {
+    static byte[] readBody(InputStream in, Map<String, String> headers) throws IOException {
+        String transfer = headers.get("transfer-encoding");
+        if (transfer != null && transfer.toLowerCase(Locale.ROOT).contains("chunked")) {
+            return readChunked(in);
+        }
         String length = headers.get("content-length");
         if (length == null) return new byte[0];
         int n;
@@ -756,6 +879,9 @@ public final class LoopbackProxy {
             return new byte[0];
         }
         if (n <= 0) return new byte[0];
+        // Never allocate from an untrusted Content-Length directly: a phone
+        // would OOM before it could even reject the request.
+        if (n > MAX_BODY_BYTES) throw new PayloadTooLargeException();
         byte[] body = new byte[n];
         int read = 0;
         while (read < n) {
@@ -764,6 +890,47 @@ public final class LoopbackProxy {
             read += got;
         }
         return read == n ? body : Arrays.copyOf(body, read);
+    }
+
+    /** A chunked upload streams; buffer it under the same cap as a fixed body. */
+    static byte[] readChunked(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        while (true) {
+            String line = readLine(in);
+            if (line == null) throw new IOException("truncated chunked body");
+            int semicolon = line.indexOf(';');
+            String sizeText = (semicolon >= 0 ? line.substring(0, semicolon) : line).trim();
+            int size;
+            try {
+                size = Integer.parseInt(sizeText, 16);
+            } catch (NumberFormatException e) {
+                throw new IOException("bad chunk size", e);
+            }
+            if (size < 0) throw new IOException("bad chunk size");
+            if (size == 0) {
+                String trailer;
+                while ((trailer = readLine(in)) != null && !trailer.isEmpty()) {
+                    // Trailers carry nothing this proxy needs.
+                }
+                return out.toByteArray();
+            }
+            if (out.size() + (long) size > MAX_BODY_BYTES) throw new PayloadTooLargeException();
+            byte[] chunk = new byte[size];
+            int read = 0;
+            while (read < size) {
+                int got = in.read(chunk, read, size - read);
+                if (got < 0) throw new IOException("truncated chunk");
+                read += got;
+            }
+            out.write(chunk);
+            readLine(in);
+        }
+    }
+
+    static final class PayloadTooLargeException extends IOException {
+        PayloadTooLargeException() {
+            super("request body too large");
+        }
     }
 
     private static byte[] readAll(InputStream in) throws IOException {
@@ -786,12 +953,29 @@ public final class LoopbackProxy {
 
     private static void writeResponse(Socket socket, int status, String contentType, byte[] payload)
             throws IOException {
+        writeResponse(socket, status, contentType, payload, null);
+    }
+
+    private static void writeResponse(Socket socket, int status, String contentType, byte[] payload,
+                                      Map<String, String> extra) throws IOException {
         OutputStream out = socket.getOutputStream();
         StringBuilder head = new StringBuilder();
         head.append("HTTP/1.1 ").append(status).append(' ').append(reason(status)).append("\r\n");
         if (contentType != null) head.append("Content-Type: ").append(contentType).append("\r\n");
+        if (extra != null) {
+            for (Map.Entry<String, String> entry : extra.entrySet()) {
+                String key = entry.getKey();
+                if ("content-type".equalsIgnoreCase(key) || "content-length".equalsIgnoreCase(key)
+                        || "connection".equalsIgnoreCase(key) || "transfer-encoding".equalsIgnoreCase(key)) {
+                    continue;
+                }
+                head.append(key).append(": ").append(entry.getValue()).append("\r\n");
+            }
+        }
+        if (extra == null || !extra.containsKey("Cache-Control")) {
+            head.append("Cache-Control: no-store\r\n");
+        }
         head.append("Content-Length: ").append(payload.length).append("\r\n");
-        head.append("Cache-Control: no-store\r\n");
         head.append("Connection: close\r\n\r\n");
         out.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
         out.write(payload);
