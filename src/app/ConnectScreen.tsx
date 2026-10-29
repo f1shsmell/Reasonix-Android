@@ -313,8 +313,15 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
     if (grant === null) return;
     let cancelled = false;
     let timer = 0;
+    const lifetime = Number.isFinite(grant.expiresIn) ? grant.expiresIn : 600;
+    const deadline = Date.now() + Math.max(1, lifetime) * 1000;
     const tick = async () => {
       if (cancelled) return;
+      if (Date.now() >= deadline) {
+        setGrant(null);
+        setError("登录码已过期，请重新登录。");
+        return;
+      }
       try {
         const result = await pollAccount(grant.deviceCode);
         if (cancelled) return;

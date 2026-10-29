@@ -70,7 +70,12 @@ export function SessionList({ snapshot, onOpen, onRefresh, onSettings, onNew }: 
   return (
     <div className="shell">
       <div className="bar">
-        <span className={`dot ${snapshot.reach.kind === "ok" ? "ok" : "warn"}`} />
+        <span
+          className={`dot ${snapshot.reach.kind === "ok" ? "ok" : "warn"}`}
+          role="img"
+          aria-label={snapshot.reach.kind === "ok" ? "已连接" : "未连接"}
+          title={snapshot.reach.kind === "ok" ? "已连接" : "未连接"}
+        />
         <h1>Reasonix</h1>
         {onNew ? (
           <button type="button" className="iconbtn" onClick={onNew} aria-label="新建会话或切换项目">

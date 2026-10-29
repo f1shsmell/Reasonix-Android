@@ -517,6 +517,40 @@ describe("ChatScreen composer", () => {
     expect(container.querySelectorAll(".row.user")).toHaveLength(1);
   });
 
+  it("does not wipe text typed while the send is in flight", async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/submit")) return pending;
+        if (url.endsWith("/todos")) return Promise.resolve(json([]));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    typeDraft("first");
+
+    act(() => sendButton().click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The person keeps typing while the request is in flight.
+    typeDraft("second");
+    act(() => release(json({})));
+    await flush();
+    await flush();
+
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("second");
+    expect(localStorage.getItem("reasonix.draft.r1")).toBe("second");
+  });
+
   it("does not yank the transcript down while the person reads back", async () => {
     stubKernel();
     render(snapshot());

@@ -90,6 +90,11 @@ export interface Transcript {
   ended?: { cancelled: boolean; error?: string; outcome?: string };
   /** The model the last turn named, for the composer to show. */
   modelRef?: string;
+  /**
+   * A relay replay was incomplete. The transcript is missing a stretch of
+   * events, and the screen must offer a reload instead of quietly continuing.
+   */
+  gap?: boolean;
 }
 
 export const emptyTranscript: Transcript = { rows: [], running: false };
@@ -125,10 +130,10 @@ export function removeLocalUser(transcript: Transcript, id: string): Transcript 
   return rows.length === transcript.rows.length ? transcript : { ...transcript, rows };
 }
 
-/** The last local row with this text is the one this turn started. */
+/** The oldest local row with this text is the one this turn started. */
 function confirmLocalUser(rows: Row[], text: string): Row[] | null {
   let at = -1;
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
+  for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row?.kind === "user" && row.local === true && row.text === text) {
       at = index;
@@ -318,6 +323,9 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       const next: Transcript = {
         rows,
         running: true,
+        // A gap stays visible until a history reload clears it; ending this
+        // turn does not make the missing stretch reappear.
+        ...(transcript.gap === true ? { gap: true } : {}),
         ...(typeof event.modelRef === "string" ? { modelRef: event.modelRef } : {}),
       };
       const text = typeof event.text === "string" ? event.text : "";
@@ -510,6 +518,12 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
           ...(typeof event.outcome === "string" ? { outcome: event.outcome } : {}),
         },
       };
+    }
+
+    case "stream_gap": {
+      // The relay's replay was incomplete. Do not pretend the transcript is
+      // continuous: the screen shows a banner and offers a fresh history read.
+      return { ...transcript, gap: true };
     }
 
     // Transport frames, and kinds this client does not render yet. Ignoring an

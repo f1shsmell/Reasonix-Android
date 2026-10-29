@@ -6,7 +6,7 @@
  * file is testable without a browser.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import type { SendState } from "../net/submit";
@@ -15,10 +15,11 @@ import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments"
 import { answer, approve } from "../net/prompts";
 import { loadHistory } from "../net/history";
 import { loadTodos, todoRevision } from "../net/todos";
+import { startTurnNotification, stopTurnNotification } from "../native/turn";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, optimisticUser, reduce, removeLocalUser } from "./transcript";
-import type { Transcript } from "./transcript";
+import type { Row, Transcript } from "./transcript";
 import {
   ApprovalCard,
   AskCard,
@@ -57,6 +58,50 @@ function imageMessage(code: string): string {
   }
 }
 
+/** Transport codes are stable, but a person needs a sentence, not a code. */
+function sendErrorText(code: string): string {
+  switch (code) {
+    case "client.timeout":
+      return "等电脑回应超时，检查连接后重试。";
+    case "client.offline":
+      return "连不上电脑，检查连接后重试。";
+    default:
+      return code;
+  }
+}
+
+/**
+ * One row, memoised by its own identity.
+ *
+ * Every text delta replaces only the streaming row in the transcript array;
+ * the rows above keep their object identity. Without this boundary a long
+ * conversation re-renders every bubble on every token.
+ */
+const RowView = memo(function RowView({
+  row,
+  base,
+  handlers,
+}: {
+  row: Row;
+  base: string;
+  handlers: PromptHandlers;
+}) {
+  switch (row.kind) {
+    case "user":
+      return <UserBubble row={row} base={base} />;
+    case "assistant":
+      return <AssistantBubble row={row} />;
+    case "tool":
+      return <ToolCard row={row} />;
+    case "notice":
+      return <NoticeCard row={row} />;
+    case "ask":
+      return <AskCard row={row} handlers={handlers} />;
+    case "approval":
+      return <ApprovalCard row={row} handlers={handlers} />;
+  }
+});
+
 /**
  * The transcript on screen: the stored conversation, then the live stream.
  *
@@ -77,40 +122,69 @@ function useTranscript(
 ): {
   transcript: Transcript;
   history: "loading" | "loaded" | "failed";
+  reload: () => void;
   setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
   const [history, setHistory] = useState<"loading" | "loaded" | "failed">("loading");
+  const [reloadToken, setReloadToken] = useState(0);
+  const loadedBase = useRef<string | null>(null);
   const lastEvent = snapshot.lastEvent;
+
+  const reload = useCallback(() => setReloadToken((token) => token + 1), []);
 
   useEffect(() => {
     if (!base) return;
     let cancelled = false;
-    setTranscript(emptyTranscript);
-    setHistory("loading");
+    const switched = loadedBase.current !== base;
+    loadedBase.current = base;
+    if (switched) {
+      setTranscript(emptyTranscript);
+      setHistory("loading");
+    }
     void loadHistory(base).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        // A kernel that cannot answer is not a reason to fail the screen: the
-        // stream still works, and an empty transcript with a live composer
-        // beats no screen at all.
         setHistory("failed");
         return;
       }
-      setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+      if (switched) {
+        // Prefix the snapshot: a frame that landed while the read was in
+        // flight must not be thrown away or moved above its own turn.
+        setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+      } else {
+        // A gap reload is a replacement, not a prefix. A row still streaming
+        // is kept because its remaining deltas have no earlier half; a pending
+        // prompt or an unconfirmed send is kept because the kernel still knows
+        // about it even though history does not.
+        setTranscript((current) => ({
+          ...current,
+          rows: [
+            ...result.rows,
+            ...current.rows.filter(
+              (row) =>
+                (row.kind === "assistant" && row.streaming) ||
+                (row.kind === "ask" && row.pending) ||
+                (row.kind === "approval" && row.pending) ||
+                (row.kind === "user" && row.local === true),
+            ),
+          ],
+          gap: false,
+        }));
+      }
       setHistory("loaded");
     });
     return () => {
       cancelled = true;
     };
-  }, [base, runtimeId]);
+  }, [base, runtimeId, reloadToken]);
 
   useEffect(() => {
     if (!lastEvent) return;
     setTranscript((current) => reduce(current, lastEvent));
   }, [lastEvent]);
 
-  return { transcript, history, setTranscript };
+  return { transcript, history, reload, setTranscript };
 }
 
 /**
@@ -195,7 +269,7 @@ function useTodos(
 
 export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSession }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  const { transcript, history, setTranscript } = useTranscript(
+  const { transcript, history, reload, setTranscript } = useTranscript(
     snapshot,
     runtimeId,
     runtime?.base,
@@ -215,6 +289,12 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageRef = useRef<HTMLInputElement | null>(null);
   const lastRetry = useRef<string>("");
+  /** The composer's live value, readable after an await without stale state. */
+  const draftRef = useRef(draft);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   // Attaching is the screen's job, not the caller's: a screen that is mounted
   // and not subscribed shows a still frame that looks like a hang.
@@ -222,6 +302,19 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
     connection.attach(runtimeId);
     return () => connection.detach();
   }, [connection, runtimeId]);
+
+  // A running turn is exactly the window where the phone may be locked. The
+  // native service keeps the process alive and tells the person when it ends.
+  const turnFinished =
+    transcript.ended !== undefined && !transcript.ended.cancelled && !transcript.ended.error;
+  useEffect(() => {
+    if (transcript.running) startTurnNotification(runtime?.name);
+    else stopTurnNotification(turnFinished);
+  }, [transcript.running, turnFinished, runtime?.name]);
+
+  // Leaving the screen means this client is no longer watching the turn; a
+  // notification left behind would be a promise nobody keeps.
+  useEffect(() => () => stopTurnNotification(false), []);
 
   const scrollToBottom = useCallback((smooth: boolean) => {
     const list = listRef.current;
@@ -258,6 +351,18 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
   useEffect(() => {
     const timer = window.setTimeout(grow, 0);
     return () => window.clearTimeout(timer);
+  }, [grow]);
+
+  // Rotation changes the textarea's width, so its wrapped height must be
+  // measured again. Without this a long draft is clipped after a turn.
+  useEffect(() => {
+    const onResize = () => grow();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, [grow]);
 
   // The preview URL is ours to release. Rerunning on every attachment change
@@ -324,14 +429,19 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       // words now; `turn_started` later confirms this row by matching its text
       // instead of appending a second copy.
       const local = optimisticUser(outgoing);
+      const sentAttachment = attachment;
       setTranscript((current) => ({ ...current, rows: [...current.rows, local] }));
       setSend({ kind: "sending" });
       const result = await submit(runtime.base, outgoing);
       if (result.ok) {
         setSend({ kind: "sent" });
-        clearDraft(runtimeId);
-        setDraft("");
-        setAttachment(null);
+        // Only clear what was actually sent. Text typed while the request was
+        // in flight is the next thought, not part of this one.
+        if (isolateImageRefs(draftRef.current).trim() === outgoing) {
+          clearDraft(runtimeId);
+          setDraft("");
+        }
+        setAttachment((current) => (current === sentAttachment ? null : current));
         setAttachError("");
         lastRetry.current = "";
         // The turn itself will report through the stream; the composer clears
@@ -350,7 +460,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       setTranscript((current) => removeLocalUser(current, local.id));
       lastRetry.current = outgoing;
     },
-    [runtime, scrollToBottom],
+    [runtime, scrollToBottom, attachment],
   );
 
   const onKeyDown = useCallback(
@@ -441,12 +551,26 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
             ＋
           </button>
         ) : null}
-        <span className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`} />
+        <span
+          className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`}
+          role="img"
+          aria-label={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
+          title={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
+        />
       </div>
 
       <TodoPanel todos={todos} state={todosState} />
 
-      <div className="transcript" ref={listRef} onScroll={onScroll}>
+      {transcript.gap ? (
+        <div className="notice warn" role="status">
+          <div>连接中断过，中间的消息可能不完整。</div>
+          <button type="button" onClick={reload}>
+            重新加载历史
+          </button>
+        </div>
+      ) : null}
+
+      <div className="transcript" ref={listRef} onScroll={onScroll} role="log" aria-label="对话记录">
         {transcript.rows.length === 0 ? (
           <div className="centered">
             <div>
@@ -469,22 +593,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
             </div>
           </div>
         ) : (
-          transcript.rows.map((row) => {
-            switch (row.kind) {
-              case "user":
-                return <UserBubble key={row.id} row={row} base={runtime.base} />;
-              case "assistant":
-                return <AssistantBubble key={row.id} row={row} />;
-              case "tool":
-                return <ToolCard key={row.id} row={row} />;
-              case "notice":
-                return <NoticeCard key={row.id} row={row} />;
-              case "ask":
-                return <AskCard key={row.id} row={row} handlers={handlers} />;
-              case "approval":
-                return <ApprovalCard key={row.id} row={row} handlers={handlers} />;
-            }
-          })
+          transcript.rows.map((row) => (
+            <RowView key={row.id} row={row} base={runtime.base} handlers={handlers} />
+          ))
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
           <div className="notice error">
@@ -498,7 +609,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       </div>
 
       {promptError ? (
-        <div className="sendfail">
+        <div className="sendfail" role="alert">
           <span>{promptError}</span>
           <button type="button" onClick={() => setPromptError("")}>
             知道了
@@ -507,8 +618,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       ) : null}
 
       {send.kind === "failed" ? (
-        <div className="sendfail">
-          <span>没发出去：{send.detail}</span>
+        <div className="sendfail" role="alert">
+          <span>没发出去：{sendErrorText(send.detail)}</span>
           {send.retryable && lastRetry.current ? (
             <button type="button" onClick={() => void doSend(lastRetry.current)}>
               重试
@@ -528,7 +639,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       ) : null}
 
       {attachError ? (
-        <div className="sendfail">
+        <div className="sendfail" role="alert">
           <span>{attachError}</span>
           <button type="button" onClick={() => setAttachError("")}>
             知道了
@@ -570,7 +681,11 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
             type="button"
             className="send stop"
             aria-label="停止"
-            onClick={() => void cancel(runtime.base)}
+            onClick={() => {
+              void cancel(runtime.base).then((result) => {
+                if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
+              });
+            }}
           >
             ■
           </button>
