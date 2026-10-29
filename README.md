@@ -14,6 +14,10 @@ screens.
 Milestone 1 of 5: the connection layer. It authenticates, lists runtimes, and
 subscribes to a runtime's event stream with resume. There is no chat UI yet.
 
+**Pick up here: [docs/HANDOFF.md](docs/HANDOFF.md).** It lists the environment
+traps, the decisions that will look wrong if you undo them, and what is *not*
+verified.
+
 See [docs/PLAN.md](docs/PLAN.md) for scope and milestones, and
 [docs/PRIOR_ART.md](docs/PRIOR_ART.md) for the survey this design answers to.
 
