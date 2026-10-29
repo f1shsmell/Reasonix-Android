@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A compact R: stem, bowl and leg, with a blue dot as the accent. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,30h10v48h-10z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,30h12a14,14 0 0 1 0,28h-12v-9h11a5,5 0 0 0 0,-10h-11z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,54l17,24h-12l-13,-18z" />
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M76,34m-5,0a5,5 0 1,0 10,0a5,5 0 1,0 -10,0" />
+</vector>

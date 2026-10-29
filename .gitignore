@@ -4,10 +4,15 @@ dist/
 .DS_Store
 .vite/
 
-# Capacitor's generated Android project is a build product: `npx cap sync` is
-# what produces it, and a checked-in copy drifts from capacitor.config.json.
-android/
+# Capacitor's Android project is checked in: it holds the loopback proxy and
+# the MainActivity that starts it. Build outputs are ignored by android/.gitignore.
+# iOS is still a generated product with no native code of ours.
 ios/
 
 # Incremental build output from `tsc -b`: a cache, not a source file.
 *.tsbuildinfo
+
+# Release signing material never leaves the machine.
+keystore.properties
+*.jks
+*.keystore
