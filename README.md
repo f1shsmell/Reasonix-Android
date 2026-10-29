@@ -26,6 +26,19 @@ removed and hunk tones instead of one monospace block. The latest proxy fix —
 sending `Origin` on forwarded POSTs — is built but has not been re-tested on
 the phone yet.
 
+A hardening pass on 2026-10-30 added the parts a prototype usually skips:
+every kernel and proxy request has a deadline; the loopback proxy bounds
+request bodies, reads non-SSE responses with a timeout, and refuses
+state-changing control routes on GET; relay requests and reconnects are
+bounded, and an incomplete replay marks the transcript for a history reload.
+Sending no longer wipes text typed while the request was in flight, Android
+back closes the project sheet, and a render error boundary replaces the white
+screen. Assistant answers gained syntax highlighting and copy actions. A
+foreground service keeps a running turn alive while the phone is locked and
+posts a completion notification when it ends. The first two items are the ones
+to exercise on a real phone; none of the new native code has been re-run there
+yet.
+
 **Pick up here: [docs/HANDOFF.md](docs/HANDOFF.md).** It lists the environment
 traps, the decisions that will look wrong if you undo them, and what is *not*
 verified.
@@ -91,6 +104,17 @@ end-to-end relay run is still not recorded.
 
 The launcher icon and splash are app-owned: adaptive icon
 (`drawable/ic_launcher_foreground.xml`, dark `#0F172A` background) and a
-layer-list launch background. A release build is unsigned unless
-`android/keystore.properties` exists; copy `keystore.properties.example` and
-fill it in before `./gradlew assembleRelease`.
+layer-list launch background. `versionCode` and `versionName` live in
+`android/gradle.properties` (`reasonix.versionCode` / `reasonix.versionName`)
+so a release bump is one edit. Release builds enable R8 and resource shrinking;
+the keep rules for Capacitor's reflective plugin bridge are in
+`android/app/proguard-rules.pro`. `assembleRelease` now fails unless
+`android/keystore.properties` exists — copy `keystore.properties.example` and
+fill it in. Native unit tests run with `cd android && ./gradlew
+testDebugUnitTest`; they cover request-body limits, chunked bodies, header
+length, control-route methods and WebView URL schemes.
+
+A running turn starts `TurnService` (foreground, `dataSync`, partial wake
+lock) and stops it on `turn_done`. The service is priority, not a second
+transport: if the process dies, the kernel keeps running and the next launch
+resumes from the SSE cursor.

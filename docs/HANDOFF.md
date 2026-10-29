@@ -40,10 +40,13 @@ config fixed properly.
 ### The Android SDK is installed now
 
 `ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk`, with platform-tools 37.0.1,
-platforms;android-36 and build-tools;36.0.0. The user-level `JAVA_HOME` points
-at JDK 21 (`C:\Program Files\Java\jdk-21.0.12.1`). The shell and its first APK
-are described below; the first launch on an API 36 emulator succeeded, and the
-operator has since run the phone build on a physical device.
+platforms;android-36 and build-tools;36.0.0. The machine's user-level
+`JAVA_HOME` points at Zulu 25, which Gradle 8.14 cannot parse
+(`Unsupported class file major version 69`). Prefix every Android build with
+`$env:JAVA_HOME='C:\Program Files\Java\jdk-21.0.12.1'` in PowerShell (or set
+it for the session). The shell and its first APK are described below; the
+first launch on an API 36 emulator succeeded, and the operator has since run
+the phone build on a physical device.
 
 ### The Android shell
 
@@ -353,12 +356,11 @@ working provider, driven by the app's own modules rather than by curl):
 
 **Still not verified:**
 
-- **Nothing has been seen rendered on a phone.** The component tests mount the
-  real components in jsdom and press the real buttons, so the bodies are now
-  observed rather than inferred — but layout, scrolling, the software keyboard,
-  safe areas and tap targets have still never been looked at. Treat the CSS as
-  a hypothesis. The todo panel added this round is no exception: its collapsed
-  row, 34 vh cap, and sub-step indent are claims about CSS.
+- **Layout has not been systematically reviewed on a phone.** The phone build
+  has run on a physical device and the component tests mount real components,
+  but scrolling under a finger, the software keyboard, safe areas, rotation
+  and tap targets are still hypotheses. The todo panel's collapsed row, 34 vh
+  cap and sub-step indent are claims about CSS.
 - **The transcript is never scrolled under a real finger.** `atBottom` is
   asserted only by reading the code.
 - **The relay channel has not been exercised end to end.** The protocol is
@@ -379,8 +381,37 @@ working provider, driven by the app's own modules rather than by curl):
   kernel through the loopback proxy** (session list, chat, SSE). A physical
   device has since run the phone build. The loopback-auth build was verified
   on the emulator with a missing-cookie `403`, the prefs secret `200`, and a
-  rendered first screen. Typecheck is clean and the suite is 196 tests across
-  22 files.
+  rendered first screen. Typecheck is clean and the suite is 208 tests across
+  26 files. Native unit tests cover body limits, chunked bodies, header
+  length, control-route methods and WebView URL schemes.
+- **The 2026-10-30 hardening pass has not been re-run on a device.** In
+  particular: the foreground service and its notification permission flow,
+  R8-shrunk release output, syntax highlighting and copy, and the new request
+  deadlines under a half-dead TCP connection. The deadlines and proxy limits
+  are unit-tested; the phone behaviour is not.
+
+## Hardening pass (2026-10-30)
+
+Decisions that will look optional until they are removed:
+
+- Every request goes through `src/net/http.ts`. A socket that connected and
+  then went quiet is the ordinary phone failure; without a deadline the
+  composer stays "sending" forever and `recover()`'s latch never releases.
+  The relay request also has its own 30 s timer.
+- `LoopbackProxy` gives only SSE an infinite read timeout. Control routes that
+  change state are POST-only, because the loopback cookie is present in the
+  app's own WebView and an `<img>` can issue a GET without an Origin.
+- A relay `stream_gap` marks the transcript and offers a fresh history read.
+  Silently continuing would let the person answer from a conversation missing
+  its middle.
+- A send clears only the draft snapshot it took. Text typed while the POST was
+  in flight belongs to the next turn.
+- `TurnService` is priority, not a second transport. It holds a capped partial
+  wake lock and stops on `turn_done`; if the process dies the kernel keeps
+  running and the cursor resumes it.
+- The release build enables R8. The keep rules cover Capacitor's reflective
+  plugin bridge; a release without `keystore.properties` fails at
+  `assembleRelease` instead of producing an uninstallable APK.
 
 ## Review result
 
@@ -391,8 +422,20 @@ HttpOnly cookie, the relay feed reports `onerror` and `RuntimeStream` retries,
 `Connection` clears `lastEvent` on pane changes, and a failed cloud attempt no
 longer tears down a working relay. A re-review of those sites returned pass
 with no new blocker. The proxy auth was also exercised on the emulator
-(missing cookie 403, secret cookie 200, cold launch renders); there is no
-automated Java test for it yet.
+(missing cookie 403, secret cookie 200, cold launch renders). Native unit
+tests now cover request-body limits, chunked bodies, header length,
+control-route methods and WebView URL schemes; the proxy's cookie comparison
+itself still has no automated test.
+
+The 2026-10-30 hardening review flagged one apparent blocker in code-block
+copy. The parent test disproved it — `Markdown.test.tsx` copies the fenced
+source and passes — but the review found real issues that were fixed: R8 was
+missing Gson annotations referenced by the barcode-scanner AAR (now
+`-dontwarn`), `client.timeout` had no sentence of its own, a gap reload could
+drop a pending prompt or an unconfirmed send, a negative chunk size reached
+`new byte[-1]`, and `bundleRelease` was not covered by the signing guard.
+`minifyReleaseWithR8` completes; `assembleRelease` fails without a keystore by
+design. The 208 frontend tests and 11 native tests pass.
 
 ## Where to go next
 

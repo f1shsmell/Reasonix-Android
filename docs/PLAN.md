@@ -317,5 +317,24 @@ Build commands:
 ```bash
 npm run build
 node ./node_modules/@capacitor/cli/bin/capacitor sync android
-cd android && ./gradlew assembleDebug
+cd android && ./gradlew testDebugUnitTest assembleDebug
 ```
+
+### 6. Hardening — 2026-10-30
+
+Written: `src/net/http.ts` (deadlines and composed aborts), bounded relay
+requests, a proxy that limits bodies and only lets SSE wait forever,
+POST-only control routes, gap-triggered history reload, draft-snapshot send
+clearing, an error boundary, syntax highlighting and copy, and
+`TurnService`/`TurnPlugin` for a running turn (foreground `dataSync`, capped
+wake lock, completion notification).
+
+Verified locally: `npm run typecheck`, 208 frontend tests across 26 files,
+`npm run build`, 11 native unit tests, `minifyReleaseWithR8`, and
+`assembleDebug`. `assembleRelease` fails at `verifyReleaseSigning` without a
+keystore, by design.
+
+Not verified: the foreground service and notification permission flow on a
+device, the R8-shrunk APK at runtime, copy/highlight on a phone, and the new
+deadlines against a half-dead TCP connection. The R8 task completes, but an
+APK that has actually run under R8 has not been seen.
