@@ -7,6 +7,8 @@
  * else runs, because the page can navigate and the fragment survives.
  */
 
+import { fetchWithTimeout, RequestTimeout } from "./http";
+
 const TOKEN_PATH = "/auth/token";
 const PAIR_PATH = "/pair";
 const STORAGE_KEY = "reasonix.token";
@@ -53,12 +55,12 @@ export async function bootstrap(): Promise<BootstrapResult> {
   const path = pair ? PAIR_PATH : TOKEN_PATH;
   const body = pair ? { code: pair } : { token };
   try {
-    const response = await fetch(path, {
+    const response = await fetchWithTimeout(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify(body),
-    });
+    }, 10_000);
     if (!response.ok) {
       return { exchanged: false, paired: Boolean(pair), error: `HTTP ${response.status}` };
     }
@@ -67,7 +69,7 @@ export async function bootstrap(): Promise<BootstrapResult> {
     return {
       exchanged: false,
       paired: Boolean(pair),
-      error: error instanceof Error ? error.message : "network error",
+      error: error instanceof RequestTimeout ? "client.timeout" : error instanceof Error ? error.message : "network error",
     };
   }
 }

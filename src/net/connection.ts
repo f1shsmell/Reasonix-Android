@@ -8,6 +8,7 @@
  */
 
 import type { RuntimeView } from "../wire/runtime";
+import { fetchWithTimeout } from "./http";
 import { RuntimeStream, loadCursor, saveCursor, streamUrl } from "./stream";
 import type { StreamState } from "./stream";
 import type { EventPayload } from "../wire/events";
@@ -26,6 +27,18 @@ export interface ConnectionSnapshot {
 }
 
 type Listener = (snapshot: ConnectionSnapshot) => void;
+
+/** A runtime row this client can draw; a newer field is simply ignored. */
+function isRuntimeView(value: unknown): value is RuntimeView {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.base === "string" &&
+    typeof row.root === "string" &&
+    typeof row.name === "string"
+  );
+}
 
 /** A runtime base may be absolute when the pane lives on another machine. */
 function absolute(base: string): string {
@@ -76,7 +89,7 @@ export class Connection {
     const seq = ++this.refreshSeq;
     const stale = () => seq !== this.refreshSeq;
     try {
-      const response = await fetch("/runtimes", { credentials: "same-origin" });
+      const response = await fetchWithTimeout("/runtimes", { credentials: "same-origin" }, 12_000);
       if (stale()) return;
       if (response.status === 401 || response.status === 403) {
         this.publish({ reach: { kind: "unauthorized" }, runtimes: [] });
@@ -86,8 +99,17 @@ export class Connection {
         this.publish({ reach: { kind: "unreachable", detail: `HTTP ${response.status}` } });
         return;
       }
-      const runtimes = (await response.json()) as RuntimeView[];
+      const body: unknown = await response.json();
       if (stale()) return;
+      if (!Array.isArray(body)) {
+        this.publish({ reach: { kind: "unreachable", detail: "invalid /runtimes response" } });
+        return;
+      }
+      const runtimes = body.filter(isRuntimeView);
+      if (body.length > 0 && runtimes.length === 0) {
+        this.publish({ reach: { kind: "unreachable", detail: "invalid /runtimes response" } });
+        return;
+      }
       this.publish({ reach: { kind: "ok" }, runtimes });
       this.reattachIfBaseMoved();
     } catch (error) {

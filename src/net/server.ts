@@ -9,6 +9,8 @@
  * Connect screen shows.
  */
 
+import { fetchWithTimeout } from "./http";
+
 export interface ProxyUser {
   handle?: string;
   email?: string;
@@ -56,11 +58,11 @@ export class ProxyError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 15_000): Promise<T> {
+  const response = await fetchWithTimeout(path, {
     ...init,
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  });
+  }, timeoutMs);
   const text = await response.text();
   let body: unknown = null;
   try {

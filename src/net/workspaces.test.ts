@@ -28,7 +28,10 @@ describe("loadWorkspaces", () => {
 
     const result = await loadWorkspaces("/rt/r1");
 
-    expect(fetchMock).toHaveBeenCalledWith("/rt/r1/workspaces", { credentials: "same-origin" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/workspaces",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
     expect(result).toEqual({
       ok: true,
       info: {

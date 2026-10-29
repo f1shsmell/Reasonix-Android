@@ -13,6 +13,7 @@
  */
 
 import type { HistoryMessage, HistoryToolCall } from "../wire/history";
+import { fetchWithTimeout } from "./http";
 import type { Row, ToolRow } from "../chat/transcript";
 
 /** Control sequences are not text; a transcript that shows them is broken. */
@@ -150,7 +151,7 @@ export async function loadHistory(
   base: string,
 ): Promise<{ ok: true; rows: Row[] } | { ok: false; code: string }> {
   try {
-    const response = await fetch(`${base}/history`, { credentials: "same-origin" });
+    const response = await fetchWithTimeout(`${base}/history`, { credentials: "same-origin" }, 15_000);
     if (!response.ok) return { ok: false, code: `http.${response.status}` };
     const messages = (await response.json()) as HistoryMessage[];
     if (!Array.isArray(messages)) return { ok: false, code: "history.shape" };

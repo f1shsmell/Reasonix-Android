@@ -19,6 +19,7 @@
  */
 
 import type { WireAskAnswer } from "../wire/events";
+import { fetchWithTimeout } from "./http";
 
 export type PromptState =
   | { kind: "idle" }
@@ -54,12 +55,12 @@ function retryable(status: number): boolean {
 
 async function post(base: string, path: string, body: unknown): Promise<PromptResult> {
   try {
-    const response = await fetch(`${base}${path}`, {
+    const response = await fetchWithTimeout(`${base}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify(body),
-    });
+    }, 15_000);
     if (response.ok) return { ok: true };
     const refusalBody = await refusal(response);
     return {

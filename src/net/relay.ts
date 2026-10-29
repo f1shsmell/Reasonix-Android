@@ -14,6 +14,7 @@
 
 import { Capacitor } from "@capacitor/core";
 import { NativeWebSocket } from "../native/socket";
+import { fetchWithTimeout } from "./http";
 
 const ACCOUNT_GRANT = "/__reasonix/account/grant";
 const HOSTED_RELAY = "wss://remote.reasonix.io";
@@ -90,6 +91,8 @@ interface Pending {
   contentType?: string;
   etag?: string;
   chunks: Map<number, string>;
+  /** Fires when the relay never answers, so a request cannot hang forever. */
+  timer?: number;
   resolve: (value: Response) => void;
   reject: (reason: unknown) => void;
 }
@@ -126,12 +129,12 @@ function concatChunks(chunks: Map<number, string>): Uint8Array<ArrayBuffer> {
 // ---- account grant ---------------------------------------------------
 
 async function requestGrant(deviceId: string): Promise<RelayGrant> {
-  const response = await fetch(ACCOUNT_GRANT, {
+  const response = await fetchWithTimeout(ACCOUNT_GRANT, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ deviceId }),
-  });
-    const body = (await response.json().catch(() => null)) as
+  }, 20_000);
+  const body = (await response.json().catch(() => null)) as
     | {
         grant?: { ticket?: unknown };
         device?: RelayDevice;
@@ -348,6 +351,8 @@ async function openConnection(deviceId: string): Promise<Connection> {
 // ---- request transport -----------------------------------------------
 
 const RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
+/** A relay request is a kernel round trip; beyond this the link is presumed dead. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Carries same-origin kernel requests over the relay.
@@ -415,6 +420,10 @@ export class RelayLink {
         resolve,
         reject,
       };
+      entry.timer = window.setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new RelayError("transient", "远程 Studio 没有及时回应，请稍后重试。"));
+      }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, entry);
       void this.send(id, command);
     });
@@ -467,6 +476,7 @@ export class RelayLink {
     if (!pending) return;
     if (message.type === "error") {
       this.pending.delete(id);
+      if (pending.timer !== undefined) clearTimeout(pending.timer);
       pending.reject(
         new RelayError("transient", typeof message.error === "string" ? message.error : "远程 Studio 拒绝了这次请求。"),
       );
@@ -481,6 +491,7 @@ export class RelayLink {
     pending.chunks.set(message.index, message.body);
     if (message.done !== true) return;
     this.pending.delete(id);
+    if (pending.timer !== undefined) clearTimeout(pending.timer);
     const headers = new Headers();
     if (pending.contentType) headers.set("content-type", pending.contentType);
     if (pending.etag) headers.set("etag", pending.etag);
@@ -496,6 +507,7 @@ export class RelayLink {
     for (const [id, entry] of this.pending) {
       if (entry.method !== "GET" && entry.method !== "HEAD") {
         this.pending.delete(id);
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
         entry.reject(new RelayError("transient", "连接中断，这次操作可能没有完成，请刷新后确认。"));
       }
     }
@@ -549,6 +561,7 @@ export class RelayLink {
     if (this.ended) return;
     this.ended = true;
     for (const entry of this.pending.values()) {
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.reject(new RelayError("ended", reason));
     }
     this.pending.clear();

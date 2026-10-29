@@ -8,6 +8,7 @@
  */
 
 import type { RuntimeView } from "../wire/runtime";
+import { fetchWithTimeout } from "./http";
 
 export interface WorkspaceEntry {
   path: string;
@@ -52,7 +53,7 @@ function entry(value: unknown): WorkspaceEntry | null {
 
 export async function loadWorkspaces(base: string): Promise<WorkspacesRead> {
   try {
-    const response = await fetch(`${base}/workspaces`, { credentials: "same-origin" });
+    const response = await fetchWithTimeout(`${base}/workspaces`, { credentials: "same-origin" }, 15_000);
     if (!response.ok) return { ok: false, code: await failureCode(response) };
     const body = (await response.json()) as Record<string, unknown>;
     const recents = Array.isArray(body.recents)
@@ -82,12 +83,12 @@ export async function openRuntime(root: string): Promise<RuntimeOpen> {
   const path = root.trim();
   if (!path) return { ok: false, code: "client.empty_root" };
   try {
-    const response = await fetch("/runtimes", {
+    const response = await fetchWithTimeout("/runtimes", {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ root: path }),
-    });
+    }, 15_000);
     if (!response.ok) return { ok: false, code: await failureCode(response) };
     const runtime = (await response.json()) as RuntimeView;
     if (!runtime || typeof runtime.id !== "string" || typeof runtime.base !== "string") {

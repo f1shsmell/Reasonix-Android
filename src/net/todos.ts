@@ -8,6 +8,7 @@
  */
 
 import type { WireTodo } from "../wire/todos";
+import { fetchWithTimeout } from "./http";
 
 export type TodosRead = { ok: true; items: WireTodo[] } | { ok: false; code: string };
 
@@ -33,7 +34,7 @@ function toTodo(row: Record<string, unknown>): WireTodo {
 
 export async function loadTodos(base: string): Promise<TodosRead> {
   try {
-    const response = await fetch(`${base}/todos`, { credentials: "same-origin" });
+    const response = await fetchWithTimeout(`${base}/todos`, { credentials: "same-origin" }, 10_000);
     if (!response.ok) return { ok: false, code: `http.${response.status}` };
     let body: unknown;
     try {

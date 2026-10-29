@@ -7,6 +7,8 @@
  * theirs to check before it is sent twice.
  */
 
+import { fetchWithTimeout, RequestTimeout } from "./http";
+
 export type SendState =
   | { kind: "idle" }
   | { kind: "sending" }
@@ -54,12 +56,12 @@ export async function submit(base: string, input: string): Promise<SubmitResult>
   const text = input.trim();
   if (!text) return { ok: false, code: "client.empty" };
   try {
-    const response = await fetch(`${base}/submit`, {
+    const response = await fetchWithTimeout(`${base}/submit`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ input: text }),
-    });
+    }, 15_000);
     if (response.ok) return { ok: true };
     const body = await refusal(response);
     return {
@@ -70,7 +72,7 @@ export async function submit(base: string, input: string): Promise<SubmitResult>
   } catch (error) {
     return {
       ok: false,
-      code: "client.offline",
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
       retryable: error instanceof Error,
     };
   }
@@ -79,14 +81,18 @@ export async function submit(base: string, input: string): Promise<SubmitResult>
 /** Ask the kernel to stop the running turn. */
 export async function cancel(base: string): Promise<SubmitResult> {
   try {
-    const response = await fetch(`${base}/cancel`, {
+    const response = await fetchWithTimeout(`${base}/cancel`, {
       method: "POST",
       credentials: "same-origin",
-    });
+    }, 8_000);
     if (response.ok) return { ok: true };
     const body = await refusal(response);
     return { ok: false, code: body.code ?? `http.${response.status}` };
-  } catch {
-    return { ok: false, code: "client.offline", retryable: true };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
+      retryable: true,
+    };
   }
 }

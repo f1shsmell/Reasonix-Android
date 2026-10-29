@@ -12,6 +12,8 @@
  * kernel's own cap for an image is 10 MB, well under the JSON body bound.
  */
 
+import { UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "./http";
+
 export const MAX_IMAGE_MB = 10;
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
@@ -91,12 +93,12 @@ export async function uploadImage(base: string, file: File): Promise<AttachmentR
   }
   try {
     const data = await base64Of(file);
-    const response = await fetch(`${base}/attachments`, {
+    const response = await fetchWithTimeout(`${base}/attachments`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ name, mime, data }),
-    });
+    }, UPLOAD_TIMEOUT_MS);
     if (!response.ok) return { ok: false, code: await failureCode(response) };
     const body = (await response.json()) as Partial<UploadedAttachment>;
     if (typeof body.ref !== "string" || !body.ref || typeof body.path !== "string") {
