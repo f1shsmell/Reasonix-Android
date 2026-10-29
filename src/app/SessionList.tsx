@@ -13,6 +13,10 @@ export interface SessionListProps {
   snapshot: ConnectionSnapshot;
   onOpen: (runtimeId: string) => void;
   onRefresh: () => void;
+  /** Open the connection/account screen (sign-in, LAN switch, cloud devices). */
+  onSettings?: () => void;
+  /** Open the new-session / project sheet. */
+  onNew?: () => void;
 }
 
 function ReachBanner({ snapshot }: { snapshot: ConnectionSnapshot }) {
@@ -62,12 +66,22 @@ function SessionRow({ runtime, onOpen }: { runtime: RuntimeView; onOpen: () => v
   );
 }
 
-export function SessionList({ snapshot, onOpen, onRefresh }: SessionListProps) {
+export function SessionList({ snapshot, onOpen, onRefresh, onSettings, onNew }: SessionListProps) {
   return (
     <div className="shell">
       <div className="bar">
         <span className={`dot ${snapshot.reach.kind === "ok" ? "ok" : "warn"}`} />
         <h1>Reasonix</h1>
+        {onNew ? (
+          <button type="button" className="iconbtn" onClick={onNew} aria-label="新建会话或切换项目">
+            ＋
+          </button>
+        ) : null}
+        {onSettings ? (
+          <button type="button" className="iconbtn" onClick={onSettings} aria-label="连接与账号">
+            ⚙
+          </button>
+        ) : null}
         <button type="button" className="iconbtn" onClick={onRefresh} aria-label="刷新">
           ⟳
         </button>
