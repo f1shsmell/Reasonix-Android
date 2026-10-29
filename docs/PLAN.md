@@ -167,3 +167,51 @@ Four decisions worth keeping:
   conversation.
 - **Scroll follows only from the bottom.** A streaming transcript that yanks the
   view down while someone reads back is the worst thing it can do.
+### 3–4. Cards and interaction — done, and found wrong on the wire
+
+Milestones 3 and 4 were written before any of this ran against a keyed kernel,
+and the handoff said so. Running it against one found that the ask path had
+never worked at all:
+
+| What the client did | What the kernel does |
+|---|---|
+| `ask.prompt`, `ask.options` | `ask.questions[]`, each with its own `options` |
+| `POST /answer {answers: ["茶"]}` → **400** | `{answers: [{QuestionID, Selected}]}` → **204** |
+| `POST /approve {allow, remember}` | `{allow, session, persist}`; `remember` is accepted and **silently ignored** |
+
+The approve one is the worse of the two. A wrong answer body fails loudly; a
+wrong approval body succeeds while granting less than the person asked for, so
+nothing on either screen ever says the session grant did not happen.
+
+Two more things came out of the same session:
+
+- **A reopened session was empty.** The kernel answers a first connection with
+  initial notices only — it does not replay the session — so `ChatScreen`
+  showed nothing for a conversation that had been running for days. `net/history.ts`
+  now reads `GET /history` and folds it under the live stream.
+- **A prompt could stay pending forever.** A decision made on another device
+  never reached this one as a state change, so the row kept its buttons. The
+  kernel emits a `decisionReceipt` on a notice frame; that is what closes it.
+
+What was verified against a real kernel this time, not inferred:
+
+- `GET /rt/{id}/history` → 13 messages, folded into user/assistant/tool rows
+  with results joined to their calls by id.
+- `POST /rt/{id}/answer` with `[{QuestionID, Selected}]` → 204, and the kernel
+  then emits `{"kind":"notice","decisionReceipt":{"id":"…","kind":"ask",
+  "outcome":"answered"}}`.
+- `POST /rt/{id}/approve` with `{id, allow, session, persist}` → 204.
+- A **new** SSE connection receives a replay of a prompt that is still open.
+  That is why history carries settled messages only: the pending ones arrive
+  on their own.
+
+Tests: 89 passing, up from 41. The 17 that matter most are the first component
+tests this project has had — `Rows.test.tsx` presses the buttons and asserts
+the body, and `ChatScreen.test.tsx` asserts that a live frame lands *below* the
+history it followed. Typecheck clean, production build 75.7 kB gzipped.
+
+One environment note: React 19 refuses to batch inside `act` unless
+`IS_REACT_ACT_ENVIRONMENT` is set, so `src/test-setup.ts` sets it and stubs
+jsdom's missing `Element.prototype.scrollTo`. Without the first, every
+component test warns and the batching that makes it deterministic stops
+applying — a green run would prove less than it looks like.

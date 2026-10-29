@@ -11,6 +11,7 @@ import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import type { SendState } from "../net/submit";
 import { answer, approve } from "../net/prompts";
+import { loadHistory } from "../net/history";
 import { closeApproval, emptyTranscript, markAnswered, reduce } from "./transcript";
 import type { Transcript } from "./transcript";
 import {
@@ -43,30 +44,56 @@ export interface ChatScreenProps {
  * that landed while the read was in flight must not be thrown away, and it must
  * not end up above the messages it follows.
  */
-/**
- * The transcript on screen, folded from the live stream.
- *
- * `setTranscript` is handed back because the prompt handlers close a row the
- * moment the kernel confirms it: waiting for the receipt instead would leave
- * the buttons live long enough for a second tap to answer twice.
- */
-function useTranscript(snapshot: ConnectionSnapshot): {
+function useTranscript(
+  snapshot: ConnectionSnapshot,
+  runtimeId: string,
+  base: string | undefined,
+): {
   transcript: Transcript;
+  history: "loading" | "loaded" | "failed";
   setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
+  const [history, setHistory] = useState<"loading" | "loaded" | "failed">("loading");
   const lastEvent = snapshot.lastEvent;
+
+  useEffect(() => {
+    if (!base) return;
+    let cancelled = false;
+    setTranscript(emptyTranscript);
+    setHistory("loading");
+    void loadHistory(base).then((result) => {
+      if (cancelled) return;
+      if (!result.ok) {
+        // A kernel that cannot answer is not a reason to fail the screen: the
+        // stream still works, and an empty transcript with a live composer
+        // beats no screen at all.
+        setHistory("failed");
+        return;
+      }
+      setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+      setHistory("loaded");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, runtimeId]);
 
   useEffect(() => {
     if (!lastEvent) return;
     setTranscript((current) => reduce(current, lastEvent));
   }, [lastEvent]);
 
-  return { transcript, setTranscript };
+  return { transcript, history, setTranscript };
 }
+
 export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  const { transcript, setTranscript } = useTranscript(snapshot);
+  const { transcript, history, setTranscript } = useTranscript(
+    snapshot,
+    runtimeId,
+    runtime?.base,
+  );
   const [draft, setDraft] = useState("");
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
@@ -226,8 +253,22 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack }: ChatScre
         {transcript.rows.length === 0 ? (
           <div className="centered">
             <div>
-              <strong>还没有消息</strong>
-              问点什么，或者去桌面端看看这个会话。
+              {history === "loading" ? (
+                <>
+                  <strong>正在读这个会话</strong>
+                  桌面上跑过的内容会先补上。
+                </>
+              ) : history === "failed" ? (
+                <>
+                  <strong>没读到历史</strong>
+                  新的消息照常显示，往回翻的内容暂时看不到。
+                </>
+              ) : (
+                <>
+                  <strong>还没有消息</strong>
+                  问点什么，或者去桌面端看看这个会话。
+                </>
+              )}
             </div>
           </div>
         ) : (

@@ -120,36 +120,50 @@ do.
 `src/app/main.tsx`. The double-invoked effects it causes are exactly the ones
 that break a streaming view. Finding that in development is the point.
 
-## Not verified — read this before claiming anything works
+## Verified, and what is still not
 
 Be precise about this with whoever you report to.
 
-- **Nothing has been seen rendered.** The Chrome relay extension is not
-  connected, so no browser was ever opened against this app. Layout, scrolling,
-  the software keyboard, safe areas and tap targets are written to mobile
-  constraints but have never been looked at. Treat the CSS as a hypothesis.
-- **`/answer` and `/approve` have never been called for real.** The handlers in
-  `ChatScreen.tsx` post `{id, answers}` and `{id, allow, remember}`. Those
-  bodies were inferred from `eventwire/ask.go` and `eventwire/approval.go`, not
-  observed on the wire. Verify against a keyed kernel before trusting them.
-- **The transcript fold is tested, the view is not.** 18 tests cover the fold;
-  zero cover a component.
+**Verified against a keyed kernel on 2026-10-29** (`reasonix serve` with a
+working provider, driven by the app's own modules rather than by curl):
 
-What *was* verified against a real kernel, through the Vite dev proxy: index
-200, `POST /auth/token` → 204 + cookie, `GET /runtimes` → the open pane, SSE
-connects, `POST /rt/r1/submit` → `provider.key_missing`.
+- `POST /auth/token` → 204 + `reasonix_token`; `GET /runtimes` → the open pane.
+- SSE connects, and a **new** connection receives a replay of a prompt that is
+  still open. That is why history carries settled messages only.
+- `GET /rt/{id}/history` → the stored conversation, folded into rows with tool
+  results joined to their calls by id.
+- `POST /rt/{id}/answer` with `{answers: [{QuestionID, Selected}]}` → 204. A
+  bare string list → 400 `request.missing_field`; that was the old body.
+- `POST /rt/{id}/approve` with `{id, allow, session, persist}` → 204.
+- The kernel then emits a `decisionReceipt` on a notice frame, which is what
+  closes a pending prompt that was answered elsewhere.
 
+**Still not verified:**
+
+- **Nothing has been seen rendered on a phone.** The component tests mount the
+  real components in jsdom and press the real buttons, so the bodies are now
+  observed rather than inferred — but layout, scrolling, the software keyboard,
+  safe areas and tap targets have still never been looked at. Treat the CSS as
+  a hypothesis.
+- **The transcript is never scrolled under a real finger.** `atBottom` is
+  asserted only by reading the code.
+- **No device has ever run this.** Milestone 5 needs the Android SDK, which is
+  still not installed.
 ## Where to go next
 
 `docs/PLAN.md` lists milestones 3–5. My own read, in priority order:
 
 1. **Look at it on a phone.** Everything else is building on unseen CSS.
    `http://<lan-ip>:5274/#token=<token>`.
-2. **Verify `/answer` and `/approve`** against a keyed kernel. Two curl calls
-   against a real prompt settle the body shape.
-3. **Todos** (`todo_progress`) — the payload is at `eventwire/wire.go`,
-   `TodoProgress`.
-4. **Capacitor packaging** — needs the SDK first.
+2. **Todos** (`todo_progress`) — the payload is at `eventwire/wire.go`,
+   `TodoProgress`, and `GET /rt/{id}/todos` returns the canonical list. Derive
+   it from that read, not from the transcript: the advances write no
+   `todo_write`, and refused writes do land in the transcript.
+3. **Capacitor packaging** — needs the SDK first.
+
+Answered prompts were verified this round, so they are off this list. What is
+*not* answered is whether a phone can reach a kernel over the LAN at all: every
+verification so far went through loopback or the dev proxy.
 
 ## The contract rule
 
