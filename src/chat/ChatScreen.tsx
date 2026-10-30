@@ -16,6 +16,7 @@ import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments"
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
 import { loadHistory } from "../net/history";
+import { loadReading, readingKey, saveReading } from "./reading";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification, stopTurnNotification } from "../native/turn";
 import type { WireTodo } from "../wire/todos";
@@ -409,6 +410,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
     runtime?.base,
   );
   const { todos, state: todosState } = useTodos(runtime?.base, snapshot.lastEvent);
+  /** The stored transcript's identity; a pane id is only the fallback. */
+  const readingId = readingKey(runtime?.sessionPath, runtimeId);
   // App keys this screen by runtimeId, so this initial value is that pane's
   // draft and no other pane can read it. The save effect below mirrors every
   // keystroke to the same key.
@@ -420,7 +423,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   >([]);
   const [attachError, setAttachError] = useState("");
   const [attaching, setAttaching] = useState(false);
-  const [atBottom, setAtBottom] = useState(true);
+  const [atBottom, setAtBottom] = useState(
+    () => loadReading(readingId)?.atBottom ?? true,
+  );
   /** The model the catalog last confirmed, shown until the transcript reports one. */
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
@@ -440,6 +445,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const imageRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
   const lastRetry = useRef<string>("");
+  /** Restored once per mount, after the stored history has been drawn. */
+  const restoredReading = useRef(false);
+  const readingTimer = useRef<number | null>(null);
   /** The composer's live value, readable after an await without stale state. */
   const draftRef = useRef(draft);
 
@@ -518,12 +526,57 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
     if (atBottom) scrollToBottom(false);
   }, [transcript.rows, atBottom, scrollToBottom]);
 
+  // Reopening a conversation puts the reader back where they were. The stored
+  // history decides the height, so this waits for it; a pane opened for the
+  // first time has no position and follows the newest row.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list || restoredReading.current || history !== "loaded") return;
+    restoredReading.current = true;
+    const saved = loadReading(readingId);
+    if (saved && !saved.atBottom) {
+      list.scrollTop = saved.top;
+      setAtBottom(false);
+    } else {
+      list.scrollTop = list.scrollHeight;
+      setAtBottom(true);
+    }
+  }, [history, readingId]);
+
+  const persistReading = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (readingTimer.current !== null) window.clearTimeout(readingTimer.current);
+    readingTimer.current = window.setTimeout(() => {
+      readingTimer.current = null;
+      const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
+      saveReading(readingId, { top: list.scrollTop, atBottom: gap < 48 });
+    }, 250);
+  }, [readingId]);
+
   const onScroll = useCallback(() => {
     const list = listRef.current;
     if (!list) return;
     const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
     setAtBottom(gap < 48);
-  }, []);
+    persistReading();
+  }, [persistReading]);
+
+  // Leaving flushes the last position; a screen that never finished reading
+  // history keeps the position it had rather than overwriting it with zero.
+  useEffect(
+    () => () => {
+      if (readingTimer.current !== null) {
+        window.clearTimeout(readingTimer.current);
+        readingTimer.current = null;
+      }
+      const list = listRef.current;
+      if (!list || !restoredReading.current) return;
+      const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
+      saveReading(readingId, { top: list.scrollTop, atBottom: gap < 48 });
+    },
+    [readingId],
+  );
 
   const grow = useCallback(() => {
     const input = inputRef.current;

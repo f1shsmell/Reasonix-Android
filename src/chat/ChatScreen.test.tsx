@@ -6,6 +6,7 @@ import { ChatScreen } from "./ChatScreen";
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import type { EventPayload } from "../wire/events";
 import type { RuntimeView } from "../wire/runtime";
+import { saveReading } from "./reading";
 
 /**
  * The screen's own job — putting the stored conversation under the live stream
@@ -1158,7 +1159,9 @@ describe("ChatScreen activity", () => {
     await flush();
 
     const summary = container.querySelector(".process-row");
-    expect(summary?.textContent).toContain("已处理 2 个操作");
+    expect(summary?.textContent).toContain("执行命令");
+    expect(summary?.textContent).toContain("读取");
+    expect(summary?.textContent).toContain("2 个操作");
     expect(container.querySelectorAll(".activity-row")).toHaveLength(0);
 
     act(() => (summary as HTMLButtonElement).click());
@@ -1239,5 +1242,78 @@ describe("ChatScreen composer extras", () => {
     const sheet = container.querySelector(".head-menu");
     expect(sheet?.textContent).toContain("重新加载历史");
     expect(sheet?.textContent).toContain("选择模型");
+  });
+});
+
+
+describe("ChatScreen reading position", () => {
+  function stubScroll(): { top: () => number; restore: () => void } {
+    let value = 0;
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    const saved = {
+      scrollTop: Object.getOwnPropertyDescriptor(proto, "scrollTop"),
+      scrollHeight: Object.getOwnPropertyDescriptor(proto, "scrollHeight"),
+      clientHeight: Object.getOwnPropertyDescriptor(proto, "clientHeight"),
+    };
+    Object.defineProperty(proto, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(proto, "scrollTop", {
+      configurable: true,
+      get: () => value,
+      set: (next: number) => {
+        value = next;
+      },
+    });
+    return {
+      top: () => value,
+      restore: () => {
+        for (const [name, descriptor] of Object.entries(saved)) {
+          if (descriptor) Object.defineProperty(proto, name, descriptor);
+          else delete proto[name];
+        }
+      },
+    };
+  }
+
+  it("returns to the place a conversation was left", async () => {
+    const scroll = stubScroll();
+    try {
+      saveReading("r1", { top: 240, atBottom: false });
+      stubKernel({
+        history: [
+          { role: "user", content: "old question", msgIndex: 1 },
+          { role: "assistant", content: "old answer", msgIndex: 2 },
+        ],
+      });
+
+      render(snapshot());
+      await flush();
+      await flush();
+
+      expect(scroll.top()).toBe(240);
+    } finally {
+      scroll.restore();
+    }
+  });
+
+  it("follows the newest row when the last visit was at the bottom", async () => {
+    const scroll = stubScroll();
+    try {
+      saveReading("r1", { top: 0, atBottom: true });
+      stubKernel({
+        history: [
+          { role: "user", content: "old question", msgIndex: 1 },
+          { role: "assistant", content: "old answer", msgIndex: 2 },
+        ],
+      });
+
+      render(snapshot());
+      await flush();
+      await flush();
+
+      expect(scroll.top()).toBe(1000);
+    } finally {
+      scroll.restore();
+    }
   });
 });

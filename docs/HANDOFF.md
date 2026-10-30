@@ -311,12 +311,19 @@ thinking is lifted out of the card as its own step, so it is never shown twice.
 
 - While a turn runs, its steps stay individual: that is when watching them is
   useful.
-- A finished run of two or more steps collapses into one `已处理 N 个操作` row;
-  its sheet draws the same steps as a timeline and expands one at a time.
+- A finished run of two or more steps collapses into one row whose title ranks
+  the tool families (`读取、搜索、执行命令`) and whose tail keeps the count
+  (`5 个操作`); its sheet draws the same steps as a timeline and expands one at a
+  time.
 - A single step stays a row even after the turn ends. An assistant row that
   only carried thinking contributes the step and no answer bubble.
 - A thought longer than 900 characters opens the full sheet instead of growing
   an inline row.
+- `src/chat/reading.ts` stores scroll offset and whether the person was following
+  the newest row, keyed by the session path. ChatScreen restores it once the
+  stored history is drawn, so reopening lands where they left instead of at the
+  bottom; a screen that never finished reading keeps the old position rather
+  than overwriting it with zero.
 
 The composer is a floating card, as Qoder's phone client draws it: images as
 numbered thumbnails inside the card, `+` opens 相机 / 图片 / 计划, the model
