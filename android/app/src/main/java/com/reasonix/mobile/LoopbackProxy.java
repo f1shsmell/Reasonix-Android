@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.HttpURLConnection;
@@ -504,8 +505,11 @@ public final class LoopbackProxy {
         // decoded form too. The forward itself stays byte-for-byte.
         String decoded;
         try {
-            decoded = URLDecoder.decode(kernelPath, StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
+            // The Charset overload is API 33; phones below Android 13 die with
+            // NoSuchMethodError on this proxy thread, which takes the app with
+            // it. The String overload has been there since API 1.
+            decoded = URLDecoder.decode(kernelPath, StandardCharsets.UTF_8.name());
+        } catch (IllegalArgumentException | UnsupportedEncodingException e) {
             return "";
         }
         if (!kernelPath.startsWith("/") || kernelPath.contains("..")
