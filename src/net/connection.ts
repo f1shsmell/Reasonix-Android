@@ -29,7 +29,7 @@ export interface ConnectionSnapshot {
 type Listener = (snapshot: ConnectionSnapshot) => void;
 
 /** A runtime row this client can draw; a newer field is simply ignored. */
-function isRuntimeView(value: unknown): value is RuntimeView {
+export function isRuntimeView(value: unknown): value is RuntimeView {
   if (typeof value !== "object" || value === null) return false;
   const row = value as Record<string, unknown>;
   return (

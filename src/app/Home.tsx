@@ -22,6 +22,8 @@ import { linkSummary, linkTone } from "../net/link";
 import type { LinkState } from "../net/link";
 import { loadConnections } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
+import { originKey, peerTone } from "../net/fleet";
+import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { insideHorizontalScroller, swipeTo } from "./swipe";
 import type { HomeTab } from "./swipe";
 import { useProjectDrag } from "./useProjectDrag";
@@ -64,6 +66,10 @@ export interface HomeProps {
   onRefresh: () => void;
   /** Open the connection/account screen (sign-in, LAN switch, cloud devices). */
   onSettings?: () => void;
+  /** What the other watched computers are doing, when the proxy can watch. */
+  fleet?: FleetSnapshot;
+  /** Open a conversation that lives on another computer: switch, then open. */
+  onOpenFleet?: (item: FleetPendingItem | FleetRunningItem) => void;
 }
 
 interface RecentRow {
@@ -385,6 +391,7 @@ function LinkBar({ link, onOpen }: { link: LinkState; onOpen: () => void }) {
 function SwitchSheet({
   link,
   saved,
+  fleet,
   onClose,
   onSwitch,
   onRetry,
@@ -392,6 +399,8 @@ function SwitchSheet({
 }: {
   link: LinkState;
   saved: SavedConnection[];
+  /** Live reachability of the saved computers, when the proxy watches them. */
+  fleet?: FleetSnapshot;
   onClose: () => void;
   onSwitch: (entry: SavedConnection) => void;
   onRetry: () => void;
@@ -426,6 +435,18 @@ function SwitchSheet({
             {saved.map((entry) => {
               const here = link.phase === "connected" && link.target === entry.target;
               const opening = busy && link.target === entry.target;
+              const peer = fleet?.peers.find(
+                (candidate) =>
+                  candidate.kind === entry.kind &&
+                  originKey(candidate.kind, candidate.target) === originKey(entry.kind, entry.target),
+              );
+              const tone = peer ? peerTone(peer.state) : null;
+              const sub = entry.kind === "lan"
+                ? `局域网 · ${entry.target}`
+                : "云端 · Reasonix 账号";
+              const stateText = peer
+                ? { online: "在线", offline: "不可达", unauthorized: "配对失效", unwatchable: "不可监控", unknown: "" }[peer.state]
+                : "";
               return (
                 <li key={`${entry.kind}:${entry.target}`}>
                   <button
@@ -435,17 +456,14 @@ function SwitchSheet({
                     disabled={busy}
                     onClick={() => onSwitch(entry)}
                   >
+                    {tone ? <span className={`dot ${tone}`} aria-hidden="true" /> : null}
                     <span className="switch-main">
                       <span className="switch-name">
                         {entry.name}
                         {here ? <span className="current-tag">当前</span> : null}
                         {opening ? <span className="current-tag">连接中</span> : null}
                       </span>
-                      <span className="switch-sub">
-                        {entry.kind === "lan"
-                          ? `局域网 · ${entry.target}`
-                          : "云端 · Reasonix 账号"}
-                      </span>
+                      <span className="switch-sub">{[sub, stateText].filter(Boolean).join(" · ")}</span>
                     </span>
                     <span className="chev" aria-hidden="true">
                       ›
@@ -470,6 +488,70 @@ function SwitchSheet({
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * The other watched computers, one row each.
+ *
+ * It sits between the link bar and the search field: which computers are
+ * listening decides what the lists below mean, the same way the active
+ * connection does. A computer with nothing blocked or running is quiet — the
+ * block is "what needs you elsewhere", not a device manager.
+ */
+function FleetBar({
+  fleet,
+  onOpen,
+}: {
+  fleet: FleetSnapshot;
+  onOpen: (item: FleetPendingItem | FleetRunningItem) => void;
+}) {
+  const blocked = fleet.pending.filter((item) => item.peer !== fleet.active);
+  const working = fleet.running.filter((item) => item.peer !== fleet.active);
+  const names = new Map<number, string>();
+  for (const item of [...blocked, ...working]) names.set(item.peer, item.peerName);
+  const peers = [...names.keys()].sort((a, b) => a - b);
+  if (peers.length === 0) return null;
+  return (
+    <section className="fleet" aria-label="其他电脑">
+      {peers.map((peer) => {
+        const peerBlocked = blocked.filter((item) => item.peer === peer);
+        const peerWorking = working.filter((item) => item.peer === peer);
+        const row = peerBlocked[0] ?? peerWorking[0];
+        if (!row) return null;
+        const peerState = fleet.peers.find((candidate) => candidate.index === peer)?.state ?? "unknown";
+        const label = peerBlocked.length > 0
+          ? `${peerBlocked.length} 个待处理`
+          : "正在运行";
+        return (
+          <button
+            key={peer}
+            type="button"
+            className="fleet-row"
+            onClick={() => onOpen(row)}
+            aria-label={`${row.peerName}：${label}，点按切换`}
+          >
+            <span className={`dot ${peerTone(peerState)}`} aria-hidden="true" />
+            <span className="fleet-main">
+              <span className="fleet-name">
+                {row.peerName}
+              <span className="fleet-tag" data-kind={peerBlocked.length > 0 ? "blocked" : "running"}>
+                {label}
+              </span>
+              </span>
+              <span className="fleet-sub">
+                {peerBlocked.length > 0 && peerWorking.length > 0
+                  ? `${peerWorking.length} 个运行中 · ${row.title}`
+                  : row.title}
+              </span>
+            </span>
+            <span className="chev" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        );
+      })}
+    </section>
   );
 }
 
@@ -578,6 +660,8 @@ export function Home({
   onNewSession,
   onRefresh,
   onSettings,
+  fleet,
+  onOpenFleet,
 }: HomeProps) {
   const [query, setQuery] = useState("");
   const [sheet, setSheet] = useState(false);
@@ -746,6 +830,8 @@ export function Home({
         }}
       />
 
+      {fleet && onOpenFleet ? <FleetBar fleet={fleet} onOpen={onOpenFleet} /> : null}
+
       <div className="body">
         <ReachBanner snapshot={snapshot} />
 
@@ -882,6 +968,7 @@ export function Home({
         <SwitchSheet
           link={link}
           saved={saved}
+          {...(fleet ? { fleet } : {})}
           onClose={() => setSwitchSheet(false)}
           onSwitch={(entry) => {
             setSwitchSheet(false);

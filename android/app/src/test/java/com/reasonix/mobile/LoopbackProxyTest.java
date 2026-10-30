@@ -69,11 +69,45 @@ public class LoopbackProxyTest {
         assertFalse(LoopbackProxy.controlMethodAllowed("/__reasonix/account/logout", "GET"));
         assertFalse(LoopbackProxy.controlMethodAllowed("/__reasonix/relay/clear", "GET"));
         assertFalse(LoopbackProxy.controlMethodAllowed("/__reasonix/refresh", "GET"));
+        assertFalse(LoopbackProxy.controlMethodAllowed("/__reasonix/fleet", "DELETE"));
         assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/account/logout", "POST"));
         assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/relay/clear", "POST"));
         assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/config", "GET"));
         assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/config", "POST"));
+        assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/fleet", "GET"));
+        assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/fleet", "POST"));
         assertFalse(LoopbackProxy.controlMethodAllowed("/__reasonix/account", "POST"));
         assertTrue(LoopbackProxy.controlMethodAllowed("/__reasonix/account", "GET"));
+    }
+
+    // ---- fleet route parsing -------------------------------------------
+
+    @Test
+    public void fleetRouteKeepsTheKernelPathAndQuery() {
+        assertEquals("/runtimes", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/runtimes"));
+        assertEquals("/tree?scope=active&limit=60",
+                LoopbackProxy.fleetKernelPath("/__reasonix/fleet/0/tree?scope=active&limit=60"));
+        assertEquals("/rt/ab12/status",
+                LoopbackProxy.fleetKernelPath("/__reasonix/fleet/2/rt/ab12/status"));
+        assertEquals(1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet/1/runtimes"));
+    }
+
+    @Test
+    public void fleetRouteRefusesControlPathsAndTraversal() {
+        assertEquals("", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/__reasonix/config"));
+        assertEquals("", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/../secret"));
+        assertEquals("", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/runtimes/../pair"));
+        assertEquals("", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1"));
+        // A kernel may decode percent escapes before routing, so the encoded
+        // forms are refused on their decoded shape.
+        assertEquals("", LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/%2e%2e/secret"));
+        assertEquals("",
+                LoopbackProxy.fleetKernelPath("/__reasonix/fleet/1/%5F%5Freasonix%2Fconfig"));
+    }
+
+    @Test
+    public void fleetRouteRefusesAnUnusableIndex() {
+        assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet/abc/runtimes"));
+        assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet//runtimes"));
     }
 }

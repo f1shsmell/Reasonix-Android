@@ -21,6 +21,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -63,6 +64,9 @@ public final class LoopbackProxy {
     private static final String KEY_MODE = "mode";
     private static final String KEY_RELAY_DEVICE = "relay_device";
     private static final String KEY_PROXY_SECRET = "proxy_secret";
+    private static final String KEY_FLEET = "fleet";
+    /** Watching every remembered computer would make a sweep a port scan. */
+    private static final int MAX_FLEET = 4;
     private static final String PROXY_COOKIE = "reasonix_loopback";
     private static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
     private static final String IDENTITY = "https://id.reasonix.io";
@@ -226,6 +230,13 @@ public final class LoopbackProxy {
                 writeJson(s, 413, "{\"code\":\"request.too_large\"}");
                 return;
             }
+            // Per-peer fleet reads live under /__reasonix/ but need the full
+            // request target (query included) and the headers, which control()
+            // does not carry; they are answered before the control plane.
+            if (path.startsWith("/__reasonix/fleet/")) {
+                fleetForward(s, method, target, headers);
+                return;
+            }
             if (path.startsWith("/__reasonix/")) {
                 control(s, method, path, body);
                 return;
@@ -274,6 +285,9 @@ public final class LoopbackProxy {
                 return;
             }
             switch (path) {
+                case "/__reasonix/fleet":
+                    fleet(socket, method, body);
+                    return;
                 case "/__reasonix/config":
                     if ("GET".equals(method)) {
                         writeJson(socket, 200, configJson().toString());
@@ -327,6 +341,8 @@ public final class LoopbackProxy {
         switch (path) {
             case "/__reasonix/config":
                 return "GET".equals(method) || "POST".equals(method);
+            case "/__reasonix/fleet":
+                return "GET".equals(method) || "POST".equals(method);
             case "/__reasonix/account":
             case "/__reasonix/account/devices":
                 return "GET".equals(method);
@@ -341,6 +357,165 @@ public final class LoopbackProxy {
             default:
                 // The switch below answers 404 for unknown control paths.
                 return true;
+        }
+    }
+
+    // ---- fleet: the other computers this phone listens to ----------------
+
+    /**
+     * The watch list behind `/__reasonix/fleet/<index>/<kernel path>`.
+     *
+     * The app replaces the whole list: per-entry writes would need the app and
+     * the proxy to agree on identity during a reorder, and a stale mirror
+     * would then read one computer's cookies from another's row. LAN rows
+     * carry the origin the reads go to; a cloud row is recorded so the app can
+     * name it, but the relay carries one link, so it is `watchable: false`.
+     */
+    private void fleet(Socket socket, String method, byte[] body) throws IOException, JSONException {
+        if ("GET".equals(method)) {
+            writeJson(socket, 200, fleetList().toString());
+            return;
+        }
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        JSONArray raw = request.optJSONArray("peers");
+        JSONArray kept = new JSONArray();
+        Set<String> keys = new HashSet<>();
+        if (raw != null) {
+            for (int i = 0; i < raw.length() && kept.length() < MAX_FLEET; i++) {
+                JSONObject entry = raw.optJSONObject(i);
+                if (entry == null) continue;
+                String kind = entry.optString("kind", "lan");
+                String target = entry.optString("target", "").trim();
+                JSONObject keptEntry = new JSONObject();
+                if ("lan".equals(kind)) {
+                    String origin = normalizeOrigin(target);
+                    if (origin.isEmpty()) continue;
+                    keptEntry.put("kind", "lan").put("target", origin);
+                } else {
+                    if (target.isEmpty()) continue;
+                    keptEntry.put("kind", "cloud").put("target", target);
+                }
+                // One spelling per computer, however the app spelled the host:
+                // a duplicate row would make two indexes read the same kernel.
+                String key = kind + " " + keptEntry.optString("target", "").toLowerCase(Locale.ROOT);
+                if (!keys.add(key)) continue;
+                String name = entry.optString("name", "").trim();
+                keptEntry.put("name", name.isEmpty() ? target : name);
+                kept.put(keptEntry);
+            }
+        }
+        prefs.edit().putString(KEY_FLEET, kept.toString()).apply();
+        writeJson(socket, 200, fleetList().toString());
+    }
+
+    private JSONObject fleetList() throws JSONException {
+        JSONArray list;
+        try {
+            list = new JSONArray(prefs.getString(KEY_FLEET, "[]"));
+        } catch (JSONException e) {
+            list = new JSONArray();
+        }
+        JSONArray peers = new JSONArray();
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject entry = list.optJSONObject(i);
+            if (entry == null) continue;
+            boolean lan = "lan".equals(entry.optString("kind", "lan"));
+            JSONObject out = new JSONObject();
+            out.put("kind", entry.optString("kind", "lan"));
+            out.put("target", entry.optString("target", ""));
+            out.put("name", entry.optString("name", ""));
+            out.put("watchable", lan);
+            peers.put(out);
+        }
+        JSONObject body = new JSONObject();
+        body.put("peers", peers);
+        return body;
+    }
+
+    /**
+     * One kernel read through a watched computer, named by list index.
+     *
+     * GET only: the phone may watch another computer, but a turn, an approval
+     * and every other write stay with the connection the person is on. The
+     * index names the peer; the path behind it is what that kernel answers.
+     */
+    private void fleetForward(Socket socket, String method, String target,
+                              Map<String, String> headers) throws IOException {
+        if (!"GET".equals(method)) {
+            methodNotAllowed(socket);
+            return;
+        }
+        String kernelPath = fleetKernelPath(target);
+        if (kernelPath.isEmpty()) {
+            writeJson(socket, 400, "{\"code\":\"fleet.bad_path\"}");
+            return;
+        }
+        int index = fleetPeerIndex(target);
+        JSONArray list;
+        try {
+            list = new JSONArray(prefs.getString(KEY_FLEET, "[]"));
+        } catch (JSONException e) {
+            list = new JSONArray();
+        }
+        if (index < 0 || index >= list.length()) {
+            writeJson(socket, 404, "{\"code\":\"fleet.no_peer\"}");
+            return;
+        }
+        JSONObject entry = list.optJSONObject(index);
+        String origin = entry != null && "lan".equals(entry.optString("kind", "lan"))
+                ? entry.optString("target", "")
+                : "";
+        if (origin.isEmpty()) {
+            writeJson(socket, 503, "{\"code\":\"fleet.unwatchable\"}");
+            return;
+        }
+        forwardTo(socket, origin, method, kernelPath, headers, new byte[0]);
+    }
+
+    /**
+     * The kernel path a fleet route carries, or "" when it must not forward.
+     *
+     * `/__reasonix/fleet/<index>/<kernel path>?<query>` keeps the query: the
+     * kernel reads it (a tree window, a replay cursor). Control paths,
+     * traversal and relative shapes are an app bug, and "" is a refusal
+     * rather than a forward.
+     */
+    static String fleetKernelPath(String target) {
+        String path = target.split("\\?", 2)[0];
+        String query = target.contains("?") ? target.substring(target.indexOf('?')) : "";
+        String rest = path.substring("/__reasonix/fleet/".length());
+        int slash = rest.indexOf('/');
+        // `/__reasonix/fleet/<index>` names a computer but no kernel path;
+        // forwarding "/" would read that computer's front page, which no
+        // sweep asks for and a stranger should not either.
+        if (slash < 0) return "";
+        String kernelPath = rest.substring(slash) + query;
+        // The kernel may decode percent escapes before routing, so a
+        // traversal or a control path hiding behind %2e%2e is judged on the
+        // decoded form too. The forward itself stays byte-for-byte.
+        String decoded;
+        try {
+            decoded = URLDecoder.decode(kernelPath, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+        if (!kernelPath.startsWith("/") || kernelPath.contains("..")
+                || kernelPath.startsWith("/__reasonix/")
+                || decoded.contains("..") || decoded.startsWith("/__reasonix/")) {
+            return "";
+        }
+        return kernelPath;
+    }
+
+    /** The peer index in a fleet route, or -1 when the shape is unusable. */
+    static int fleetPeerIndex(String target) {
+        String path = target.split("\\?", 2)[0];
+        String rest = path.substring("/__reasonix/fleet/".length());
+        int slash = rest.indexOf('/');
+        try {
+            return Integer.parseInt(slash >= 0 ? rest.substring(0, slash) : rest);
+        } catch (NumberFormatException e) {
+            return -1;
         }
     }
 
@@ -707,6 +882,18 @@ public final class LoopbackProxy {
             writeJson(socket, 503, "{\"code\":\"proxy.no_upstream\"}");
             return;
         }
+        forwardTo(socket, origin, method, target, headers, body);
+    }
+
+    /**
+     * Forward one request to a named kernel origin.
+     *
+     * The active upstream and the fleet route both land here, so cookies, the
+     * CSRF Origin and the SSE relay behave the same whichever upstream the
+     * request goes to.
+     */
+    private void forwardTo(Socket socket, String origin, String method, String target,
+                           Map<String, String> headers, byte[] body) throws IOException {
         URI uri = URI.create(origin + target);
         HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
         try {

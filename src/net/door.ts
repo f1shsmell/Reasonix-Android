@@ -11,6 +11,7 @@
 import { linkFailure } from "./link";
 import type { LinkError, LinkStep } from "./link";
 import { ensureRelay, clearRelayRouting, RelayError } from "./relay";
+import { syncFleetPeer } from "./fleet";
 import { rememberConnection } from "./savedConnections";
 import { configureProxy, markRelay, probeUpstream, ProxyError } from "./server";
 
@@ -39,6 +40,7 @@ export async function openDoor(
         return { ok: false, error: linkFailure(reach.code, `origin ${door.target}`) };
       }
       rememberConnection("lan", door.target, door.name);
+      void syncFleetPeer("lan", door.target, door.name ?? door.target).catch(() => {});
       return { ok: true };
     }
 
@@ -57,6 +59,7 @@ export async function openDoor(
         return { ok: false, error: linkFailure(reach.code, `device ${door.target}`) };
       }
       rememberConnection("cloud", door.target, door.name);
+      void syncFleetPeer("cloud", door.target, door.name ?? door.target).catch(() => {});
       return { ok: true };
     } catch (error) {
       // The relay replaced the old route before the rest failed; do not leave

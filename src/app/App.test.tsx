@@ -7,10 +7,13 @@ import { App } from "./App";
 import {
   configureProxy,
   firstAnswering,
+  fleetRead,
+  loadFleet,
   markRelay,
   probeUpstream,
   readProxyConfig,
   refreshProxy,
+  saveFleet,
 } from "../net/server";
 import { connectRelay, ensureRelay } from "../net/relay";
 import { openRuntime } from "../net/workspaces";
@@ -39,7 +42,8 @@ const connectionMock = vi.hoisted(() => ({
   detach: vi.fn(),
 }));
 
-vi.mock("../net/connection", () => ({
+vi.mock("../net/connection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../net/connection")>()),
   Connection: class {
     get current() {
       return connectionMock.current;
@@ -96,6 +100,9 @@ vi.mock("../net/server", () => ({
   markRelay: vi.fn(),
   firstAnswering: vi.fn(),
   probeUpstream: vi.fn(),
+  loadFleet: vi.fn(async () => null),
+  saveFleet: vi.fn(async () => {}),
+  fleetRead: vi.fn(async () => ({ ok: false as const, code: "client.offline" })),
   ProxyError: class ProxyError extends Error {
     readonly status: number;
     readonly code: string;
@@ -195,6 +202,12 @@ beforeEach(() => {
   vi.mocked(configureProxy).mockResolvedValue(lanConfig());
   vi.mocked(firstAnswering).mockResolvedValue(null);
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
+  vi.mocked(loadFleet).mockReset();
+  vi.mocked(loadFleet).mockResolvedValue(null);
+  vi.mocked(saveFleet).mockReset();
+  vi.mocked(saveFleet).mockResolvedValue(undefined);
+  vi.mocked(fleetRead).mockReset();
+  vi.mocked(fleetRead).mockResolvedValue({ ok: false, code: "client.offline" });
   vi.mocked(connectRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>);
   vi.mocked(ensureRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof ensureRelay>>);
   vi.mocked(markRelay).mockResolvedValue({ ...lanConfig(), mode: "relay", relayDevice: "saved-device" });
@@ -355,6 +368,91 @@ describe("App", () => {
       const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
         candidate.textContent?.includes("修一下登录"),
       );
+      (row as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(openRuntime).toHaveBeenCalledWith("/work/app", "/work/app/a.jsonl");
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("adds the computer it connects to to the watch list", async () => {
+    vi.mocked(loadFleet).mockResolvedValue([]);
+
+    await renderApp();
+
+    const written = vi.mocked(saveFleet).mock.calls.at(-1)?.[0] ?? [];
+    expect(
+      written.some(
+        (peer) => peer.kind === "lan" && peer.target === "http://192.168.5.2:56789",
+      ),
+    ).toBe(true);
+  });
+
+  it("opens another computer's blocked conversation by switching to it", async () => {
+    vi.mocked(loadFleet).mockResolvedValue([
+      { kind: "lan", target: "http://192.168.7.7:56789", name: "studio", watchable: true },
+    ]);
+    vi.mocked(fleetRead).mockImplementation(async (path: string) => {
+      if (path === "/__reasonix/fleet/0/runtimes") {
+        return {
+          ok: true as const,
+          body: [{ id: "r2", base: "/rt/r2", root: "/work/app", name: "app", sessionPath: "/work/app/b.jsonl" }],
+        };
+      }
+      if (path === "/__reasonix/fleet/0/rt/r2/status") {
+        return {
+          ok: true as const,
+          body: { decisions: [{ id: "d1", kind: "ask", prompt: "继续吗?" }], running: false },
+        };
+      }
+      return { ok: false as const, code: "http.404" };
+    });
+
+    await renderApp();
+
+    const row = Array.from(container.querySelectorAll(".fleet-row")).find((candidate) =>
+      candidate.textContent?.includes("studio"),
+    );
+    expect(row).toBeTruthy();
+    await act(async () => {
+      (row as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.7.7:56789");
+    // The pane is still open on that computer, so this is navigation only.
+    expect(openRuntime).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r2");
+  });
+
+  it("binds a conversation whose pane closed since the sweep", async () => {
+    vi.mocked(loadFleet).mockResolvedValue([
+      { kind: "lan", target: "http://192.168.7.7:56789", name: "studio", watchable: true },
+    ]);
+    vi.mocked(fleetRead).mockImplementation(async (path: string) => {
+      if (path === "/__reasonix/fleet/0/runtimes") {
+        return {
+          ok: true as const,
+          body: [{ id: "rx", base: "/rt/rx", root: "/work/app", name: "app", sessionPath: "/work/app/a.jsonl" }],
+        };
+      }
+      if (path === "/__reasonix/fleet/0/rt/rx/status") {
+        return {
+          ok: true as const,
+          body: { decisions: [{ id: "d1", kind: "tool_approval", prompt: "批准?" }], running: false },
+        };
+      }
+      return { ok: false as const, code: "http.404" };
+    });
+
+    await renderApp();
+
+    const row = Array.from(container.querySelectorAll(".fleet-row")).find((candidate) =>
+      candidate.textContent?.includes("studio"),
+    );
+    expect(row).toBeTruthy();
+    await act(async () => {
       (row as HTMLButtonElement).click();
     });
     await settle();
