@@ -31,6 +31,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="reasonix" android:host="connect" />
                 <data android:scheme="reasonix" android:host="open" />
+                <!-- A decision notification opens the conversation that is blocked. -->
+                <data android:scheme="reasonix" android:host="chat" />
             </intent-filter>
 
         </activity>

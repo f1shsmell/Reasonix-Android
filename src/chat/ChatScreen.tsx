@@ -480,9 +480,26 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const turnFinished =
     transcript.ended !== undefined && !transcript.ended.cancelled && !transcript.ended.error;
   useEffect(() => {
-    if (transcript.running) startTurnNotification(runtime?.name);
-    else stopTurnNotification(turnFinished);
-  }, [transcript.running, turnFinished, runtime?.name]);
+    if (transcript.running && runtime) {
+      const heading = title ?? runtime.name;
+      startTurnNotification({
+        ...(heading ? { title: heading } : {}),
+        base: runtime.base,
+        root: runtime.root,
+        runtimeId,
+      });
+    } else {
+      stopTurnNotification(turnFinished);
+    }
+  }, [
+    transcript.running,
+    turnFinished,
+    title,
+    runtime?.name,
+    runtime?.base,
+    runtime?.root,
+    runtimeId,
+  ]);
 
   // Leaving the screen means this client is no longer watching the turn; a
   // notification left behind would be a promise nobody keeps.

@@ -109,6 +109,17 @@ public final class LoopbackProxy {
         }
     }
 
+    /**
+     * The cookie a native component sends when it speaks to the proxy itself.
+     *
+     * The foreground service polls `/status` while a turn is blocked; it runs
+     * in this app, so it may hold the same per-install secret the WebView has,
+     * without going through the WebView.
+     */
+    static String authCookie(Context context) {
+        return PROXY_COOKIE + "=" + proxySecret(context);
+    }
+
     private static String proxySecret(Context context) {
         SharedPreferences prefs = context.getApplicationContext()
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);

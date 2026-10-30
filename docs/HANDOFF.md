@@ -613,6 +613,13 @@ Decisions that will look optional until they are removed:
 - `TurnService` is priority, not a second transport. It holds a capped partial
   wake lock and stops on `turn_done`; if the process dies the kernel keeps
   running and the cursor resumes it.
+- While that service runs, it polls the pane's `/status` every 3 s through the
+  loopback proxy (the same per-install cookie the WebView holds). `AskStatus`
+  reads the decisions; a changed signature posts one high-importance
+  notification, an empty answer cancels it, and the tap opens
+  `reasonix://chat?runtime=…` which `App` maps back to that chat. Only the pane
+  the phone is running is watched — a session that lives only on the desktop
+  has no service here, and no notification is claimed for it.
 - The release build enables R8. The keep rules cover Capacitor's reflective
   plugin bridge; a release without `keystore.properties` fails at
   `assembleRelease` instead of producing an uninstallable APK.

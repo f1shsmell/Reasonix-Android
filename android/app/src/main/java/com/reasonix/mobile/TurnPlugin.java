@@ -34,6 +34,12 @@ public class TurnPlugin extends Plugin {
         intent.setAction(TurnService.ACTION_START);
         String title = call.getString("title");
         if (title != null && !title.isEmpty()) intent.putExtra(TurnService.EXTRA_TITLE, title);
+        String base = call.getString("base");
+        if (base != null && !base.isEmpty()) intent.putExtra(TurnService.EXTRA_BASE, base);
+        String root = call.getString("root");
+        if (root != null && !root.isEmpty()) intent.putExtra(TurnService.EXTRA_ROOT, root);
+        String runtime = call.getString("runtimeId");
+        if (runtime != null && !runtime.isEmpty()) intent.putExtra(TurnService.EXTRA_RUNTIME, runtime);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);

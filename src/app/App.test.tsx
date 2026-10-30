@@ -54,6 +54,7 @@ vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: vi.fn(() => t
 const appMock = vi.hoisted(() => ({
   back: null as (() => void) | null,
   exitApp: vi.fn(),
+  launchUrl: null as string | null,
 }));
 vi.mock("@capacitor/app", () => ({
   App: {
@@ -62,6 +63,9 @@ vi.mock("@capacitor/app", () => ({
       return { remove: vi.fn() };
     }),
     exitApp: appMock.exitApp,
+    getLaunchUrl: vi.fn(async () =>
+      appMock.launchUrl ? { url: appMock.launchUrl } : null,
+    ),
   },
 }));
 vi.mock("@capacitor/network", () => ({
@@ -177,6 +181,7 @@ beforeEach(() => {
   relayStoreMock.loadRelayDevice.mockReturnValue(null);
   appMock.back = null;
   appMock.exitApp.mockClear();
+  appMock.launchUrl = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   connectionMock.current = {
@@ -333,6 +338,14 @@ describe("App", () => {
     expect(container.querySelector(".linkbar")?.textContent).toContain("连接失败");
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
     expect(container.textContent).toContain("配对或登录已失效");
+  });
+
+  it("opens the conversation a decision notification names", async () => {
+    appMock.launchUrl =
+      "reasonix://chat?runtime=r2&root=%2Fwork%2Fapp&title=%E8%BF%9E%E6%8E%A5";
+    await renderApp();
+
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r2");
   });
 
   it("opens a stored conversation straight from the recent list", async () => {

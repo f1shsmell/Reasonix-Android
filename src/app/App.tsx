@@ -14,6 +14,7 @@ import { loadConnections } from "../net/savedConnections";
 import { ChatScreen } from "../chat/ChatScreen";
 import { Home } from "./Home";
 import type { HomeTab } from "./swipe";
+import { parseChatLink } from "./chatLink";
 import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
 import { useLink } from "./useLink";
@@ -209,6 +210,56 @@ export function App() {
     setOpenRuntime(null);
     reloadTree();
   }, [reloadTree]);
+
+  /**
+   * A decision notification carries the conversation it was raised in.
+   *
+   * It is navigation, not a new pane: the runtime already exists on the
+   * desktop, and the chat reads its history on mount. The refresh is for the
+   * snapshot's runtimes, which may predate the notification by a few minutes.
+   */
+  const openChatLink = useCallback((raw: string) => {
+    const link = parseChatLink(raw);
+    if (!link) return;
+    setShowConnect(false);
+    if (link.root) {
+      setProject(link.root);
+      setChatProject(link.root);
+    }
+    setChatTitle(link.title ?? null);
+    setOpenRuntime(link.runtimeId);
+    void connection.refresh();
+  }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    let remove: (() => void) | undefined;
+    void NativeApp.addListener("appUrlOpen", (event) => {
+      if (event.url) openChatLink(event.url);
+    }).then((handle) => {
+      if (cancelled) {
+        void handle.remove();
+        return;
+      }
+      remove = () => {
+        void handle.remove();
+      };
+    });
+    if (typeof NativeApp.getLaunchUrl === "function") {
+      void NativeApp.getLaunchUrl()
+        .then((result) => {
+          if (!cancelled && result?.url) openChatLink(result.url);
+        })
+        .catch(() => {
+          // A link that cannot be read is not a reason to fail the launch.
+        });
+    }
+    return () => {
+      cancelled = true;
+      remove?.();
+    };
+  }, [openChatLink]);
 
   const onConnected = useCallback(() => {
     setShowConnect(false);
