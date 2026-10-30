@@ -18,6 +18,11 @@ import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
 import { loadStatus } from "../net/status";
+import {
+  loadBackgroundStatus,
+  openBatterySettings,
+  openNotificationSettings,
+} from "../native/turn";
 import { rememberConnection } from "../net/savedConnections";
 import { idleLink } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
@@ -44,6 +49,11 @@ vi.mock("@capacitor/barcode-scanner", () => ({
 }));
 vi.mock("../native/login", () => ({ NativeLogin: { open: vi.fn() } }));
 vi.mock("../native/pair", () => ({ NativePair: { pair: vi.fn() } }));
+vi.mock("../native/turn", () => ({
+  loadBackgroundStatus: vi.fn(async () => null),
+  openBatterySettings: vi.fn(),
+  openNotificationSettings: vi.fn(),
+}));
 vi.mock("../net/relayStore", () => ({ clearRelayDevice: vi.fn() }));
 vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
@@ -113,6 +123,7 @@ beforeEach(() => {
   onConnected = vi.fn<() => void>();
   vi.clearAllMocks();
   vi.mocked(readProxyConfig).mockResolvedValue(config());
+  vi.mocked(loadBackgroundStatus).mockResolvedValue(null);
   vi.mocked(configureProxy).mockResolvedValue(config());
   vi.mocked(listRemoteDevices).mockResolvedValue([]);
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
@@ -515,6 +526,28 @@ describe("ConnectScreen hero", () => {
 
     expect(container.querySelector(".link-hero-title")?.textContent).toBe("DESKTOP");
     expect(container.querySelector(".link-hero-sub")?.textContent).toBe("正在连接云端…");
+  });
+});
+
+describe("ConnectScreen background", () => {
+  it("reports the two system permissions and opens their pages", async () => {
+    vi.mocked(loadBackgroundStatus).mockResolvedValue({ exempt: false, notifications: true });
+    await renderScreen();
+
+    expect(container.textContent).toContain("后台运行");
+    expect(container.textContent).toContain("已开启，提问和完成会提醒");
+    expect(container.textContent).toContain("受限，锁屏后提醒可能被延迟");
+
+    await pressRow("通知", "已开启");
+    await pressRow("电池优化", "受限");
+
+    expect(openNotificationSettings).toHaveBeenCalledTimes(1);
+    expect(openBatterySettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the group when the native side cannot answer", async () => {
+    await renderScreen();
+    expect(container.textContent).not.toContain("后台运行");
   });
 });
 

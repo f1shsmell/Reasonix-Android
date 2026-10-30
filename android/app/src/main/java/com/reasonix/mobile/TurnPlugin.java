@@ -2,10 +2,13 @@ package com.reasonix.mobile;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 
 import com.getcapacitor.JSObject;
@@ -40,6 +43,8 @@ public class TurnPlugin extends Plugin {
         if (root != null && !root.isEmpty()) intent.putExtra(TurnService.EXTRA_ROOT, root);
         String runtime = call.getString("runtimeId");
         if (runtime != null && !runtime.isEmpty()) intent.putExtra(TurnService.EXTRA_RUNTIME, runtime);
+        String mode = call.getString("mode");
+        if (mode != null && !mode.isEmpty()) intent.putExtra(TurnService.EXTRA_MODE, mode);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);
@@ -59,6 +64,42 @@ public class TurnPlugin extends Plugin {
         TurnService.completed = Boolean.TRUE.equals(call.getBoolean("completed", false));
         getContext().stopService(new Intent(getContext(), TurnService.class));
         call.resolve(new JSObject());
+    }
+
+    /** Whether the system will let this app keep working in the background. */
+    @PluginMethod
+    public void backgroundStatus(PluginCall call) {
+        Context context = getContext();
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        NotificationManager notifications =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        JSObject result = new JSObject();
+        result.put("exempt",
+                power != null && power.isIgnoringBatteryOptimizations(context.getPackageName()));
+        result.put("notifications", notifications != null && notifications.areNotificationsEnabled());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void openBatterySettings(PluginCall call) {
+        openSystemSettings(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), call);
+    }
+
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+        openSystemSettings(intent, call);
+    }
+
+    private void openSystemSettings(Intent intent, PluginCall call) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(intent);
+            call.resolve(new JSObject());
+        } catch (RuntimeException e) {
+            call.reject("no system settings page for this action", e);
+        }
     }
 
     private void requestNotificationPermission() {

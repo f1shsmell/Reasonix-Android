@@ -42,6 +42,8 @@ export interface ChatScreenProps {
   onBack: () => void;
   /** Start a fresh conversation in this chat's project. */
   onNewSession?: () => void;
+  /** How the kernel is reached, named in the ongoing notification. */
+  mode?: "lan" | "cloud" | undefined;
 }
 
 /**
@@ -403,7 +405,15 @@ function useTodos(
   return { todos: shown?.todos ?? [], state: shown?.state ?? "loading" };
 }
 
-export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onNewSession }: ChatScreenProps) {
+export function ChatScreen({
+  connection,
+  snapshot,
+  runtimeId,
+  title,
+  onBack,
+  onNewSession,
+  mode,
+}: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   const { transcript, history, reload, setTranscript } = useTranscript(
     snapshot,
@@ -499,6 +509,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
         base: runtime.base,
         root: runtime.root,
         runtimeId,
+        ...(mode ? { mode } : {}),
       });
     } else {
       stopTurnNotification(turnFinished);
@@ -511,6 +522,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
     runtime?.base,
     runtime?.root,
     runtimeId,
+    mode,
   ]);
 
   // Leaving the screen means this client is no longer watching the turn; a

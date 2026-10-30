@@ -52,6 +52,12 @@ import {
 import type { SavedConnection } from "../net/savedConnections";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
+import {
+  loadBackgroundStatus,
+  openBatterySettings,
+  openNotificationSettings,
+} from "../native/turn";
+import type { BackgroundStatus } from "../native/turn";
 import { approvalLabel, approvalMessage, setApprovalMode, APPROVAL_CHOICES } from "../net/approval";
 import { loadStatus } from "../net/status";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
@@ -95,6 +101,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
   const [approvalError, setApprovalError] = useState("");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
+  /** What the system allows in the background; null where it cannot answer. */
+  const [background, setBackground] = useState<BackgroundStatus | null>(null);
   /** The first cloud connection to a device waits here for the person. */
   const [trustAsk, setTrustAsk] = useState<TrustPrompt | null>(null);
   /** The device whose pin no longer matches; the error offers to start over. */
@@ -148,6 +156,39 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
       cancelled = true;
     };
   }, []);
+
+  const refreshBackground = useCallback(() => {
+    void loadBackgroundStatus().then((next) => {
+      if (next !== null) setBackground(next);
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshBackground();
+  }, [refreshBackground]);
+
+  // The two rows below open system pages, so their values go stale while the
+  // app is paused; rereading on resume is what makes the return trip honest.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    let remove: (() => void) | undefined;
+    void NativeApp.addListener("appStateChange", (state) => {
+      if (state.isActive) refreshBackground();
+    }).then((handle) => {
+      if (cancelled) {
+        void handle.remove();
+        return;
+      }
+      remove = () => {
+        void handle.remove();
+      };
+    });
+    return () => {
+      cancelled = true;
+      remove?.();
+    };
+  }, [refreshBackground]);
 
   // The posture is per conversation, so it is read from the pane this screen
   // was opened over. No pane means no reading and no control.
@@ -819,6 +860,44 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
         <p className="group-note">
           只影响这台手机；桌面端的外观是它自己的设置。{FOLD_NOTE}
         </p>
+
+        {background ? (
+          <>
+            <p className="group-label">后台运行</p>
+            <section className="group">
+              <button type="button" className="setting" onClick={openNotificationSettings}>
+                <span className="setting-main">
+                  <span className="setting-title">通知</span>
+                  <span className="setting-sub">
+                    {background.notifications
+                      ? "已开启，提问和完成会提醒"
+                      : "已关闭，锁屏时收不到提醒"}
+                  </span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+              <button type="button" className="setting" onClick={openBatterySettings}>
+                <span className="setting-main">
+                  <span className="setting-title">电池优化</span>
+                  <span className="setting-sub">
+                    {background.exempt
+                      ? "已允许后台运行"
+                      : "受限，锁屏后提醒可能被延迟"}
+                  </span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            </section>
+            <p className="group-note">
+              运行中的会话由前台服务照看；系统收紧后台时，通知权限和电池优化都放开才能及时提醒。
+              在系统通知设置里把「需要你处理」频道设为重要，锁屏才会有横幅。
+            </p>
+          </>
+        ) : null}
 
         {runtimeBase ? (
           <>

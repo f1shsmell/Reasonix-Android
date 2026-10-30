@@ -401,6 +401,7 @@ export function App() {
         runtimeId={openRuntime}
         {...(chatTitle ? { title: chatTitle } : {})}
         onBack={closeRuntime}
+        mode={link.state.mode}
         {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
       />
     );

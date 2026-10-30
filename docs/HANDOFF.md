@@ -695,8 +695,10 @@ Decisions that will look optional until they are removed:
 - A send clears only the draft snapshot it took. Text typed while the POST was
   in flight belongs to the next turn.
 - `TurnService` is priority, not a second transport. It holds a capped partial
-  wake lock and stops on `turn_done`; if the process dies the kernel keeps
-  running and the cursor resumes it.
+  wake lock **and a Wi-Fi lock** and stops on `turn_done`; if the process dies
+  the kernel keeps running and the cursor resumes it. The Wi-Fi lock exists
+  because the proxy's upstream sleep with the screen; it covers Wi-Fi only —
+  a cellular link is the battery-optimization setting's job.
 - While that service runs, it polls the pane's `/status` every 3 s through the
   loopback proxy (the same per-install cookie the WebView holds). `AskStatus`
   reads the decisions; a changed signature posts one high-importance
@@ -704,6 +706,21 @@ Decisions that will look optional until they are removed:
   `reasonix://chat?runtime=…` which `App` maps back to that chat. Only the pane
   the phone is running is watched — a session that lives only on the desktop
   has no service here, and no notification is claimed for it.
+- Ask and done notifications are identified per runtime
+  (`askId`/`doneId`, four non-overlapping bands of a million hash buckets). A
+  fixed id let a second session overwrite the first, and a shared
+  `PendingIntent` request code with `FLAG_UPDATE_CURRENT` rewrote an older
+  notification's extras so it opened whichever chat was built last.
+  `TurnServiceIdTest` holds the ranges apart.
+- The ongoing notification names the path it was started with (`mode` from
+  `LinkState`) and switches to “连接中断，正在重试…” after three consecutive
+  failed polls, returning to normal on the first answer. One failure is noise.
+- The settings page reports notification permission and battery-optimization
+  exemption from `TurnPlugin.backgroundStatus`, and opens the matching system
+  page. Values are reread on `appStateChange` because the person leaves the
+  app to change them. The direct “request ignore optimizations” dialog is not
+  used: it needs a restricted permission, and this app is sideloaded, not a
+  Play listing to justify it.
 - The release build enables R8. The keep rules cover Capacitor's reflective
   plugin bridge; a release without `keystore.properties` fails at
   `assembleRelease` instead of producing an uninstallable APK.
