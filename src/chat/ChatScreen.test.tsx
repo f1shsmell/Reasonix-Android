@@ -1183,6 +1183,23 @@ describe("ChatScreen activity", () => {
 });
 
 describe("ChatScreen composer extras", () => {
+  it("shows the model /status names when the history carries none", async () => {
+    stubKernel({
+      status: {
+        running: false,
+        busy: false,
+        decisions: [],
+        modelRef: "deepseek/deepseek-flash",
+      },
+    });
+    render(snapshot());
+    await flush();
+
+    expect(container.querySelector('button[aria-label="切换模型"]')?.textContent).toBe(
+      "deepseek-flash",
+    );
+  });
+
   it("opens a plus sheet with camera, image and plan", async () => {
     const fetchMock = stubKernel();
     render(snapshot());

@@ -428,6 +428,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const [inboxNote, setInboxNote] = useState("");
   /** Plan mode as the kernel reports it; undefined until the first read. */
   const [plan, setPlan] = useState<boolean | undefined>(undefined);
+  /** The model `/status` names, until a live turn names one in the transcript. */
+  const [statusModel, setStatusModel] = useState("");
   const [planBusy, setPlanBusy] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   const [headMenu, setHeadMenu] = useState(false);
@@ -464,6 +466,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
     void loadStatus(base).then((result) => {
       if (cancelled || !result.ok) return;
       setPlan(result.status.plan);
+      if (result.status.modelRef) setStatusModel(result.status.modelRef);
       if (!result.status.running) return;
       setTranscript((current) => (current.running ? current : { ...current, running: true }));
     });
@@ -1049,7 +1052,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
               aria-label="切换模型"
               title="切换模型"
             >
-              {shortRef(pickedModel || transcript.modelRef || "") || "模型"}
+              {shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}
             </button>
           )}
           {streaming ? (
@@ -1110,7 +1113,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
 
       {headMenu ? (
         <HeadMenu
-          model={shortRef(pickedModel || transcript.modelRef || "")}
+          model={shortRef(pickedModel || transcript.modelRef || statusModel || "")}
           onClose={() => setHeadMenu(false)}
           onReload={() => {
             setHeadMenu(false);
