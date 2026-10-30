@@ -1,24 +1,90 @@
 name: release
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
+# Tags are deliberate: a release requires a versioned note, matching versions,
+# and a commit on main. The rule is in RELEASING.md; this workflow enforces it.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vMAJOR.MINOR.PATCH tag to rebuild (recovery)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  apk:
+  resolve:
+    name: Resolve the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag is releasable
+        id: release
+        env:
+          IN_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag="${IN_TAG:-$REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tag must be vMAJOR.MINOR.PATCH[-PRERELEASE], got: $tag"
+            exit 1
+          fi
+
+          git fetch --force origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force --tags origin
+          sha="$(git rev-parse --verify "refs/tags/$tag^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+            echo "::error::$tag is not on main"
+            exit 1
+          fi
+
+          version="${tag#v}"
+          notes="release-notes/android/$version.md"
+          if ! git cat-file -e "$sha:$notes" 2>/dev/null; then
+            echo "::error::$notes must exist in the tagged commit before a release can build"
+            exit 1
+          fi
+
+          props="$(git show "$sha:android/gradle.properties")"
+          if ! grep -qx "reasonix.versionName=$version" <<<"$props"; then
+            echo "::error::android/gradle.properties reasonix.versionName must be $version"
+            exit 1
+          fi
+          package="$(git show "$sha:package.json")"
+          if ! grep -q "\"version\": \"$version\"" <<<"$package"; then
+            echo "::error::package.json version must be $version"
+            exit 1
+          fi
+
+          { echo "tag=$tag"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          echo "releasing $tag at $sha"
+
+  build:
     name: Build APK
+    needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -35,24 +101,33 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --console=plain
+          ./gradlew testDebugUnitTest assembleDebug --console=plain
       - name: Name the asset
-        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk \
-            "reasonix-mobile-${GITHUB_REF_NAME}.apk"
+            "reasonix-mobile-${VERSION}.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: reasonix-mobile-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: reasonix-mobile-${{ needs.resolve.outputs.version }}
+          path: reasonix-mobile-*.apk
           if-no-files-found: error
           retention-days: 30
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish the release from its notes
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            "reasonix-mobile-${GITHUB_REF_NAME}.apk" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          asset="reasonix-mobile-${VERSION}.apk"
+          notes="release-notes/android/${VERSION}.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$asset" --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$asset" \
+              --title "Reasonix Mobile ${VERSION}" \
+              --notes-file "$notes" \
+              --verify-tag
+          fi
