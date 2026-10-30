@@ -19,6 +19,66 @@
   font-weight: 600;
   margin: 0;
   flex: 1;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.bar h1 .dot {
+  display: inline-block;
+  margin-top: 1px;
+}
+
+.bar-spacer {
+  width: var(--tap);
+  flex: none;
+}
+
+/* A search field the way a phone draws one: a pill, not a boxed input. */
+.search {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.search::placeholder {
+  color: var(--fg-dim);
+}
+
+/* Two views of the same work: recent conversations, or the projects. */
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-raised);
+}
+
+.segmented button {
+  flex: 1;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 14px;
+}
+
+.segmented button.on {
+  background: var(--line);
+  color: var(--fg);
+  font-weight: 600;
 }
 
 .dot {
@@ -71,10 +131,23 @@
 .list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Rows are a flat list with hairlines, the way a phone's settings list reads;
+   a stack of bordered cards makes ten conversations look like ten dialogs. */
+.list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.list .session,
+.list .project {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .empty {
@@ -125,16 +198,158 @@ pre.frame {
 
 .session {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   padding: 12px 14px;
   line-height: 1.35;
 }
 
-.session-name {
+/* A conversation row is the whole width and the only target: its actions wait
+   behind a press, so a tap never pins by accident. */
+.list li {
+  display: flex;
+  align-items: stretch;
+}
+
+.list li > .session {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A press-and-hold is a reorder or an action sheet, so the rows do not hand
+   the browser its own callout or a text selection to fight. */
+.session,
+.project {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.pin-mark {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* The dragged row stays in place; the line says where it would land. */
+.list li.dragging {
+  opacity: 0.5;
+}
+
+.list li[data-drop="before"] {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.list li[data-drop="after"] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* A pinned row keeps the list's background but says so with a tint, so the
+   block at the top does not read as a different kind of list. */
+.list li.pinned > .session {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* ---- needs you ---- */
+
+.needs-you {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A horizontal strip, because these are few and each one is a destination
+   rather than a row in a list. */
+.cards {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 2px;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cards::-webkit-scrollbar {
+  display: none;
+}
+
+.cards li {
+  flex: none;
+  width: 168px;
+}
+
+.card-need {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  /* The left edge is the signal: something is blocked, not merely unread. */
+  border-left: 3px solid var(--warn);
+}
+
+.card-need strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.need-verb {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn);
+  letter-spacing: 0.02em;
+}
+
+.need-what,
+.need-where {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.need-what {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+
+/* ---- rows ---- */
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chev {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.dot.accent { background: var(--accent); }
+
+.session-name,
+.project-name {
   font-size: 15px;
   font-weight: 600;
   display: flex;
@@ -146,16 +361,64 @@ pre.frame {
   white-space: nowrap;
 }
 
-.session-path {
+.session-meta,
+.project-meta,
+.project-path {
   font-size: 12px;
   color: var(--fg-dim);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A path is read from its end: the folder name is the part that identifies it. */
+.project-path {
   direction: rtl;
   text-align: left;
 }
+
+/* ---- project list ---- */
+
+.project {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  line-height: 1.35;
+}
+
+/* The project a conversation belongs to, above its list. */
+.project-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px;
+}
+
+.project-head .meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.primary {
+  min-height: var(--tap);
+  padding: 0 16px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  flex: none;
+}
+
+.more {
+  width: 100%;
+  color: var(--fg-dim);
+}
+
 
 .iconbtn {
   min-height: var(--tap);
@@ -165,6 +428,8 @@ pre.frame {
   place-items: center;
   font-size: 17px;
   line-height: 1;
+  border-radius: 50%;
+  border-color: transparent;
 }
 
 .notice code {
@@ -172,4 +437,70 @@ pre.frame {
   background: var(--bg);
   padding: 1px 4px;
   border-radius: 4px;
+}
+
+/* ---- new-session sheet ---- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.sheet {
+  width: 100%;
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 12px 16px calc(18px + env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  background: var(--bg-raised);
+  box-shadow: 0 -12px 36px rgba(15, 23, 42, 0.18);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sheet-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+}
+
+.session-sheet .meta {
+  margin: 0 0 4px;
+}
+
+/* The row's actions, as plain list rows: a sheet of one decision should not
+   look like a stack of buttons. */
+.sheet-actions {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sheet-actions li + li {
+  border-top: 1px solid var(--line);
+}
+
+.sheet-actions button {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 15px;
+  text-align: left;
+}
+
+.sheet-actions button[aria-pressed="true"] {
+  color: var(--accent);
 }
