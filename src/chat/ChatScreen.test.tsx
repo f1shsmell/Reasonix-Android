@@ -8,6 +8,11 @@ import type { EventPayload } from "../wire/events";
 import type { RuntimeView } from "../wire/runtime";
 import { saveReading } from "./reading";
 
+vi.mock("../native/speech", () => ({
+  speechSupported: () => true,
+  listenForSpeech: vi.fn(async () => "修复登录白屏"),
+}));
+
 /**
  * The screen's own job — putting the stored conversation under the live stream
  * — is the part a fold test cannot reach. A session that has been running for
@@ -451,6 +456,25 @@ describe("ChatScreen composer", () => {
     render(snapshot());
     await flush();
     expect(container.textContent).toContain("还没有消息");
+  });
+
+  it("appends dictation to the draft", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+    typeDraft("先看看");
+
+    const mic = container.querySelector('button[aria-label="语音输入"]') as HTMLButtonElement;
+    expect(mic).toBeTruthy();
+    await act(async () => {
+      mic.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
+      "先看看 修复登录白屏",
+    );
   });
 
   it("restores a draft left in this pane before an interruption", async () => {
