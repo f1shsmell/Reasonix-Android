@@ -145,6 +145,42 @@ export async function loadStatus(base: string): Promise<StatusRead> {
 }
 
 /**
+ * Turn planning on or off for this conversation.
+ *
+ * Plan mode is a hub setting the desktop exposes next to the composer; the
+ * phone reaches the same `POST /rt/{id}/plan` so a plan started here is the
+ * same plan the desktop approves. It is not a message: the next turn reads it.
+ */
+export type PlanWrite = { ok: true } | { ok: false; code: string };
+
+export async function setPlanMode(base: string, on: boolean): Promise<PlanWrite> {
+  try {
+    const response = await fetchWithTimeout(
+      `${base}/plan`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ on }),
+      },
+      12_000,
+    );
+    if (response.ok) return { ok: true };
+    try {
+      const body = (await response.json()) as { code?: unknown };
+      if (body && typeof body === "object" && typeof body.code === "string") {
+        return { ok: false, code: body.code };
+      }
+    } catch {
+      // A refusal that is not JSON still has an HTTP status.
+    }
+    return { ok: false, code: `http.${response.status}` };
+  } catch {
+    return { ok: false, code: "client.offline" };
+  }
+}
+
+/**
  * A decision as one sentence.
  *
  * The kinds are different subsystems, and "waiting for approval" is wrong for

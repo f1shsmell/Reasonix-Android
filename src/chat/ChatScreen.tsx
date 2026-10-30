@@ -9,7 +9,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
-import { loadStatus } from "../net/status";
+import { loadStatus, setPlanMode } from "../net/status";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
 import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
@@ -22,15 +22,11 @@ import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
 import type { Row, Transcript } from "./transcript";
-import {
-  ApprovalCard,
-  AskCard,
-  AssistantBubble,
-  NoticeCard,
-  ToolCard,
-  UserBubble,
-} from "./Rows";
+import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "./Rows";
 import type { PromptHandlers } from "./Rows";
+import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
+import { buildDisplay } from "./process";
+import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
@@ -86,6 +82,129 @@ function sendErrorText(code: string): string {
 }
 
 /**
+ * What the + opens: the two ways to bring an image in, and plan mode.
+ *
+ * Plan mode is not a message; it is a runtime setting, so it is toggled here
+ * and read back from `/status`, exactly as the desktop does it.
+ */
+function AttachSheet({
+  plan,
+  busy,
+  onClose,
+  onCamera,
+  onImage,
+  onPlan,
+}: {
+  plan: boolean | undefined;
+  busy: boolean;
+  onClose: () => void;
+  onCamera: () => void;
+  onImage: () => void;
+  onPlan: () => void;
+}) {
+  const planHint =
+    plan === undefined ? "读不到当前模式" : plan ? "已开启，点此关闭" : "先整理步骤，不写入文件";
+  return (
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sheet attach-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="添加"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>添加</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <ul className="sheet-actions attach-actions">
+          <li>
+            <button type="button" onClick={onCamera}>
+              <span className="attach-glyph" aria-hidden="true">
+                ◉
+              </span>
+              <span>相机</span>
+              <small>拍一张</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onImage}>
+              <span className="attach-glyph" aria-hidden="true">
+                ▧
+              </span>
+              <span>图片</span>
+              <small>从相册选择</small>
+            </button>
+          </li>
+          <li>
+            <button
+              type="button"
+              onClick={onPlan}
+              disabled={plan === undefined || busy}
+              aria-pressed={plan === true}
+            >
+              <span className="attach-glyph" aria-hidden="true">
+                ☰
+              </span>
+              <span>计划</span>
+              <small>{busy ? "正在切换…" : planHint}</small>
+            </button>
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+/** The header's "…": the two things that do not fit in the bar. */
+function HeadMenu({
+  model,
+  onClose,
+  onReload,
+  onModel,
+}: {
+  model: string;
+  onClose: () => void;
+  onReload: () => void;
+  onModel: () => void;
+}) {
+  return (
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sheet head-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-label="会话操作"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>会话</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <ul className="sheet-actions">
+          <li>
+            <button type="button" onClick={onReload}>
+              <span>重新加载历史</span>
+              <small>连接中断或内容不对时</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onModel}>
+              <span>选择模型</span>
+              <small>{model || "未命名模型"}</small>
+            </button>
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+/**
  * One row, memoised by its own identity.
  *
  * Every text delta replaces only the streaming row in the transcript array;
@@ -106,14 +225,14 @@ const RowView = memo(function RowView({
       return <UserBubble row={row} base={base} />;
     case "assistant":
       return <AssistantBubble row={row} />;
-    case "tool":
-      return <ToolCard row={row} />;
     case "notice":
       return <NoticeCard row={row} />;
     case "ask":
       return <AskCard row={row} handlers={handlers} />;
     case "approval":
       return <ApprovalCard row={row} handlers={handlers} />;
+    default:
+      return null;
   }
 });
 
@@ -307,9 +426,17 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const [modelSheet, setModelSheet] = useState(false);
   /** What the kernel said about the last message sent into a running turn. */
   const [inboxNote, setInboxNote] = useState("");
+  /** Plan mode as the kernel reports it; undefined until the first read. */
+  const [plan, setPlan] = useState<boolean | undefined>(undefined);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [attachSheet, setAttachSheet] = useState(false);
+  const [headMenu, setHeadMenu] = useState(false);
+  /** The run whose timeline is open, or one long thought. */
+  const [process, setProcess] = useState<{ title: string; steps: ProcessStep[] } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageRef = useRef<HTMLInputElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
   const lastRetry = useRef<string>("");
   /** The composer's live value, readable after an await without stale state. */
   const draftRef = useRef(draft);
@@ -335,7 +462,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
     if (!base) return;
     let cancelled = false;
     void loadStatus(base).then((result) => {
-      if (cancelled || !result.ok || !result.status.running) return;
+      if (cancelled || !result.ok) return;
+      setPlan(result.status.plan);
+      if (!result.status.running) return;
       setTranscript((current) => (current.running ? current : { ...current, running: true }));
     });
     return () => {
@@ -432,6 +561,38 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const pickImage = useCallback(() => {
     imageRef.current?.click();
   }, []);
+
+  const openCamera = useCallback(() => {
+    cameraRef.current?.click();
+  }, []);
+
+  /** Re-read plan mode when the sheet opens; it is a hub setting and can move. */
+  const openAttach = useCallback(() => {
+    setAttachSheet(true);
+    if (!runtime) return;
+    void loadStatus(runtime.base).then((result) => {
+      if (result.ok) setPlan(result.status.plan);
+    });
+  }, [runtime]);
+
+  /**
+   * Plan mode is a runtime setting, not a message: the next turn reads it.
+   * The sheet closes first so the composer is visible while the write lands.
+   */
+  const togglePlan = useCallback(async () => {
+    if (!runtime || plan === undefined || planBusy) return;
+    const next = !plan;
+    setAttachSheet(false);
+    setPlanBusy(true);
+    const result = await setPlanMode(runtime.base, next);
+    setPlanBusy(false);
+    if (!result.ok) {
+      setPromptError(`没切到计划模式：${result.code}`);
+      return;
+    }
+    setPlan(next);
+    setPromptError("");
+  }, [runtime, plan, planBusy]);
 
   /**
    * Upload every chosen image, then append their references in one edit.
@@ -663,45 +824,46 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   }
 
   const streaming = transcript.running;
+  const display = useMemo(
+    () => buildDisplay(transcript.rows, transcript.running),
+    [transcript.rows, transcript.running],
+  );
+  const openProcess = (entry: { steps: ProcessStep[] }) =>
+    setProcess({ title: `已处理 ${entry.steps.length} 个操作`, steps: entry.steps });
 
   return (
     <div className="chat">
       <div className="chat-head">
-        <button type="button" className="iconbtn" onClick={onBack} aria-label="返回">
+        <button type="button" className="iconbtn back" onClick={onBack} aria-label="返回">
           ←
         </button>
         <div className="title">
           <strong>{title ?? runtime.name}</strong>
           <span>
+            <span
+              className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`}
+              role="img"
+              aria-label={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
+              title={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
+            />
             {runtime.readOnly ? "只读 · " : ""}
             {runtime.name} · {runtime.root}
           </span>
         </div>
-        {runtime.readOnly ? null : (
-          <button
-            type="button"
-            className="modelchip"
-            onClick={() => setModelSheet(true)}
-            aria-label="切换模型"
-            title="切换模型"
-          >
-            {shortRef(pickedModel || transcript.modelRef || "") || "模型"}
-          </button>
-        )}
         {onNewSession ? (
           <button type="button" className="iconbtn" onClick={onNewSession} aria-label="在当前项目新建会话">
             ＋
           </button>
         ) : null}
-        <span
-          className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`}
-          role="img"
-          aria-label={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
-          title={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
-        />
+        <button
+          type="button"
+          className="iconbtn"
+          onClick={() => setHeadMenu(true)}
+          aria-label="更多"
+        >
+          ⋯
+        </button>
       </div>
-
-      <TodoPanel todos={todos} state={todosState} />
 
       {transcript.gap ? (
         <div className="notice warn" role="status">
@@ -735,9 +897,23 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
             </div>
           </div>
         ) : (
-          transcript.rows.map((row) => (
-            <RowView key={row.id} row={row} base={runtime.base} handlers={handlers} />
-          ))
+          display.map((entry) =>
+            entry.kind === "steps" ? (
+              entry.live ? (
+                entry.steps.map((step) => (
+                  <ActivityRow
+                    key={step.id}
+                    step={step}
+                    onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
+                  />
+                ))
+              ) : (
+                <ProcessSummary key={entry.id} steps={entry.steps} onOpen={() => openProcess(entry)} />
+              )
+            ) : (
+              <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
+            ),
+          )
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
           <div className="notice error">
@@ -749,6 +925,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
           </div>
         ) : null}
       </div>
+
+      <TodoPanel todos={todos} state={todosState} />
 
       {promptError ? (
         <div className="sendfail" role="alert">
@@ -770,24 +948,6 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
         </div>
       ) : null}
 
-      {attachments.length > 0 ? (
-        <div className="attachments">
-          {attachments.map((entry) => (
-            <div className="attachment" key={entry.ref}>
-              <img src={entry.url} alt="已选择的图片" />
-              <span className="attachment-name">{entry.name}</span>
-              <button
-                type="button"
-                aria-label={`移除图片 ${entry.name}`}
-                onClick={() => removeAttachment(entry.ref)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       {attachError ? (
         <div className="sendfail" role="alert">
           <span>{attachError}</span>
@@ -806,62 +966,6 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
         </div>
       ) : null}
 
-      <div className="composer">
-        <input
-          ref={imageRef}
-          className="file-input"
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(event) => void onImage(event)}
-        />
-        <button
-          type="button"
-          className="attach"
-          aria-label="添加图片"
-          onClick={pickImage}
-          disabled={runtime.readOnly === true || attaching}
-        >
-          {attaching ? "…" : "📎"}
-        </button>
-        <textarea
-          ref={inputRef}
-          value={draft}
-          placeholder={runtime.readOnly ? "这个会话是只读的" : "说点什么"}
-          disabled={runtime.readOnly === true}
-          rows={1}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            grow();
-          }}
-          onKeyDown={onKeyDown}
-        />
-        {streaming ? (
-          <button
-            type="button"
-            className="send stop"
-            aria-label="停止"
-            onClick={() => {
-              void cancel(runtime.base).then((result) => {
-                if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
-              });
-            }}
-          >
-            停止
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="send"
-            aria-label="发送"
-            disabled={!draft.trim() || send.kind === "sending" || attaching}
-            onClick={() => void doSend(draft)}
-          >
-            ↑
-          </button>
-        )}
-      </div>
-
       {/* While a turn runs, the composer's send button is the stop control, so
           a message typed now needs its own way out. Two buttons rather than
           one: queuing leaves the turn alone, steering joins it. */}
@@ -876,6 +980,105 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
         </div>
       ) : null}
 
+      <div className="composer">
+        <input
+          ref={imageRef}
+          className="file-input"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(event) => void onImage(event)}
+        />
+        <input
+          ref={cameraRef}
+          className="file-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(event) => void onImage(event)}
+        />
+        {attachments.length > 0 ? (
+          <div className="composer-images">
+            {attachments.map((entry, index) => (
+              <div className="attachment" key={entry.ref}>
+                <img src={entry.url} alt="已选择的图片" />
+                <span className="attachment-index" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <span className="attachment-name">{entry.name}</span>
+                <button
+                  type="button"
+                  aria-label={`移除图片 ${entry.name}`}
+                  onClick={() => removeAttachment(entry.ref)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <textarea
+          ref={inputRef}
+          value={draft}
+          placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
+          disabled={runtime.readOnly === true}
+          rows={1}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            grow();
+          }}
+          onKeyDown={onKeyDown}
+        />
+        <div className="composer-bar">
+          <button
+            type="button"
+            className="iconbtn attach"
+            aria-label="添加图片或计划"
+            onClick={openAttach}
+            disabled={runtime.readOnly === true || attaching}
+          >
+            {attaching ? "…" : "＋"}
+          </button>
+          {runtime.readOnly ? (
+            <span className="composer-model">只读</span>
+          ) : (
+            <button
+              type="button"
+              className="modelchip"
+              onClick={() => setModelSheet(true)}
+              aria-label="切换模型"
+              title="切换模型"
+            >
+              {shortRef(pickedModel || transcript.modelRef || "") || "模型"}
+            </button>
+          )}
+          {streaming ? (
+            <button
+              type="button"
+              className="send stop"
+              aria-label="停止"
+              onClick={() => {
+                void cancel(runtime.base).then((result) => {
+                  if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
+                });
+              }}
+            >
+              停止
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="send"
+              aria-label="发送"
+              disabled={!draft.trim() || send.kind === "sending" || attaching}
+              onClick={() => void doSend(draft)}
+            >
+              ↑
+            </button>
+          )}
+        </div>
+      </div>
+
       {modelSheet ? (
         <ModelSheet
           base={runtime.base}
@@ -885,6 +1088,46 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
             setPickedModel(ref);
             setModelSheet(false);
           }}
+        />
+      ) : null}
+
+      {attachSheet ? (
+        <AttachSheet
+          plan={plan}
+          busy={planBusy}
+          onClose={() => setAttachSheet(false)}
+          onCamera={() => {
+            setAttachSheet(false);
+            openCamera();
+          }}
+          onImage={() => {
+            setAttachSheet(false);
+            pickImage();
+          }}
+          onPlan={() => void togglePlan()}
+        />
+      ) : null}
+
+      {headMenu ? (
+        <HeadMenu
+          model={shortRef(pickedModel || transcript.modelRef || "")}
+          onClose={() => setHeadMenu(false)}
+          onReload={() => {
+            setHeadMenu(false);
+            reload();
+          }}
+          onModel={() => {
+            setHeadMenu(false);
+            setModelSheet(true);
+          }}
+        />
+      ) : null}
+
+      {process ? (
+        <ProcessSheet
+          title={process.title}
+          steps={process.steps}
+          onClose={() => setProcess(null)}
         />
       ) : null}
     </div>

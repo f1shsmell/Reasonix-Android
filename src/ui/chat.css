@@ -7,21 +7,32 @@
   padding-top: env(safe-area-inset-top);
 }
 
+/* A floating capsule: the conversation's identity sits above the record rather
+   than being a strip of chrome. */
 .chat-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
   background: var(--bg-raised);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   /* Above the transcript so a long answer scrolls under it, not over it. */
   position: relative;
   z-index: 2;
 }
 
+.chat-head .iconbtn {
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
 .chat-head .title {
   flex: 1;
   min-width: 0;
+  text-align: center;
 }
 
 /* The model this conversation runs on, and the way to change it. A chip
@@ -116,7 +127,10 @@
 }
 
 .chat-head .title span {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--fg-dim);
   overflow: hidden;
@@ -192,10 +206,11 @@
 }
 
 .row.assistant .bubble {
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-bottom-left-radius: 6px;
-  max-width: 96%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 4px 2px;
+  max-width: 100%;
   white-space: normal;
 }
 
@@ -313,37 +328,17 @@
   to { visibility: hidden; }
 }
 
-.reasoning {
-  margin-bottom: 6px;
-  font-size: 13px;
-  color: var(--fg-dim);
-}
-
-.reasoning summary {
-  cursor: pointer;
-  padding: 4px 0;
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.reasoning .body {
-  white-space: pre-wrap;
-  border-left: 2px solid var(--line);
-  padding-left: 10px;
-  margin-top: 4px;
-  line-height: 1.5;
-}
-
 /* ---- todos ---- */
 
-/* The list describes the work behind the conversation, so it sits above the
-   transcript and stays put while messages scroll. Collapsed it costs one tap
-   target; open it reads like a checklist. */
+/* The list describes the work behind the conversation. It sits between the
+   record and the composer, so a long turn scrolls under it while the next
+   message stays in reach. Collapsed it costs one row. */
 .todos {
-  border-bottom: 1px solid var(--line);
+  margin: 0 12px 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
   background: var(--bg-raised);
+  overflow: hidden;
   font-size: 13px;
 }
 
@@ -445,67 +440,215 @@
   font-size: 12px;
 }
 
-/* ---- tool calls ---- */
+/* ---- activity rows ---- */
 
-.tool {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-raised);
-  overflow: hidden;
+.activity {
+  display: flex;
+  flex-direction: column;
 }
 
-.tool > summary {
+.activity-row,
+.process-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  min-height: var(--tap);
-  cursor: pointer;
-  list-style: none;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
 }
 
-.tool > summary::-webkit-details-marker { display: none; }
+.activity-row:active,
+.process-row:active {
+  opacity: 0.7;
+}
 
-.tool .name {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+.activity-icon {
+  flex: none;
+  width: 20px;
+  text-align: center;
   font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.activity-icon.think { color: var(--accent); }
+.activity-icon.done { color: var(--ok); }
+.activity-icon.bad { color: var(--bad); }
+
+.activity-title {
+  flex: none;
+  font-size: 14px;
   font-weight: 600;
+}
+
+.activity-summary {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tool .status {
-  font-size: 12px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
   color: var(--fg-dim);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.activity-flag {
   flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 11px;
 }
 
-/* The marker on a tool card that carries the step's thinking. Dim like the
-   other chips: it says "there is more inside", not "something is wrong". */
-.tool .status.thought {
-  border-style: dashed;
+.activity-flag.bad { color: var(--bad); }
+
+.activity .chev,
+.process-row .chev {
+  font-size: 14px;
+  transition: transform 0.15s ease;
 }
 
-/* A thought folded into a tool card sits inside that card, so it takes the
-   card's own left margin rather than the bubble's. */
-.tool .reasoning {
-  margin: 4px 0 8px;
+.activity.open .chev { transform: rotate(90deg); }
+
+.activity-detail {
+  margin: 0 0 8px 28px;
+  padding: 6px 0 2px 10px;
+  border-left: 2px solid var(--line);
 }
 
-.tool .status.running { color: var(--warn); border-color: var(--warn); }
-.tool .status.failed { color: var(--bad); border-color: var(--bad); }
-.tool .status.done { color: var(--ok); border-color: var(--ok); }
+.reasoning-text {
+  white-space: pre-wrap;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1.65;
+}
 
-.tool pre {
-  margin: 0;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
+.process-title {
+  flex: 1;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+/* ---- operation timeline ---- */
+
+.process-sheet .timeline {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-step {
+  position: relative;
+  padding: 0 0 2px 30px;
+}
+
+.timeline-step::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--line);
+}
+
+.timeline-step:last-child::before {
+  bottom: auto;
+  height: 20px;
+}
+
+.timeline-mark {
+  position: absolute;
+  left: 0;
+  top: 11px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.timeline-mark.think { color: var(--accent); }
+.timeline-mark.done { color: var(--ok); }
+.timeline-mark.bad { color: var(--bad); }
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+}
+
+.timeline-title {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.timeline-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.timeline-row .chev {
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+
+.timeline-step.open .chev { transform: rotate(90deg); }
+
+.timeline-detail {
+  margin: 0 0 8px;
+}
+
+/* A prompt card says what it is; the answered state is a tick, not a sentence. */
+.prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.prompt-done {
+  color: var(--ok);
+}
+
+
+/* ---- tool detail ---- */
+
+.tool-detail pre {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -516,49 +659,55 @@
   color: var(--fg-dim);
 }
 
-.tool pre.out { color: var(--fg); }
+.tool-detail pre.out { color: var(--fg); }
 
-.tool pre.out.diff {
+.tool-detail pre.out.diff {
   padding: 8px 0;
   white-space: pre;
   word-break: normal;
 }
-.tool .out.diff .line {
+
+.tool-detail .out.diff .line {
   display: block;
   min-height: 1.5em;
   padding: 0 12px;
 }
-.tool .out.diff .line.add {
+
+.tool-detail .out.diff .line.add {
   background: rgba(26, 127, 55, 0.1);
   color: #1a7f37;
 }
-.tool .out.diff .line.del {
+
+.tool-detail .out.diff .line.del {
   background: rgba(207, 34, 46, 0.1);
   color: #b42318;
 }
-.tool .out.diff .line.hunk {
+
+.tool-detail .out.diff .line.hunk {
   background: var(--bg-raised);
   color: var(--fg-dim);
 }
-.tool .out.diff .line.meta {
+
+.tool-detail .out.diff .line.meta {
   color: var(--fg-dim);
   font-weight: 600;
 }
 
 /* A refusal is an identity, not a sentence, so the code leads and the words
    follow. */
-.tool .refusal {
-  padding: 8px 12px;
-  border-top: 1px solid var(--bad);
+.tool-detail .refusal {
+  padding: 8px 10px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
   color: var(--bad);
   font-size: 13px;
 }
 
-.tool .refusal code {
+.tool-detail .refusal code {
   display: block;
+  margin-bottom: 2px;
   font-size: 11px;
   opacity: 0.8;
-  margin-bottom: 2px;
 }
 
 /* ---- notices ---- */
@@ -698,13 +847,148 @@
 /* ---- composer ---- */
 
 .composer {
-  border-top: 1px solid var(--line);
-  background: var(--bg-raised);
-  padding: 8px 12px;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 12px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px 10px 6px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-bar .attach {
+  flex: none;
+}
+
+.composer-bar .modelchip {
+  margin: 0 auto;
+}
+
+.composer-bar .send {
+  flex: none;
+}
+
+.composer-model {
+  margin: 0 auto;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.composer-images {
+  display: flex;
   gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: none;
+}
+
+.composer-images::-webkit-scrollbar { display: none; }
+
+.composer .attachment {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 72px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.composer .attachment img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.composer .attachment-index {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.62);
+  color: #fff;
+  font-size: 10px;
+}
+
+.composer .attachment-name {
+  display: block;
+  max-width: 72px;
+  padding-top: 2px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer .attachment button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* `+` opens the attach sheet; the model sits between it and the stop control,
+   where Qoder puts it, so the header carries only the conversation's name. */
+.attach-glyph {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.attach-actions button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.attach-actions button small {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.head-menu .sheet-actions button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.head-menu .sheet-actions button small {
+  color: var(--fg-dim);
+  font-size: 12px;
 }
 
 /* What the kernel said about the last message sent into a running turn. A
@@ -737,13 +1021,13 @@
   color: var(--fg-dim);
 }
 
-/* 排队 / 插话: two ways into a turn that is still running. They sit under the
-   composer so the send button keeps its own meaning (stop). */
+/* 排队 / 插话: two ways into a turn that is still running. They sit above the
+   composer, where the draft is, so the send slot keeps its own meaning (stop). */
 .interject {
   display: flex;
   gap: 8px;
-  padding: 0 12px 8px;
-  background: var(--bg-raised);
+  padding: 0 12px 6px;
+  background: transparent;
 }
 
 .chip {
@@ -764,15 +1048,15 @@
 }
 
 .composer textarea {
-  flex: 1;
-  min-height: var(--tap);
+  width: 100%;
+  min-height: 38px;
   /* Grows with content up to a third of the screen, then scrolls: a composer
      that eats the transcript is worse than one that scrolls. */
   max-height: 33vh;
-  padding: 11px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--bg);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
   color: var(--fg);
   font: inherit;
   font-size: 15px;
@@ -782,8 +1066,7 @@
 }
 
 .composer textarea:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline: none;
 }
 
 .composer .send {

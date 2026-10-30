@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApprovalCard, AskCard, AssistantBubble, ToolCard, UserBubble } from "./Rows";
+import { ApprovalCard, AskCard, AssistantBubble, ToolDetail, UserBubble } from "./Rows";
 import type { ApprovalRow, AskRow, ToolRow } from "./transcript";
 
 /**
@@ -237,10 +237,10 @@ function toolRow(overrides: Partial<ToolRow> = {}): ToolRow {
   };
 }
 
-describe("ToolCard", () => {
+describe("ToolDetail", () => {
   it("marks added, removed and hunk lines in a diff", () => {
     render(
-      <ToolCard
+      <ToolDetail
         row={toolRow({
           output: "--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new\n context",
         })}
@@ -256,22 +256,29 @@ describe("ToolCard", () => {
   });
 
   it("leaves a non-diff output as one block", () => {
-    render(<ToolCard row={toolRow({ output: "plain\noutput", outputDiff: false })} />);
+    render(<ToolDetail row={toolRow({ output: "plain\noutput", outputDiff: false })} />);
 
     expect(container.querySelector("pre.out.diff")).toBeNull();
     expect(container.querySelector("pre.out")?.textContent).toBe("plain\noutput");
   });
 
-  it("keeps the tool summary in a normal details box, not a flex row", () => {
-    // `details` is display:flex'd by `.row`; Android WebView then collapses a
-    // closed card to its border, which is the one-pixel strip seen on a phone.
-    render(<ToolCard row={toolRow({ name: "bash", output: "ok" })} />);
+  it("shows the arguments, a refusal and its output together", () => {
+    render(
+      <ToolDetail
+        row={toolRow({
+          args: '{"path":"a.ts"}',
+          refusalCode: "permission.denied",
+          err: "not allowed",
+          output: "after",
+          outputDiff: false,
+        })}
+      />,
+    );
 
-    const details = container.querySelector("details.tool");
-    expect(details).toBeTruthy();
-    expect(details?.parentElement?.classList.contains("row")).toBe(true);
-    expect(details?.classList.contains("row")).toBe(false);
-    expect(details?.querySelector("summary")?.textContent).toContain("bash");
+    expect(container.querySelector("pre")?.textContent).toContain("a.ts");
+    expect(container.querySelector(".refusal")?.textContent).toContain("permission.denied");
+    expect(container.querySelector(".refusal")?.textContent).toContain("not allowed");
+    expect(container.querySelector("pre.out")?.textContent).toBe("after");
   });
 
   it("draws nothing for an assistant row with neither answer nor reasoning", () => {
@@ -282,28 +289,6 @@ describe("ToolCard", () => {
     );
 
     expect(container.innerHTML).toBe("");
-  });
-
-  it("carries the step's thinking inside the card, collapsed", () => {
-    render(<ToolCard row={toolRow({ name: "read_file", reasoning: "look at the file first" })} />);
-
-    // The chip in the summary says there is more inside, so a folded card
-    // still shows that this step thought something.
-    expect(container.querySelector(".tool summary")?.textContent).toContain("想过");
-
-    const thought = container.querySelector(".tool .reasoning");
-    expect(thought).toBeTruthy();
-    expect(thought?.querySelector(".body")?.textContent).toBe("look at the file first");
-    // Collapsed by default: the card's own row is the record, the thought is
-    // there for whoever wants to read it.
-    expect((thought as HTMLDetailsElement).open).toBe(false);
-  });
-
-  it("shows no thinking marker on a card that has none", () => {
-    render(<ToolCard row={toolRow({ name: "read_file" })} />);
-
-    expect(container.querySelector(".tool summary")?.textContent).not.toContain("想过");
-    expect(container.querySelector(".tool .reasoning")).toBeNull();
   });
 });
 

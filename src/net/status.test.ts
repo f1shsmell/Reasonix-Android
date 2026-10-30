@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decisionLabel, decisionVerb, loadStatus } from "./status";
+import { decisionLabel, decisionVerb, loadStatus, setPlanMode } from "./status";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -136,5 +136,37 @@ describe("decisionVerb", () => {
     expect(decisionVerb({ id: "d", kind: "plan_approval" })).toBe("待批准计划");
     expect(decisionVerb({ id: "d", kind: "recovery_approval" })).toBe("待恢复");
     expect(decisionVerb({ id: "d", kind: "future" })).toBe("待处理");
+  });
+});
+
+describe("setPlanMode", () => {
+  it("turns plan mode on for this conversation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(setPlanMode("/rt/r1", true)).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/plan",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ on: true }) }),
+    );
+  });
+
+  it("keeps a refusal code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ code: "session.running" }, 409)),
+    );
+    await expect(setPlanMode("/rt/r1", true)).resolves.toEqual({
+      ok: false,
+      code: "session.running",
+    });
+  });
+
+  it("reports being offline", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    await expect(setPlanMode("/rt/r1", false)).resolves.toEqual({
+      ok: false,
+      code: "client.offline",
+    });
   });
 });

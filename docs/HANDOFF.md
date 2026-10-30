@@ -297,28 +297,30 @@ bug this section exists for.
 
 ## Images
 
-The composer's `📎` accepts a 10 MB image, posts `{name, mime, data}` as JSON to
-`POST /rt/{id}/attachments`, inserts the returned `@ref` into the draft, and
-shows the sent image through `GET /rt/{id}/workspace/image?path=...`. The raw
-`/attachments/upload` route was refused by the installed kernel with `415
-request.bad_content_type`, so the JSON route is the one the phone uses. A
-failed upload keeps the draft; the image chip can be removed before sending.
+## Chat as a task record
 
-A send is drawn locally as a user row before `POST /submit` returns. The
-kernel's later `turn_started` confirms that row by matching its text instead of
-appending a second copy; a failed submit removes it and leaves the draft in the
-composer.
+The transcript is drawn as work, not as a chat log (`src/chat/process.ts`,
+`src/chat/Activity.tsx`). A step is one line — icon, 深度思考 / 执行命令, one
+line of the command, chevron — and its detail opens underneath. A tool's
+thinking is lifted out of the card as its own step, so it is never shown twice.
 
-Long agent turns used to leave one reasoning-only assistant bubble per tool
-step, plus empty bubbles from tool-call-only `message` frames, which read as a
-wall of blank strips on a phone. Both folds now drop a reasoning-only step when
-its tool starts, stored history keeps only the tool card for such a step, and an
-assistant row with neither text nor reasoning renders nothing.
+- While a turn runs, its steps stay individual: that is when watching them is
+  useful.
+- A finished run of two or more steps collapses into one `已处理 N 个操作` row;
+  its sheet draws the same steps as a timeline and expands one at a time.
+- A single step stays a row even after the turn ends. An assistant row that
+  only carried thinking contributes the step and no answer bubble.
+- A thought longer than 900 characters opens the full sheet instead of growing
+  an inline row.
 
-A closed `<details>` was also being forced into `.row`'s `display:flex`; Android
-WebView then drew only the card's border, which is the one-pixel bar between
-messages. The tool `details` now sits inside a row wrapper, so its summary
-(status and tool name) is always visible.
+The composer is a floating card, as Qoder's phone client draws it: images as
+numbered thumbnails inside the card, `+` opens 相机 / 图片 / 计划, the model
+sits between them and the stop control, and the task checklist is a pill between
+the transcript and the composer. 计划 calls `POST /rt/{id}/plan` through
+`setPlanMode`, the same runtime setting the desktop toggles; its current state
+comes from `/status`, never from a local switch. The header is a floating
+capsule carrying the title, the host line and a `…` menu (reload history, pick
+model).
 
 An uploaded image appends a newline after its `@ref`, and sending runs
 `isolateImageRefs`, so text typed next to a reference becomes a separate token.

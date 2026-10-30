@@ -83,31 +83,18 @@ export function UserBubble({ row, base }: { row: UserRow; base?: string }) {
 }
 
 export function AssistantBubble({ row }: { row: AssistantRow }) {
-  const showReasoning = row.reasoning.trim().length > 0;
-  if (!showReasoning && !row.text) return null;
+  if (!row.text) return null;
   return (
     <div className={`row assistant${row.streaming ? " streaming" : ""}`}>
       <div className="bubble">
-        {showReasoning ? (
-          <details className="reasoning">
-            <summary>
-              {row.thoughtMs !== undefined
-                ? `思考了 ${Math.round(row.thoughtMs / 1000)} 秒`
-                : "思考过程"}
-            </summary>
-            <div className="body">{row.reasoning}</div>
-          </details>
-        ) : null}
-        {row.text ? (
-          row.streaming ? (
-            // Markdown is parsed once the answer is finished: re-parsing the
-            // whole growing text on every delta makes a long answer stutter.
-            <div className="md streaming-text">{row.text}</div>
-          ) : (
-            <Markdown text={row.text} />
-          )
-        ) : null}
-        {!row.streaming && row.text ? (
+        {row.streaming ? (
+          // Markdown is parsed once the answer is finished: re-parsing the
+          // whole growing text on every delta makes a long answer stutter.
+          <div className="md streaming-text">{row.text}</div>
+        ) : (
+          <Markdown text={row.text} />
+        )}
+        {!row.streaming ? (
           <div className="bubble-actions">
             <CopyButton text={row.text} label="复制回答" />
           </div>
@@ -115,12 +102,6 @@ export function AssistantBubble({ row }: { row: AssistantRow }) {
       </div>
     </div>
   );
-}
-
-function toolStatus(row: ToolRow): { label: string; tone: string } {
-  if (row.running) return { label: "运行中", tone: "running" };
-  if (row.err || row.refusalCode) return { label: "失败", tone: "failed" };
-  return { label: "完成", tone: "done" };
 }
 
 function diffTone(line: string): string {
@@ -159,40 +140,30 @@ function DiffOutput({ text }: { text: string }) {
   );
 }
 
-export function ToolCard({ row }: { row: ToolRow }) {
-  const status = toolStatus(row);
+/**
+ * What a tool call actually carried and returned.
+ *
+ * The step's own row says what ran; this is the detail behind it, drawn inside
+ * the activity row or the operation timeline. Thinking is no longer folded in
+ * here — it is its own step, so it is not shown twice.
+ */
+export function ToolDetail({ row }: { row: ToolRow }) {
   return (
-    <div className="row">
-      <details className="tool">
-        <summary>
-          <span className={`status ${status.tone}`}>{status.label}</span>
-          <span className="name">{row.name}</span>
-          {row.readOnly ? <span className="status">只读</span> : null}
-          {row.reasoning ? <span className="status thought">想过</span> : null}
-        </summary>
-        {/* The thought that led to this call. Folded into the card so a step is
-            one record: what it thought, what it ran, what came back. */}
-        {row.reasoning ? (
-          <details className="reasoning">
-            <summary>思考过程</summary>
-            <div className="body">{row.reasoning}</div>
-          </details>
-        ) : null}
-        {row.args ? <pre>{row.args}</pre> : null}
-        {row.err || row.refusalCode ? (
-          <div className="refusal">
-            {row.refusalCode ? <code>{row.refusalCode}</code> : null}
-            {row.err}
-          </div>
-        ) : null}
-        {row.output ? (
-          row.outputDiff ? (
-            <DiffOutput text={row.output} />
-          ) : (
-            <pre className="out">{row.output}</pre>
-          )
-        ) : null}
-      </details>
+    <div className="tool-detail">
+      {row.args ? <pre>{row.args}</pre> : null}
+      {row.err || row.refusalCode ? (
+        <div className="refusal">
+          {row.refusalCode ? <code>{row.refusalCode}</code> : null}
+          {row.err}
+        </div>
+      ) : null}
+      {row.output ? (
+        row.outputDiff ? (
+          <DiffOutput text={row.output} />
+        ) : (
+          <pre className="out">{row.output}</pre>
+        )
+      ) : null}
     </div>
   );
 }
@@ -342,6 +313,10 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
 
   return (
     <div className="row prompt">
+      <div className="prompt-head">
+        <span>问题回答</span>
+        {row.pending ? null : <span className="prompt-done" aria-hidden="true">✓</span>}
+      </div>
       {questions.map((question) => (
         <AskQuestionBlock
           key={question.id}

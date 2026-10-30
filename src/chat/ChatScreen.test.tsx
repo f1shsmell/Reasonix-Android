@@ -211,12 +211,12 @@ describe("ChatScreen todos", () => {
     const transcript = container.querySelector(".transcript");
     expect(panel).not.toBeNull();
     expect(transcript).not.toBeNull();
-    // The checklist describes the work behind the conversation, so it reads
-    // before it in document order as well.
+    // The checklist is a strip between the record and the composer: it stays
+    // in reach while the conversation scrolls, without taking its top.
     expect(
       panel !== null &&
         transcript !== null &&
-        (panel.compareDocumentPosition(transcript) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+        (transcript.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
     ).toBe(true);
   });
 
@@ -780,7 +780,7 @@ describe("ChatScreen composer", () => {
     await flush();
 
     // The attach control stays usable with an image already waiting.
-    const attach = container.querySelector('button[aria-label="添加图片"]') as HTMLButtonElement;
+    const attach = container.querySelector('button[aria-label="添加图片或计划"]') as HTMLButtonElement;
     expect(attach.disabled).toBe(false);
 
     Object.defineProperty(input, "files", {
@@ -1128,5 +1128,99 @@ describe("ChatScreen stop", () => {
 
     expect(container.querySelector('[aria-label="发送"]')).toBeTruthy();
     expect(container.querySelector('[aria-label="停止"]')).toBeNull();
+  });
+});
+
+describe("ChatScreen activity", () => {
+  it("draws live steps, then collapses the finished run", async () => {
+    stubKernel();
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    render(
+      snapshot({
+        kind: "tool_dispatch",
+        tool: { id: "c1", name: "bash", args: '{"command":"ls"}' },
+      }),
+    );
+    await flush();
+    render(
+      snapshot({
+        kind: "tool_dispatch",
+        tool: { id: "c2", name: "read_file", args: '{"path":"a"}' },
+      }),
+    );
+    await flush();
+
+    // Still in flight: the steps are individually readable.
+    expect(container.querySelectorAll(".activity-row")).toHaveLength(2);
+
+    render(snapshot({ kind: "turn_done" }));
+    await flush();
+
+    const summary = container.querySelector(".process-row");
+    expect(summary?.textContent).toContain("已处理 2 个操作");
+    expect(container.querySelectorAll(".activity-row")).toHaveLength(0);
+
+    act(() => (summary as HTMLButtonElement).click());
+    const sheet = container.querySelector(".process-sheet");
+    expect(sheet?.textContent).toContain("执行命令");
+    expect(sheet?.textContent).toContain("读取文件");
+  });
+
+  it("lifts a thought into its own row", async () => {
+    stubKernel();
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    render(snapshot({ kind: "reasoning", reasoning: "先看目录" }));
+    await flush();
+
+    const row = container.querySelector(".activity-row");
+    expect(row?.textContent).toContain("深度思考");
+
+    act(() => (row as HTMLButtonElement).click());
+    expect(container.querySelector(".reasoning-text")?.textContent).toBe("先看目录");
+  });
+});
+
+describe("ChatScreen composer extras", () => {
+  it("opens a plus sheet with camera, image and plan", async () => {
+    const fetchMock = stubKernel();
+    render(snapshot());
+    await flush();
+
+    act(() =>
+      (
+        container.querySelector('button[aria-label="添加图片或计划"]') as HTMLButtonElement
+      ).click(),
+    );
+    const sheet = container.querySelector(".attach-sheet");
+    expect(sheet?.textContent).toContain("相机");
+    expect(sheet?.textContent).toContain("图片");
+    expect(sheet?.textContent).toContain("计划");
+
+    const plan = Array.from(sheet?.querySelectorAll("button") ?? []).find((candidate) =>
+      candidate.textContent?.includes("计划"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      plan.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/plan",
+      expect.objectContaining({ body: JSON.stringify({ on: true }) }),
+    );
+  });
+
+  it("keeps reload and model behind the header's more button", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+
+    act(() => (container.querySelector('button[aria-label="更多"]') as HTMLButtonElement).click());
+    const sheet = container.querySelector(".head-menu");
+    expect(sheet?.textContent).toContain("重新加载历史");
+    expect(sheet?.textContent).toContain("选择模型");
   });
 });
