@@ -484,6 +484,29 @@
   animation: process-pulse 1.4s ease-in-out infinite;
 }
 
+/* Reading back through a long answer must not trap the person there: the
+   control sits over the transcript's lower edge and disappears at the bottom. */
+.jump-latest-wrap {
+  display: flex;
+  justify-content: center;
+  height: 0;
+  position: relative;
+  z-index: 3;
+}
+
+.jump-latest {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  transform: translateY(-44px);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+}
+
 @keyframes process-pulse {
   50% { opacity: 0.35; }
 }
@@ -1041,6 +1064,50 @@
 .head-menu .sheet-actions button small {
   color: var(--fg-dim);
   font-size: 12px;
+}
+
+/* The posture is a session setting; its five rows live with the conversation
+   they change, not in the machine-wide settings page. */
+.approval-choices {
+  display: flex;
+  flex-direction: column;
+}
+
+.approval-choices button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font-size: 15px;
+}
+
+.approval-choices button + button {
+  border-top: 1px solid var(--line);
+}
+
+.approval-choices button small {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.approval-choices button.on {
+  color: var(--accent);
+}
+
+.approval-choices button.on small {
+  color: var(--accent);
+}
+
+.approval-choices button:disabled {
+  opacity: 0.5;
 }
 
 /* What the kernel said about the last message sent into a running turn. A

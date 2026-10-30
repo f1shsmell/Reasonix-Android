@@ -10,6 +10,12 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
+import {
+  APPROVAL_CHOICES,
+  approvalLabel,
+  approvalMessage,
+  setApprovalMode,
+} from "../net/approval";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
 import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
@@ -167,14 +173,18 @@ function AttachSheet({
 /** The header's "…": the two things that do not fit in the bar. */
 function HeadMenu({
   model,
+  approval,
   onClose,
   onReload,
   onModel,
+  onApproval,
 }: {
   model: string;
+  approval: string;
   onClose: () => void;
   onReload: () => void;
   onModel: () => void;
+  onApproval: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -205,7 +215,84 @@ function HeadMenu({
               <small>{model || "未命名模型"}</small>
             </button>
           </li>
+          <li>
+            <button type="button" onClick={onApproval}>
+              <span>工具批准</span>
+              <small>{approvalLabel(approval) || "读不到当前模式"}</small>
+            </button>
+          </li>
         </ul>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * The tool posture for this conversation.
+ *
+ * It is a runtime setting, so it lives where the conversation is — not in the
+ * global settings page, where it read as a machine-wide switch.
+ */
+function ApprovalSheet({
+  base,
+  current,
+  onClose,
+  onChanged,
+}: {
+  base: string;
+  current: string;
+  onClose: () => void;
+  onChanged: (mode: string) => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  useBackCloser(true, onClose);
+
+  const pick = async (mode: string) => {
+    if (busy) return;
+    setBusy(mode);
+    setError("");
+    const result = await setApprovalMode(base, mode);
+    setBusy("");
+    if (!result.ok) {
+      setError(approvalMessage(result.code));
+      return;
+    }
+    onChanged(mode);
+  };
+
+  return (
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sheet approval-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="工具批准"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>工具批准</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <p className="sheet-note">只改这个会话；桌面端下次打开的新会话沿用它最近一次的选择。</p>
+        <div className="approval-choices" role="group" aria-label="工具批准">
+          {APPROVAL_CHOICES.map((choice) => (
+            <button
+              key={choice.value}
+              type="button"
+              className={current === choice.value ? "on" : ""}
+              aria-pressed={current === choice.value}
+              disabled={busy !== ""}
+              onClick={() => void pick(choice.value)}
+            >
+              <span>{choice.label}</span>
+              <small>{choice.hint}</small>
+            </button>
+          ))}
+        </div>
+        {error ? <div className="notice error">{error}</div> : null}
       </section>
     </div>
   );
@@ -448,6 +535,9 @@ export function ChatScreen({
   /** The model the catalog last confirmed, shown until the transcript reports one. */
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
+  const [approvalSheet, setApprovalSheet] = useState(false);
+  /** This conversation's tool posture, as `/status` reports it. */
+  const [approval, setApproval] = useState("");
   /** What the kernel said about the last message sent into a running turn. */
   const [inboxNote, setInboxNote] = useState("");
   /** Plan mode as the kernel reports it; undefined until the first read. */
@@ -502,6 +592,7 @@ export function ChatScreen({
     void loadStatus(base).then((result) => {
       if (cancelled || !result.ok) return;
       setPlan(result.status.plan);
+      setApproval(result.status.toolApprovalMode ?? "");
       if (result.status.modelRef) setStatusModel(result.status.modelRef);
       if (!result.status.running) return;
       setTranscript((current) => (current.running ? current : { ...current, running: true }));
@@ -1054,17 +1145,25 @@ export function ChatScreen({
         ) : null}
       </div>
 
-      <TodoPanel todos={todos} state={todosState} />
-
-      {promptError ? (
-        <div className="sendfail" role="alert">
-          <span>{promptError}</span>
-          <button type="button" onClick={() => setPromptError("")}>
-            知道了
+      {!atBottom && transcript.rows.length > 0 ? (
+        <div className="jump-latest-wrap">
+          <button
+            type="button"
+            className="jump-latest"
+            onClick={() => {
+              scrollToBottom(true);
+              setAtBottom(true);
+            }}
+          >
+            ↓ 最新
           </button>
         </div>
       ) : null}
 
+      <TodoPanel todos={todos} state={todosState} />
+
+      {/* One strip, highest priority first. Four bars stacked over the
+          composer is noise; a person can only act on one thing at a time. */}
       {send.kind === "failed" ? (
         <div className="sendfail" role="alert">
           <span>
@@ -1092,18 +1191,21 @@ export function ChatScreen({
             </button>
           )}
         </div>
-      ) : null}
-
-      {attachError ? (
+      ) : promptError ? (
+        <div className="sendfail" role="alert">
+          <span>{promptError}</span>
+          <button type="button" onClick={() => setPromptError("")}>
+            知道了
+          </button>
+        </div>
+      ) : attachError ? (
         <div className="sendfail" role="alert">
           <span>{attachError}</span>
           <button type="button" onClick={() => setAttachError("")}>
             知道了
           </button>
         </div>
-      ) : null}
-
-      {inboxNote ? (
+      ) : inboxNote ? (
         <div className="inbox-note" role="status">
           <span>{inboxNote}</span>
           <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
@@ -1257,6 +1359,7 @@ export function ChatScreen({
       {headMenu ? (
         <HeadMenu
           model={shortRef(pickedModel || transcript.modelRef || statusModel || "")}
+          approval={approval}
           onClose={() => setHeadMenu(false)}
           onReload={() => {
             setHeadMenu(false);
@@ -1265,6 +1368,22 @@ export function ChatScreen({
           onModel={() => {
             setHeadMenu(false);
             setModelSheet(true);
+          }}
+          onApproval={() => {
+            setHeadMenu(false);
+            setApprovalSheet(true);
+          }}
+        />
+      ) : null}
+
+      {approvalSheet && runtime ? (
+        <ApprovalSheet
+          base={runtime.base}
+          current={approval}
+          onClose={() => setApprovalSheet(false)}
+          onChanged={(mode) => {
+            setApproval(mode);
+            setApprovalSheet(false);
           }}
         />
       ) : null}

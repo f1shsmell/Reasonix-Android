@@ -277,11 +277,16 @@ export function App() {
   useEffect(() => {
     if (boot !== "ready") return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") link.kick();
+      if (document.visibilityState !== "visible") return;
+      link.kick();
+      // The desktop may have moved a prompt or finished a turn while the
+      // screen was off; the home block and the tree are both snapshots.
+      pending.refresh();
+      reloadTree();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [boot, link.kick]);
+  }, [boot, link.kick, pending.refresh, reloadTree]);
 
   // The proxy retries the remembered origins on a network change; the link
   // machine then checks the other transport if nothing answered.
@@ -392,7 +397,6 @@ export function App() {
         onFailed={link.noteFailed}
         onClose={() => setShowConnect(false)}
         link={link.state}
-        {...(snapshot.runtimes[0]?.base ? { runtimeBase: snapshot.runtimes[0].base } : {})}
       />
     );
   } else if (openRuntime) {

@@ -59,8 +59,6 @@ import {
   openNotificationSettings,
 } from "../native/turn";
 import type { BackgroundStatus } from "../native/turn";
-import { approvalLabel, approvalMessage, setApprovalMode, APPROVAL_CHOICES } from "../net/approval";
-import { loadStatus } from "../net/status";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
 import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/folding";
@@ -72,21 +70,11 @@ export interface ConnectScreenProps {
   onFailed?: (error: LinkError) => void;
   /** Present when this screen was opened over an existing connection. */
   onClose?: () => void;
-  /**
-   * A runtime to address the approval posture through.
-   *
-   * The write is `POST /rt/{id}/tool-approval-mode`, and the kernel then keeps
-   * that posture on the hub and persists it — so which pane answers is a
-   * transport detail, not a choice of scope. Without any pane there is nothing
-   * to address, and the control stays hidden rather than writing somewhere the
-   * person did not point at.
-   */
-  runtimeBase?: string;
   /** The app's link machine, for the hero at the top of the page. */
   link?: LinkState;
 }
 
-export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, link }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onClose, link }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -97,9 +85,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
   const [error, setError] = useState("");
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
-  /** The posture this conversation is in; empty until `/status` answers. */
-  const [approval, setApproval] = useState("");
-  const [approvalError, setApprovalError] = useState("");
+  /** Which half of settings is showing: the computer, or this phone. */
+  const [pane, setPane] = useState<"connect" | "prefs">("connect");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -193,34 +180,6 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
       remove?.();
     };
   }, [refreshBackground]);
-
-  // The posture is per conversation, so it is read from the pane this screen
-  // was opened over. No pane means no reading and no control.
-  useEffect(() => {
-    if (!runtimeBase) return;
-    let cancelled = false;
-    void loadStatus(runtimeBase).then((result) => {
-      if (cancelled || !result.ok) return;
-      setApproval(result.status.toolApprovalMode ?? "");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [runtimeBase]);
-
-  const pickApproval = useCallback(
-    async (mode: string) => {
-      if (!runtimeBase) return;
-      setApprovalError("");
-      const result = await setApprovalMode(runtimeBase, mode);
-      if (!result.ok) {
-        setApprovalError(approvalMessage(result.code));
-        return;
-      }
-      setApproval(mode);
-    },
-    [runtimeBase],
-  );
 
   const pickTheme = useCallback((choice: ThemeChoice) => {
     setThemeState(choice);
@@ -665,15 +624,36 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
         )}
       </header>
 
+      <div className="segmented settings-tabs" role="group" aria-label="设置页面">
+        <button
+          type="button"
+          className={pane === "connect" ? "on" : ""}
+          aria-pressed={pane === "connect"}
+          onClick={() => setPane("connect")}
+        >
+          电脑
+        </button>
+        <button
+          type="button"
+          className={pane === "prefs" ? "on" : ""}
+          aria-pressed={pane === "prefs"}
+          onClick={() => setPane("prefs")}
+        >
+          偏好
+        </button>
+      </div>
+
       <div className="connect-body">
         {/* The computer this phone is pointed at and what the link is doing:
             the one fact every control below is judged against, so it leads. */}
-        <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
+        {pane === "connect" ? (
+          <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
+        ) : null}
 
         {/* Places this phone has already connected to. The current one is
             marked; the rest are one tap away, with a way to forget a computer
             that moved or a device that left the account. */}
-        {saved.length > 0 ? (
+        {pane === "connect" && saved.length > 0 ? (
           <>
             <p className="group-label">已连接的电脑</p>
             <section className="group">
@@ -728,9 +708,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
           </>
         ) : null}
 
-        <p className="group-label">连接</p>
-        <section className="group">
-          <button type="button" className="setting" onClick={() => void scan()} disabled={busy !== ""}>
+        {pane === "connect" ? (
+          <>
+            <p className="group-label">连接</p>
+            <section className="group">
+              <button type="button" className="setting" onClick={() => void scan()} disabled={busy !== ""}>
             <span className="setting-main">
               <span className="setting-title">
                 {busy === "正在打开相机" ? "正在打开相机…" : "扫码连接"}
@@ -825,7 +807,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
             Wi-Fi、路由器是否开启了 AP 隔离或 VPN。
           </div>
         </details>
+          </>
+        ) : null}
 
+        {pane === "prefs" ? (
+          <>
         <p className="group-label">外观</p>
         <section className="group">
           <div className="setting">
@@ -903,36 +889,6 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
           </>
         ) : null}
 
-        {runtimeBase ? (
-          <>
-            {/* The posture's name used to be a row inside the same card as the
-                five choices, drawn exactly like them — so the card read as six
-                postures, the first one being "工具批准 / 全放开". The card now
-                holds only choices; the name of the setting is a group label,
-                and the current value is named in the note below. */}
-            <p className="group-label">工具批准</p>
-            <section className="group" role="group" aria-label="工具批准">
-              {APPROVAL_CHOICES.map((choice) => (
-                <button
-                  key={choice.value}
-                  type="button"
-                  className={`approval${approval === choice.value ? " on" : ""}`}
-                  aria-pressed={approval === choice.value}
-                  onClick={() => void pickApproval(choice.value)}
-                >
-                  <span>{choice.label}</span>
-                  <small>{choice.hint}</small>
-                </button>
-              ))}
-            </section>
-            <p className="group-note">
-              {approvalLabel(approval) ? `现在是「${approvalLabel(approval)}」。` : ""}
-              只改这个会话；桌面端下次打开的新会话沿用它最近一次的选择。
-            </p>
-            {approvalError ? <div className="notice error">{approvalError}</div> : null}
-          </>
-        ) : null}
-
         <p className="group-label">关于</p>
         <section className="group">
           <div className="setting">
@@ -946,7 +902,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
             </span>
           </div>
         </section>
+          </>
+        ) : null}
 
+        {pane === "connect" ? (
+          <>
         <p className="group-label">Reasonix 账号</p>
         <section className="group">
           {account.signedIn ? (
@@ -1020,6 +980,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
               })}
             </section>
             <p className="group-note">同一账号下开启了远程访问的电脑。</p>
+          </>
+        ) : null}
           </>
         ) : null}
       </div>

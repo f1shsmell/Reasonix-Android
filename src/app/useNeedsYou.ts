@@ -34,6 +34,15 @@ export interface PendingItem {
   decision: Decision;
 }
 
+/** A pane whose turn is still working, with no decision blocking it. */
+export interface RunningItem {
+  base: string;
+  runtimeId: string;
+  projectName: string;
+  projectRoot: string;
+  title: string;
+}
+
 interface Candidate {
   base: string;
   runtimeId: string;
@@ -44,6 +53,8 @@ interface Candidate {
 
 export interface NeedsYouState {
   items: PendingItem[];
+  /** Turns still working, so home can show what is happening right now. */
+  running: RunningItem[];
   status: "loading" | "loaded";
   /** Re-sweep without waiting for the tree to change. */
   refresh: () => void;
@@ -69,6 +80,7 @@ export function paneCandidates(projects: TreeProject[]): Candidate[] {
 
 export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYouState {
   const [items, setItems] = useState<PendingItem[]>([]);
+  const [running, setRunning] = useState<RunningItem[]>([]);
   const [status, setStatus] = useState<"loading" | "loaded">("loading");
   const [tick, setTick] = useState(0);
   /** A slow sweep must not overwrite the answer of a newer one. */
@@ -83,25 +95,40 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
       // Nothing is open, so nothing can be blocked. Mark it loaded rather than
       // leaving the block spinning over an empty list.
       setItems([]);
+      setRunning([]);
       setStatus("loaded");
       return;
     }
     void Promise.all(
       candidates.map(async (candidate) => {
         const result = await loadStatus(candidate.base);
-        if (!result.ok) return [];
-        return result.status.decisions.map((decision) => ({
-          base: candidate.base,
-          runtimeId: candidate.runtimeId,
-          projectName: candidate.projectName,
-          projectRoot: candidate.projectRoot,
-          title: candidate.title,
-          decision,
-        }));
+        if (!result.ok) return { pending: [], running: null };
+        return {
+          pending: result.status.decisions.map((decision) => ({
+            base: candidate.base,
+            runtimeId: candidate.runtimeId,
+            projectName: candidate.projectName,
+            projectRoot: candidate.projectRoot,
+            title: candidate.title,
+            decision,
+          })),
+          running: result.status.running
+            ? {
+                base: candidate.base,
+                runtimeId: candidate.runtimeId,
+                projectName: candidate.projectName,
+                projectRoot: candidate.projectRoot,
+                title: candidate.title,
+              }
+            : null,
+        };
       }),
     ).then((groups) => {
       if (at !== request.current) return;
-      setItems(groups.flat());
+      setItems(groups.flatMap((group) => group.pending));
+      setRunning(
+        groups.flatMap((group) => (group.running === null ? [] : [group.running])),
+      );
       setStatus("loaded");
     });
     // `projects` is the array identity from useTree, which only changes on a
@@ -109,5 +136,19 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision, tick]);
 
-  return { items, status, refresh };
+  // Home is the screen a person leaves open while work happens. Without a
+  // clock the block only refreshed when the tree changed, which can be hours.
+  useEffect(() => {
+    const tickNow = () => {
+      if (document.visibilityState === "visible") setTick((value) => value + 1);
+    };
+    const timer = window.setInterval(tickNow, 20_000);
+    document.addEventListener("visibilitychange", tickNow);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tickNow);
+    };
+  }, []);
+
+  return { items, running, status, refresh };
 }

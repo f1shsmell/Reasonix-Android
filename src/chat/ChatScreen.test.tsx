@@ -1305,6 +1305,50 @@ describe("ChatScreen activity", () => {
   });
 });
 
+describe("ChatScreen tool posture", () => {
+  it("changes this conversation's posture from the head menu", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/todos")) return Promise.resolve(json([]));
+      if (url.endsWith("/tool-approval-mode")) return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.endsWith("/status")) {
+        return Promise.resolve(
+          json({ running: false, busy: false, decisions: [], toolApprovalMode: "ask" }),
+        );
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(snapshot());
+    await flush();
+
+    act(() => (container.querySelector('button[aria-label="更多"]') as HTMLButtonElement).click());
+
+    const approvalRow = Array.from(container.querySelectorAll(".head-menu button")).find((node) =>
+      node.textContent?.includes("工具批准"),
+    ) as HTMLButtonElement | undefined;
+    expect(approvalRow?.textContent).toContain("逐次询问");
+
+    act(() => approvalRow?.click());
+    expect(container.querySelector(".approval-sheet")).not.toBeNull();
+
+    const auto = Array.from(container.querySelectorAll(".approval-choices button")).find((node) =>
+      node.textContent?.includes("自动"),
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      auto?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/tool-approval-mode",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ mode: "auto" }) }),
+    );
+    expect(container.querySelector(".approval-sheet")).toBeNull();
+  });
+});
+
 describe("ChatScreen composer extras", () => {
   it("shows the model /status names when the history carries none", async () => {
     stubKernel({
@@ -1411,6 +1455,10 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(240);
+      expect(container.querySelector(".jump-latest")).toBeTruthy();
+
+      act(() => (container.querySelector(".jump-latest") as HTMLButtonElement).click());
+      expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();
     }
@@ -1432,6 +1480,7 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(1000);
+      expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();
     }

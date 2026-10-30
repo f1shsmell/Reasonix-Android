@@ -17,7 +17,6 @@ import type { ProxyConfig, RemoteDevice } from "../net/server";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
-import { loadStatus } from "../net/status";
 import {
   loadBackgroundStatus,
   openBatterySettings,
@@ -88,15 +87,6 @@ vi.mock("../net/server", () => ({
     }
   },
 }));
-// The posture read goes through `loadStatus`; stubbing it keeps these tests
-// about the screen rather than about the transport.
-vi.mock("../net/status", () => ({
-  loadStatus: vi.fn(async () => ({
-    ok: true,
-    status: { decisions: [], running: false, busy: false, plan: false },
-  })),
-}));
-
 let container: HTMLDivElement;
 let root: Root | null = null;
 let onConnected: Mock<() => void>;
@@ -145,7 +135,6 @@ afterEach(() => {
 async function renderScreen(
   onClose?: () => void,
   props: {
-    runtimeBase?: string;
     onFailed?: (error: LinkError) => void;
     link?: LinkState;
   } = {},
@@ -302,8 +291,13 @@ describe("ConnectScreen", () => {
       document.documentElement.removeAttribute("data-theme");
     });
 
-    it("pins a theme and remembers it", async () => {
+    async function renderPrefs(): Promise<void> {
       await renderScreen();
+      await press("偏好");
+    }
+
+    it("pins a theme and remembers it", async () => {
+      await renderPrefs();
 
       await act(async () => {
         button("深色").click();
@@ -315,7 +309,7 @@ describe("ConnectScreen", () => {
     });
 
     it("goes back to following the system, which is the absent attribute", async () => {
-      await renderScreen();
+      await renderPrefs();
       await act(async () => {
         button("深色").click();
         await Promise.resolve();
@@ -330,7 +324,7 @@ describe("ConnectScreen", () => {
     });
 
     it("pins the transcript fold and remembers it", async () => {
-      await renderScreen();
+      await renderPrefs();
 
       const group = container.querySelector('[aria-label="会话详略"]');
       const compact = Array.from(group?.querySelectorAll("button") ?? []).find(
@@ -347,7 +341,7 @@ describe("ConnectScreen", () => {
     });
 
     it("shows the version the build was given", async () => {
-      await renderScreen();
+      await renderPrefs();
       expect(container.textContent).toContain("版本");
       // The value comes from `define`, so the test asserts it is not blank
       // rather than pinning a number that a release would change.
@@ -355,75 +349,6 @@ describe("ConnectScreen", () => {
       expect(value.trim()).not.toBe("");
     });
 
-    it("hides the approval control when there is no pane to address", async () => {
-      await renderScreen();
-      expect(container.querySelector('[aria-label="工具批准"]')).toBeNull();
-    });
-
-    it("reads this conversation's posture and posts the chosen one", async () => {
-      vi.mocked(loadStatus).mockResolvedValue({
-        ok: true,
-        status: {
-          decisions: [],
-          running: false,
-          busy: false,
-          plan: false,
-          toolApprovalMode: "ask",
-        },
-      });
-      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-      vi.stubGlobal("fetch", fetchMock);
-
-      await renderScreen(undefined, { runtimeBase: "/rt/r1" });
-
-      expect(loadStatus).toHaveBeenCalledWith("/rt/r1");
-      expect(container.textContent).toContain("逐次询问");
-
-      const auto = Array.from(container.querySelectorAll(".approval")).find((node) =>
-        node.textContent?.includes("自动"),
-      ) as HTMLButtonElement | undefined;
-      expect(auto).toBeTruthy();
-
-      await act(async () => {
-        auto?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/rt/r1/tool-approval-mode",
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ mode: "auto" }) }),
-      );
-    });
-
-    it("says why a posture change was refused", async () => {
-      vi.mocked(loadStatus).mockResolvedValue({
-        ok: true,
-        status: { decisions: [], running: false, busy: false, plan: false, toolApprovalMode: "ask" },
-      });
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(
-          new Response(JSON.stringify({ code: "request.bad_value" }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          }),
-        ),
-      );
-
-      await renderScreen(undefined, { runtimeBase: "/rt/r1" });
-
-      const yolo = Array.from(container.querySelectorAll(".approval")).find((node) =>
-        node.textContent?.includes("全放开"),
-      ) as HTMLButtonElement | undefined;
-      await act(async () => {
-        yolo?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      expect(container.textContent).toContain("request.bad_value");
-    });
   });
 });
 
@@ -533,6 +458,7 @@ describe("ConnectScreen background", () => {
   it("reports the two system permissions and opens their pages", async () => {
     vi.mocked(loadBackgroundStatus).mockResolvedValue({ exempt: false, notifications: true });
     await renderScreen();
+    await press("偏好");
 
     expect(container.textContent).toContain("后台运行");
     expect(container.textContent).toContain("已开启，提问和完成会提醒");

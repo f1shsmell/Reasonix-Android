@@ -343,6 +343,14 @@ pre.frame {
   border-left: 3px solid var(--warn);
 }
 
+.card-need[data-kind="running"] {
+  border-left-color: var(--accent);
+}
+
+.card-need[data-kind="running"] .need-verb {
+  color: var(--accent);
+}
+
 .card-need strong {
   max-width: 100%;
   overflow: hidden;

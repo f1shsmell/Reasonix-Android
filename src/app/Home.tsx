@@ -31,7 +31,7 @@ import { useBackCloser } from "./backStack";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
 import { runtimeOpenMessage, sessionTitle } from "./SessionList";
-import type { NeedsYouState, PendingItem } from "./useNeedsYou";
+import type { NeedsYouState } from "./useNeedsYou";
 import type { TreeState } from "./useTree";
 import { openRuntime } from "../net/workspaces";
 
@@ -161,34 +161,71 @@ function NeedsYou({
   onOpen,
 }: {
   pending: NeedsYouState;
-  onOpen: (item: PendingItem) => void;
+  onOpen: (item: { runtimeId: string; projectRoot: string; title: string }) => void;
 }) {
-  if (pending.status === "loaded" && pending.items.length === 0) return null;
-  if (pending.status === "loading" && pending.items.length === 0) return null;
+  const waiting = pending.items;
+  // A blocked turn is already in the first list; repeating it under "running"
+  // would make one conversation look like two.
+  const running = pending.running.filter(
+    (item) => !waiting.some((entry) => entry.runtimeId === item.runtimeId),
+  );
+  if (pending.status === "loaded" && waiting.length === 0 && running.length === 0) return null;
+  if (pending.status === "loading" && waiting.length === 0 && running.length === 0) return null;
 
   return (
-    <section className="needs-you" aria-label="待你处理">
-      <div className="section-head">
-        <h2>待你处理</h2>
-        <span className="meta">{pending.items.length}</span>
-      </div>
-      <ul className="cards">
-        {pending.items.map((item) => (
-          <li key={`${item.runtimeId}\u0000${item.decision.id}`}>
-            <button
-              type="button"
-              className="card-need"
-              onClick={() => onOpen(item)}
-              aria-label={`${item.title} ${decisionVerb(item.decision)}`}
-            >
-              <span className="need-verb">{decisionVerb(item.decision)}</span>
-              <strong>{item.title}</strong>
-              <span className="need-what">{decisionLabel(item.decision)}</span>
-              <span className="need-where">{item.projectName}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+    <section className="needs-you" aria-label="正在处理">
+      {waiting.length > 0 ? (
+        <>
+          <div className="section-head">
+            <h2>待你处理</h2>
+            <span className="meta">{waiting.length}</span>
+          </div>
+          <ul className="cards">
+            {waiting.map((item) => (
+              <li key={`${item.runtimeId}\u0000${item.decision.id}`}>
+                <button
+                  type="button"
+                  className="card-need"
+                  onClick={() => onOpen(item)}
+                  aria-label={`${item.title} ${decisionVerb(item.decision)}`}
+                >
+                  <span className="need-verb">{decisionVerb(item.decision)}</span>
+                  <strong>{item.title}</strong>
+                  <span className="need-what">{decisionLabel(item.decision)}</span>
+                  <span className="need-where">{item.projectName}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {running.length > 0 ? (
+        <>
+          <div className="section-head">
+            <h2>正在运行</h2>
+            <span className="meta">{running.length}</span>
+          </div>
+          <ul className="cards">
+            {running.map((item) => (
+              <li key={`run:${item.runtimeId}`}>
+                <button
+                  type="button"
+                  className="card-need"
+                  data-kind="running"
+                  onClick={() => onOpen(item)}
+                  aria-label={`${item.title} 正在运行`}
+                >
+                  <span className="need-verb">运行中</span>
+                  <strong>{item.title}</strong>
+                  <span className="need-what">正在处理…</span>
+                  <span className="need-where">{item.projectName}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </section>
   );
 }

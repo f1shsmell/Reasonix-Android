@@ -313,6 +313,27 @@ before the machine starts, `link` is idle and the hero shows the setup line.
 The step list is drawn only when the machine is working, not for a manual
 attempt — one `POST` is not three stages.
 
+## Settings, home and the latest row
+
+- `ConnectScreen` has two panes, **电脑** and **偏好**. The first holds the
+  hero, saved computers, scan/manual entry, account and cloud devices; the
+  second holds theme, transcript fold, background permissions and about. The
+  tab is named 电脑 rather than 连接 because the action button below it is also
+  called 连接: two controls with one name made the screen ambiguous (and the
+  tests pressed the wrong one).
+- Tool approval moved out of settings into the chat's `…` menu
+  (`ApprovalSheet`). It is a per-runtime posture; the old placement only
+  appeared when a runtime existed, which read as a global switch that was
+  sometimes missing.
+- `useNeedsYou` returns `running` as well as decisions and sweeps every 20 s
+  while the document is visible. Home draws 待你处理 and 正在运行 as separate
+  blocks, filtering any blocked pane out of the running list so one
+  conversation cannot appear twice. `App` refreshes the sweep and the tree on
+  `visibilitychange`.
+- Chat shows a `↓ 最新` pill whenever `atBottom` is false; the notice strips
+  (send failure, prompt error, attachment error, inbox receipt) are one
+  priority chain so they cannot stack over the composer.
+
 ## Transcript folds
 
 `src/chat/folding.ts` stores this phone's preference under

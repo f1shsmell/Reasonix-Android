@@ -56,6 +56,10 @@
   font-weight: 500;
 }
 
+.settings-tabs {
+  margin-bottom: 8px;
+}
+
 .connect-body {
   display: flex;
   flex-direction: column;
@@ -507,42 +511,6 @@ label.setting .setting-title {
   min-height: 32px;
   padding: 0 8px;
   font-size: 13px;
-}
-
-/* The approval postures are five rows, not a segmented control: each carries a
-   sentence and five labels do not fit across a phone. They are the card's only
-   children, so the group separator is their own. */
-.approval {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  min-height: 52px;
-  padding: 10px 14px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--fg);
-  text-align: left;
-  font-size: 15px;
-}
-
-.approval + .approval {
-  border-top: 1px solid var(--line);
-}
-
-.approval small {
-  color: var(--fg-dim);
-  font-size: 12px;
-}
-
-.approval.on {
-  color: var(--accent);
-}
-
-.approval.on small {
-  color: var(--accent);
 }
 
 /* ---- first trust ---- */

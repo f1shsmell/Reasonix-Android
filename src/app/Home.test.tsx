@@ -73,7 +73,7 @@ function tree(overrides: Partial<TreeState> = {}): TreeState {
 }
 
 function pending(overrides: Partial<NeedsYouState> = {}): NeedsYouState {
-  return { items: [], status: "loaded", refresh: vi.fn(), ...overrides };
+  return { items: [], running: [], status: "loaded", refresh: vi.fn(), ...overrides };
 }
 
 function Harness(props: Partial<React.ComponentProps<typeof Home>>): React.ReactElement {
@@ -383,6 +383,47 @@ describe("Home", () => {
       act(() => (container.querySelector(".card-need") as HTMLButtonElement).click());
 
       expect(onOpenRuntime).toHaveBeenCalledWith("r2", "/work/app", "修一下登录");
+    });
+
+    it("shows a turn that is still working, apart from a blocked one", () => {
+      render({
+        pending: pending({
+          running: [
+            {
+              base: "/rt/r2",
+              runtimeId: "r2",
+              projectName: "app",
+              projectRoot: "/work/app",
+              title: "修一下登录",
+            },
+          ],
+        }),
+      });
+
+      const block = container.querySelector(".needs-you");
+      expect(block?.textContent).toContain("正在运行");
+      expect(block?.textContent).toContain("修一下登录");
+      expect(block?.textContent).toContain("正在处理…");
+      expect(block?.textContent).not.toContain("待你处理");
+    });
+
+    it("does not repeat a blocked conversation under running", () => {
+      render({
+        pending: pending({
+          items: [waiting()],
+          running: [
+            {
+              base: "/rt/r2",
+              runtimeId: "r2",
+              projectName: "app",
+              projectRoot: "/work/app",
+              title: "修一下登录",
+            },
+          ],
+        }),
+      });
+
+      expect(container.querySelectorAll(".card-need")).toHaveLength(1);
     });
 
     it("draws nothing when nothing is waiting", () => {
