@@ -377,7 +377,9 @@ export function App() {
       </div>
     );
   } else if (boot === "connect") {
-    screen = <ConnectScreen onConnected={onConnected} onFailed={link.noteFailed} />;
+    screen = (
+      <ConnectScreen onConnected={onConnected} onFailed={link.noteFailed} link={link.state} />
+    );
   } else if (showConnect) {
     // The kernel keeps the approval posture on the hub and persists it, so any
     // pane speaks for it; the first one is simply the cheapest to address.
@@ -386,6 +388,7 @@ export function App() {
         onConnected={onConnected}
         onFailed={link.noteFailed}
         onClose={() => setShowConnect(false)}
+        link={link.state}
         {...(snapshot.runtimes[0]?.base ? { runtimeBase: snapshot.runtimes[0].base } : {})}
       />
     );

@@ -36,7 +36,8 @@ import {
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
 import { linkFailure } from "../net/link";
-import type { LinkError } from "../net/link";
+import type { LinkError, LinkState } from "../net/link";
+import { ConnectionHero } from "./ConnectionHero";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
@@ -55,6 +56,8 @@ import { approvalLabel, approvalMessage, setApprovalMode, APPROVAL_CHOICES } fro
 import { loadStatus } from "../net/status";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
+import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/folding";
+import type { FoldMode } from "../chat/folding";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
@@ -72,9 +75,11 @@ export interface ConnectScreenProps {
    * person did not point at.
    */
   runtimeBase?: string;
+  /** The app's link machine, for the hero at the top of the page. */
+  link?: LinkState;
 }
 
-export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, link }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -84,6 +89,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
+  const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** The posture this conversation is in; empty until `/status` answers. */
   const [approval, setApproval] = useState("");
   const [approvalError, setApprovalError] = useState("");
@@ -93,6 +99,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
   const [trustAsk, setTrustAsk] = useState<TrustPrompt | null>(null);
   /** The device whose pin no longer matches; the error offers to start over. */
   const [retrust, setRetrust] = useState<string | null>(null);
+  /** What a manual attempt is aiming at, before the proxy has switched. */
+  const [pending, setPending] = useState<{ kind: "lan" | "cloud"; name: string } | null>(null);
   const trustResolve = useRef<((accepted: boolean) => void) | null>(null);
 
   const confirmTrust = useCallback(
@@ -175,6 +183,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
     applyTheme(choice);
   }, []);
 
+  const pickFold = useCallback((mode: FoldMode) => {
+    setFold(mode);
+    saveFoldMode(mode);
+  }, []);
+
   const connect = useCallback(
     async (target: string, code: string) => {
       const base = target.trim().replace(/\/+$/, "");
@@ -186,6 +199,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
       const viaWeb = Capacitor.isNativePlatform() && pairCodeValue !== "";
       setBusy(viaWeb ? "正在配对" : "正在连接");
       setError("");
+      setPending({ kind: "lan", name: base });
       const apply = async (next: ProxyConfig) => {
         // Only after the new LAN upstream is saved: a failed attempt must
         // leave an existing relay connection alone.
@@ -254,6 +268,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
         }
       } finally {
         setBusy("");
+        setPending(null);
       }
     },
     [onConnected, onFailed],
@@ -269,6 +284,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
       setBusy("正在连接云端");
       setError("");
       setRetrust(null);
+      setPending({ kind: "cloud", name: target?.name ?? target?.id ?? deviceId });
       let link: Awaited<ReturnType<typeof connectRelay>> | null = null;
       try {
         link = await connectRelay(deviceId, { confirm: confirmTrust });
@@ -309,6 +325,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
         }
       } finally {
         setBusy("");
+        setPending(null);
       }
     },
     [confirmTrust, devices, onConnected, onFailed],
@@ -555,7 +572,33 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
   );
 
   const known = config?.origin ?? "";
-  const mode = config?.mode === "relay" ? "云端连接" : known ? "局域网" : "";
+  const labelOf = (entry: SavedConnection): string =>
+    entry.kind === "cloud"
+      ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
+      : entry.name;
+  const currentEntry = saved.find((entry) => current(entry)) ?? null;
+  const relayName =
+    config?.mode === "relay" && config.relayDevice
+      ? devices.find((device) => device.id === config.relayDevice)?.name
+      : undefined;
+  const spare = config ? config.candidates.length - 1 : 0;
+  const connectedName =
+    config?.mode === "relay"
+      ? (relayName ?? currentEntry?.name ?? "云端电脑")
+      : known || currentEntry?.name || "连接你的电脑";
+  const connectedDetail =
+    config?.mode === "relay"
+      ? "云端 · Reasonix 账号"
+      : known
+        ? (spare > 0 ? `局域网 · 还有 ${spare} 个备用地址` : "局域网直连")
+        : "扫码、粘贴链接，或登录账号";
+  const heroName = pending?.name ?? connectedName;
+  const heroDetail =
+    pending === null
+      ? connectedDetail
+      : pending.kind === "cloud"
+        ? "云端 · Reasonix 账号"
+        : "局域网";
 
   return (
     <div className="connect">
@@ -578,21 +621,9 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
       </header>
 
       <div className="connect-body">
-        {/* The computer this phone is pointed at: the one fact every other
-            control below is judged against, so it leads. */}
-        <section className="group">
-          <div className="setting">
-            <span className="setting-main">
-              <span className="setting-title">{known || "没有连接电脑"}</span>
-              <span className="setting-sub">
-                {known ? mode : "扫码，或填一个地址"}
-                {config && config.candidates.length > 1
-                  ? ` · 还有 ${config.candidates.length - 1} 个备用地址`
-                  : ""}
-              </span>
-            </span>
-          </div>
-        </section>
+        {/* The computer this phone is pointed at and what the link is doing:
+            the one fact every control below is judged against, so it leads. */}
+        <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
 
         {/* Places this phone has already connected to. The current one is
             marked; the rest are one tap away, with a way to forget a computer
@@ -602,10 +633,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
             <p className="group-label">已连接的电脑</p>
             <section className="group">
               {saved.map((entry) => {
-                const label =
-                  entry.kind === "cloud"
-                    ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
-                    : entry.name;
+                const label = labelOf(entry);
                 const here = current(entry);
                 return (
                   <div
@@ -771,8 +799,26 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
               ))}
             </div>
           </div>
+          <div className="setting">
+            <span className="setting-title">会话</span>
+            <div className="segmented" role="group" aria-label="会话详略">
+              {FOLD_CHOICES.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={fold === choice.value ? "on" : ""}
+                  aria-pressed={fold === choice.value}
+                  onClick={() => pickFold(choice.value)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
-        <p className="group-note">只影响这台手机；桌面端的外观是它自己的设置。</p>
+        <p className="group-note">
+          只影响这台手机；桌面端的外观是它自己的设置。{FOLD_NOTE}
+        </p>
 
         {runtimeBase ? (
           <>

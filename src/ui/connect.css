@@ -63,6 +63,170 @@
   padding-bottom: 12px;
 }
 
+/* ---- the link hero ---- */
+
+/* The computer and the link, above every control that changes it. The tone is
+   the home chip's tone, so one colour means connected everywhere; the mark
+   traces only while the link is actually working. */
+.link-hero {
+  --hero-tone: var(--fg-dim);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 22px 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 6px);
+  background:
+    radial-gradient(
+      120% 90% at 50% -12%,
+      color-mix(in srgb, var(--hero-tone) 13%, transparent),
+      transparent 70%
+    ),
+    var(--bg-raised);
+  overflow: hidden;
+  text-align: center;
+}
+
+.link-hero[data-tone="busy"] { --hero-tone: var(--accent); }
+.link-hero[data-tone="ok"] { --hero-tone: var(--ok); }
+.link-hero[data-tone="warn"] { --hero-tone: var(--warn); }
+.link-hero[data-tone="bad"] { --hero-tone: var(--bad); }
+
+.link-hero-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  color: var(--hero-tone);
+}
+
+/* The halo is the glow around the strokes, not a second animation: it only
+   breathes while `data-live` says the link is doing work. */
+.link-hero-mark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--hero-tone) 26%, transparent),
+    transparent 68%
+  );
+  opacity: 0.4;
+  transition: opacity 0.35s ease;
+}
+
+.link-hero[data-live] .link-hero-mark::before {
+  opacity: 1;
+  animation: link-halo 2.2s ease-in-out infinite;
+}
+
+.link-hero .rmark {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 40px;
+  overflow: visible;
+}
+
+.link-hero .rmark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+}
+
+/* One third of each stroke travels; the staggered delays make the three read
+   as one drawing hand rather than three blinking lines. */
+.link-hero[data-live] .rmark path {
+  stroke-dasharray: 24 76;
+  animation: link-trace 2.2s linear infinite;
+}
+
+.link-hero[data-live] .rmark path:nth-child(2) { animation-delay: -0.72s; }
+.link-hero[data-live] .rmark path:nth-child(3) { animation-delay: -1.44s; }
+
+.link-hero[data-tone="idle"] .rmark { opacity: 0.55; }
+
+@keyframes link-trace {
+  to { stroke-dashoffset: -100; }
+}
+
+@keyframes link-halo {
+  0%, 100% { opacity: 0.5; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+.link-hero-title {
+  margin: 8px 0 0;
+  max-width: 100%;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.link-hero-sub {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.link-hero[data-tone="bad"] .link-hero-sub { color: var(--bad); }
+
+.link-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.link-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.link-steps li::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.link-steps li[data-state="done"]::before { background: var(--ok); }
+.link-steps li[data-state="active"] { color: var(--fg); }
+.link-steps li[data-state="active"]::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link-hero[data-live] .rmark path {
+    animation: none;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 0;
+  }
+  .link-hero[data-live] .link-hero-mark::before {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* ---- groups ---- */
 
 .group-label {

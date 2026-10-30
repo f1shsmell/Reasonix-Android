@@ -19,7 +19,8 @@ import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
 import { loadStatus } from "../net/status";
 import { rememberConnection } from "../net/savedConnections";
-import type { LinkError } from "../net/link";
+import { idleLink } from "../net/link";
+import type { LinkError, LinkState } from "../net/link";
 
 /**
  * ConnectScreen is the only place a phone can acquire a kernel, and the only
@@ -132,7 +133,11 @@ afterEach(() => {
 
 async function renderScreen(
   onClose?: () => void,
-  props: { runtimeBase?: string; onFailed?: (error: LinkError) => void } = {},
+  props: {
+    runtimeBase?: string;
+    onFailed?: (error: LinkError) => void;
+    link?: LinkState;
+  } = {},
 ): Promise<void> {
   act(() => root?.unmount());
   root = createRoot(container);
@@ -313,6 +318,23 @@ describe("ConnectScreen", () => {
       expect(localStorage.getItem("reasonix.theme")).toBeNull();
     });
 
+    it("pins the transcript fold and remembers it", async () => {
+      await renderScreen();
+
+      const group = container.querySelector('[aria-label="会话详略"]');
+      const compact = Array.from(group?.querySelectorAll("button") ?? []).find(
+        (candidate) => candidate.textContent === "精简",
+      ) as HTMLButtonElement;
+
+      await act(async () => {
+        compact.click();
+        await Promise.resolve();
+      });
+
+      expect(localStorage.getItem("reasonix.folding.v1")).toBe("compact");
+      expect(compact.getAttribute("aria-pressed")).toBe("true");
+    });
+
     it("shows the version the build was given", async () => {
       await renderScreen();
       expect(container.textContent).toContain("版本");
@@ -463,6 +485,36 @@ describe("ConnectScreen saved connections", () => {
     await renderScreen();
 
     expect(container.textContent).toContain("楼下的台式机");
+  });
+});
+
+describe("ConnectScreen hero", () => {
+  it("shows the link machine's stage", async () => {
+    await renderScreen(undefined, {
+      link: {
+        ...idleLink,
+        phase: "connecting",
+        step: "verify",
+        completed: ["probe", "switch"],
+      },
+    });
+
+    expect(container.querySelector(".link-hero-sub")?.textContent).toBe("正在读取会话…");
+    expect(container.querySelectorAll(".link-steps li")).toHaveLength(3);
+  });
+
+  it("names the cloud computer while the proxy still points at the LAN", async () => {
+    vi.mocked(readProxyConfig).mockResolvedValue(
+      config({ account: { signedIn: true, user: { label: "me" } } }),
+    );
+    vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
+    vi.mocked(connectRelay).mockImplementation(() => new Promise(() => {}));
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+
+    expect(container.querySelector(".link-hero-title")?.textContent).toBe("DESKTOP");
+    expect(container.querySelector(".link-hero-sub")?.textContent).toBe("正在连接云端…");
   });
 });
 
