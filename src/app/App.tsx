@@ -6,17 +6,17 @@ import { Network } from "@capacitor/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
 import { bootstrap } from "../net/token";
-import { configureProxy, markRelay, originAnswers, readProxyConfig, refreshProxy } from "../net/server";
+import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import type { ProxyConfig } from "../net/server";
-import { clearRelayRouting, connectRelay, ensureRelay } from "../net/relay";
-import { withTimeout } from "../net/http";
+import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
-import { loadConnections, rememberConnection } from "../net/savedConnections";
+import { loadConnections } from "../net/savedConnections";
 import { ChatScreen } from "../chat/ChatScreen";
 import { Home } from "./Home";
 import type { HomeTab } from "./swipe";
 import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
+import { useLink } from "./useLink";
 import { useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
 import { openRuntime as openRuntimeOn } from "../net/workspaces";
@@ -35,24 +35,6 @@ function lanDoors(config: ProxyConfig | null): string[] {
     .filter((row) => row.kind === "lan")
     .map((row) => row.target);
   return [...new Set([config?.origin ?? "", ...(config?.candidates ?? []), ...saved].filter(Boolean))];
-}
-
-/** The first remembered LAN address that answers at all, in preference order. */
-async function firstAnswering(doors: string[]): Promise<string | null> {
-  const answers = await Promise.all(
-    doors.map(async (origin) => ({ origin, ok: await originAnswers(origin) })),
-  );
-  return answers.find((entry) => entry.ok)?.origin ?? null;
-}
-
-/** The cloud device a recovery should try: the active one, the hint, then the record. */
-function relayDoor(config: ProxyConfig | null): string {
-  return (
-    config?.relayDevice ||
-    loadRelayDevice() ||
-    loadConnections().find((row) => row.kind === "cloud")?.target ||
-    ""
-  );
 }
 
 /**
@@ -93,78 +75,16 @@ export function App() {
   const [boot, setBoot] = useState<Boot>(() => (Capacitor.isNativePlatform() ? "loading" : "ready"));
   const tree = useTree();
   const pending = useNeedsYou(tree.projects, tree.revision);
-  const configRef = useRef<ProxyConfig | null>(null);
-  const recovering = useRef(false);
+  const link = useLink(connection);
 
-  /**
-   * A phone changes networks while the app is open, and a Studio can restart
-   * under the same LAN address. One recovery pass, preferring the LAN: if any
-   * remembered local address answers, the relay is not needed even when it
-   * still works. The account is the fallback for when none does, and an open
-   * relay is reopened before its probe so a dead socket is not mistaken for a
-   * missing computer. It is idempotent and guarded so visibility and network
-   * events cannot overlap into two switches.
-   */
-  const recover = useCallback(async () => {
-    if (recovering.current) return;
-    recovering.current = true;
-    const reachKind = () => connection.current.reach.kind;
-    try {
-      const fresh = await refreshProxy();
-      if (fresh !== null) configRef.current = fresh;
-      const known = fresh ?? configRef.current;
-      const signedIn = known?.account.signedIn === true;
-      const device = signedIn ? relayDoor(known) : "";
-      const doors = lanDoors(known);
-
-      // Already on LAN: re-probing the candidates is the whole job while it
-      // answers. A failed read falls through to the other doors.
-      if (known?.mode !== "relay" && known?.origin) {
-        await connection.refresh();
-        if (reachKind() === "ok") {
-          rememberConnection("lan", known.origin);
-          return;
-        }
-      }
-
-      // Prefer the LAN even while a relay works: back on the computer's Wi-Fi
-      // it is the faster path and the one that costs no account traffic. A
-      // door that answers is only trusted after the kernel itself does.
-      const alive = doors.length > 0 ? await firstAnswering(doors) : null;
-      if (alive !== null && !(known?.mode !== "relay" && alive === known?.origin)) {
-        try {
-          const next = await configureProxy(alive);
-          clearRelayRouting();
-          configRef.current = next;
-          await connection.refresh();
-          if (reachKind() === "ok") {
-            rememberConnection("lan", alive);
-            // Keep the cloud id as the hint for the next time this phone
-            // leaves the Wi-Fi.
-            if (device) saveRelayDevice(device);
-            return;
-          }
-        } catch {
-          // The door answered but the kernel did not. The account is next.
-        }
-      }
-
-      // The account is the other door, and the only one that leaves the LAN.
-      if (device) {
-        try {
-          await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
-          configRef.current = await markRelay(device);
-          saveRelayDevice(device);
-          rememberConnection("cloud", device);
-          await connection.refresh();
-        } catch {
-          // leave the unreachable state visible
-        }
-      }
-    } finally {
-      recovering.current = false;
-    }
-  }, []);
+  // Coming back from a failed or retried link is the moment the lists are
+  // most likely to be stale: the old read may have gone through a dead door.
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    const now = link.state.phase === "connected";
+    if (now && !wasConnected.current) tree.reload();
+    wasConnected.current = now;
+  }, [link.state.phase, tree.reload]);
 
   useEffect(() => connection.subscribe(setSnapshot), [connection]);
 
@@ -180,12 +100,10 @@ export function App() {
         setBoot("ready");
         return;
       }
-      configRef.current = config;
       if (config.mode === "relay" && config.relayDevice) {
         saveRelayDevice(config.relayDevice);
         try {
           await connectRelay(config.relayDevice);
-          rememberConnection("cloud", config.relayDevice);
           if (!cancelled) setBoot("ready");
         } catch {
           // The relay did not open. A remembered LAN address may still answer;
@@ -196,9 +114,7 @@ export function App() {
           if (alive !== null) {
             try {
               clearRelayRouting();
-              const lan = await configureProxy(alive);
-              configRef.current = lan;
-              rememberConnection("lan", alive);
+              await configureProxy(alive);
               if (!cancelled) setBoot("ready");
               return;
             } catch {
@@ -211,7 +127,6 @@ export function App() {
       }
       clearRelayRouting();
       if (config.origin) {
-        rememberConnection("lan", config.origin);
         setBoot("ready");
         return;
       }
@@ -233,20 +148,22 @@ export function App() {
     if (boot !== "ready") return;
     let cancelled = false;
     void bootstrap().then(() => {
-      if (!cancelled) void recover();
+      // The first attempt verifies whatever the proxy was told at boot and
+      // prefers a LAN door if one answers.
+      if (!cancelled) link.kick();
     });
     return () => {
       cancelled = true;
     };
-  }, [boot, recover]);
+  }, [boot, link.kick]);
 
   const [actionError, setActionError] = useState("");
 
   const reloadTree = tree.reload;
   const refresh = useCallback(() => {
-    void connection.refresh();
+    void link.kick();
     reloadTree();
-  }, [reloadTree]);
+  }, [link.kick, reloadTree]);
 
   /** A pane the kernel just answered is not in the snapshot yet. */
   const openedRuntime = useCallback(async (id: string, root: string, title: string) => {
@@ -296,33 +213,33 @@ export function App() {
   const onConnected = useCallback(() => {
     setShowConnect(false);
     setBoot("ready");
+    void link.noteConnected();
     void readProxyConfig().then((next) => {
       if (next === null) return;
-      configRef.current = next;
       if (next.relayDevice) saveRelayDevice(next.relayDevice);
     });
-  }, []);
+  }, [link.noteConnected]);
 
   // Coming back from the background must re-probe: the kernel may have been
   // restarted or the phone may have changed networks while the screen was off.
   useEffect(() => {
     if (boot !== "ready") return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") void recover();
+      if (document.visibilityState === "visible") link.kick();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [boot, recover]);
+  }, [boot, link.kick]);
 
-  // The proxy retries the remembered origins on a network change; recovery
-  // then checks the other transport if nothing answered.
+  // The proxy retries the remembered origins on a network change; the link
+  // machine then checks the other transport if nothing answered.
   useEffect(() => {
     if (boot !== "ready" || !Capacitor.isNativePlatform()) return;
     let cancelled = false;
     let remove: (() => void) | undefined;
     void Network.addListener("networkStatusChange", (status) => {
       if (!status.connected) return;
-      void recover();
+      link.kick();
     }).then((handle) => {
       if (cancelled) {
         void handle.remove();
@@ -336,16 +253,7 @@ export function App() {
       cancelled = true;
       remove?.();
     };
-  }, [boot, recover]);
-
-  // Once the list is known to be unreachable, keep trying on a slow timer;
-  // a phone can sit on a dying Wi-Fi for minutes with no visibility or network
-  // event to wake it. The guard in `recover` keeps these from overlapping.
-  useEffect(() => {
-    if (boot !== "ready" || snapshot.reach.kind !== "unreachable") return;
-    const timer = window.setInterval(() => void recover(), 15_000);
-    return () => window.clearInterval(timer);
-  }, [boot, snapshot.reach.kind, recover]);
+  }, [boot, link.kick]);
 
   // Android's back gesture leaves a single-page app rather than going back a
   // screen, so the screen it should have gone back to is stated here. On the
@@ -418,13 +326,14 @@ export function App() {
       </div>
     );
   } else if (boot === "connect") {
-    screen = <ConnectScreen onConnected={onConnected} />;
+    screen = <ConnectScreen onConnected={onConnected} onFailed={link.noteFailed} />;
   } else if (showConnect) {
     // The kernel keeps the approval posture on the hub and persists it, so any
     // pane speaks for it; the first one is simply the cheapest to address.
     screen = (
       <ConnectScreen
         onConnected={onConnected}
+        onFailed={link.noteFailed}
         onClose={() => setShowConnect(false)}
         {...(snapshot.runtimes[0]?.base ? { runtimeBase: snapshot.runtimes[0].base } : {})}
       />
@@ -475,6 +384,9 @@ export function App() {
         pending={pending}
         tab={homeTab}
         onTabChange={setHomeTab}
+        link={link.state}
+        onSwitchConnection={(entry) => void link.switchTo(entry)}
+        onRetryLink={link.retry}
         onOpenProject={openProject}
         onOpenSession={(id, root, title) => void openedRuntime(id, root, title)}
         // The pane is already running, so opening it is navigation only: the

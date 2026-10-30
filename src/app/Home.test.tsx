@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Home, projectActivity, recentConversations } from "./Home";
+import { rememberConnection } from "../net/savedConnections";
+import type { LinkState } from "../net/link";
 import type { HomeTab } from "./swipe";
 import type { NeedsYouState } from "./useNeedsYou";
 import type { TreeState } from "./useTree";
@@ -36,6 +38,7 @@ function route(
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -82,6 +85,9 @@ function Harness(props: Partial<React.ComponentProps<typeof Home>>): React.React
       pending={pending()}
       tab={tab}
       onTabChange={setTab}
+      link={{ phase: "connected", completed: [], attempt: 0, target: "/work/app", name: "app", mode: "lan" }}
+      onSwitchConnection={() => {}}
+      onRetryLink={() => {}}
       onOpenProject={() => {}}
       onOpenSession={() => {}}
       onOpenRuntime={() => {}}
@@ -699,5 +705,93 @@ describe("Home", () => {
         "最近",
       );
     });
+  });
+});
+
+describe("Home connection bar", () => {
+  function connected(overrides: Partial<LinkState> = {}): LinkState {
+    return {
+      phase: "connected",
+      completed: [],
+      attempt: 0,
+      target: "http://192.168.5.2:56789",
+      name: "192.168.5.2:56789",
+      mode: "lan",
+      ...overrides,
+    };
+  }
+
+  it("shows the current computer and how the link stands", () => {
+    render({ link: connected() });
+    const bar = container.querySelector(".linkbar") as HTMLButtonElement;
+    expect(bar.textContent).toContain("192.168.5.2:56789");
+    expect(bar.textContent).toContain("局域网已连接");
+  });
+
+  it("shows reconnect attempts instead of a silent spinner", () => {
+    render({
+      link: {
+        ...connected(),
+        phase: "reconnecting",
+        attempt: 3,
+        error: { code: "client.offline", message: "到不了", retryable: true },
+      },
+    });
+    expect(container.querySelector(".linkbar")?.textContent).toContain("第 3 次");
+  });
+
+  it("opens the switch sheet with the recorded computers", () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    rememberConnection("lan", "http://192.168.5.2:56789");
+    render({ link: connected() });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+
+    const sheet = container.querySelector(".switch-sheet");
+    expect(sheet?.textContent).toContain("切换连接");
+    expect(sheet?.textContent).toContain("192.168.9.9:51234");
+    expect(sheet?.textContent).toContain("当前");
+  });
+
+  it("switches to a row and closes the sheet", () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    const onSwitchConnection = vi.fn();
+    render({ link: connected(), onSwitchConnection });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+
+    const row = Array.from(container.querySelectorAll(".switch-row")).find((node) =>
+      node.textContent?.includes("192.168.9.9"),
+    ) as HTMLButtonElement;
+    act(() => row.click());
+
+    expect(onSwitchConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "lan", target: "http://192.168.9.9:51234" }),
+    );
+    expect(container.querySelector(".switch-sheet")).toBeNull();
+  });
+
+  it("offers a retry when the link failed", () => {
+    const onRetryLink = vi.fn();
+    render({
+      link: {
+        ...connected(),
+        phase: "failed",
+        name: "电脑",
+        error: { code: "client.offline", message: "到不了这台电脑", retryable: true },
+      },
+      onRetryLink,
+    });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+
+    expect(container.querySelector(".switch-sheet")?.textContent).toContain("到不了这台电脑");
+    act(() => button("重试连接").click());
+    expect(onRetryLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends 管理连接 to settings", () => {
+    const onSettings = vi.fn();
+    render({ onSettings });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+    act(() => button("管理连接").click());
+    expect(onSettings).toHaveBeenCalledTimes(1);
   });
 });

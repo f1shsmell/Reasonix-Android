@@ -6,8 +6,9 @@ import { Capacitor } from "@capacitor/core";
 import { App } from "./App";
 import {
   configureProxy,
+  firstAnswering,
   markRelay,
-  originAnswers,
+  probeUpstream,
   readProxyConfig,
   refreshProxy,
 } from "../net/server";
@@ -28,7 +29,7 @@ import { rememberConnection } from "../net/savedConnections";
 
 const connectionMock = vi.hoisted(() => ({
   current: {
-    reach: { kind: "ok" as const },
+    reach: { kind: "ok" as "ok" | "unauthorized" | "unreachable" },
     runtimes: [] as unknown[],
     stream: { kind: "idle" as const },
   },
@@ -76,13 +77,30 @@ vi.mock("../net/relay", () => ({
   connectRelay: vi.fn(),
   ensureRelay: vi.fn(),
   clearRelayRouting: vi.fn(),
+  RelayError: class RelayError extends Error {
+    readonly kind: string;
+    constructor(kind: string, message: string) {
+      super(message);
+      this.kind = kind;
+    }
+  },
 }));
 vi.mock("../net/server", () => ({
   readProxyConfig: vi.fn(),
   refreshProxy: vi.fn(),
   configureProxy: vi.fn(),
   markRelay: vi.fn(),
-  originAnswers: vi.fn(),
+  firstAnswering: vi.fn(),
+  probeUpstream: vi.fn(),
+  ProxyError: class ProxyError extends Error {
+    readonly status: number;
+    readonly code: string;
+    constructor(status: number, code: string) {
+      super(code);
+      this.status = status;
+      this.code = code;
+    }
+  },
 }));
 vi.mock("../net/tree", () => ({ loadTree: vi.fn(), DEFAULT_TREE_LIMIT: 60 }));
 vi.mock("../net/workspaces", () => ({ openRuntime: vi.fn() }));
@@ -170,7 +188,8 @@ beforeEach(() => {
   vi.mocked(readProxyConfig).mockResolvedValue(lanConfig());
   vi.mocked(refreshProxy).mockResolvedValue(lanConfig());
   vi.mocked(configureProxy).mockResolvedValue(lanConfig());
-  vi.mocked(originAnswers).mockResolvedValue(false);
+  vi.mocked(firstAnswering).mockResolvedValue(null);
+  vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
   vi.mocked(connectRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>);
   vi.mocked(ensureRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof ensureRelay>>);
   vi.mocked(markRelay).mockResolvedValue({ ...lanConfig(), mode: "relay", relayDevice: "saved-device" });
@@ -257,7 +276,7 @@ describe("App", () => {
       relayDevice: "saved-device",
     });
     vi.mocked(connectRelay).mockRejectedValue(new Error("relay down"));
-    vi.mocked(originAnswers).mockResolvedValue(true);
+    vi.mocked(firstAnswering).mockResolvedValue("http://192.168.5.2:56789");
     await renderApp();
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
     expect(container.querySelectorAll(".session")).toHaveLength(2);
@@ -267,7 +286,7 @@ describe("App", () => {
     const relayed = { ...lanConfig(), mode: "relay" as const, relayDevice: "saved-device" };
     vi.mocked(readProxyConfig).mockResolvedValue(relayed);
     vi.mocked(refreshProxy).mockResolvedValue(relayed);
-    vi.mocked(originAnswers).mockResolvedValue(true);
+    vi.mocked(firstAnswering).mockResolvedValue("http://192.168.5.2:56789");
     await renderApp();
 
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
@@ -278,7 +297,7 @@ describe("App", () => {
     const relayed = { ...lanConfig(), mode: "relay" as const, relayDevice: "saved-device" };
     vi.mocked(readProxyConfig).mockResolvedValue(relayed);
     vi.mocked(refreshProxy).mockResolvedValue(relayed);
-    vi.mocked(originAnswers).mockResolvedValue(false);
+    vi.mocked(firstAnswering).mockResolvedValue(null);
     await renderApp();
 
     expect(configureProxy).not.toHaveBeenCalled();
@@ -293,6 +312,27 @@ describe("App", () => {
 
     expect(container.querySelector('[data-testid="connect"]')).toBeNull();
     expect(container.querySelectorAll(".session")).toHaveLength(2);
+  });
+
+  it("reports a retrying link instead of showing a connected home", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(refreshProxy).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(firstAnswering).mockResolvedValue(null);
+    await renderApp();
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("正在重连");
+  });
+
+  it("stops retrying when the pairing is gone and names the fix", async () => {
+    connectionMock.current.reach = { kind: "unauthorized" };
+    vi.mocked(firstAnswering).mockResolvedValue("http://192.168.5.2:56789");
+    vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "device.unauthorized" });
+    await renderApp();
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("连接失败");
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+    expect(container.textContent).toContain("配对或登录已失效");
   });
 
   it("opens a stored conversation straight from the recent list", async () => {

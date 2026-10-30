@@ -18,6 +18,10 @@ import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
 import { placeProject, setPinned, treeWriteMessage } from "../net/pin";
+import { linkSummary, linkTone } from "../net/link";
+import type { LinkState } from "../net/link";
+import { loadConnections } from "../net/savedConnections";
+import type { SavedConnection } from "../net/savedConnections";
 import { insideHorizontalScroller, swipeTo } from "./swipe";
 import type { HomeTab } from "./swipe";
 import { useProjectDrag } from "./useProjectDrag";
@@ -43,6 +47,12 @@ export interface HomeProps {
    */
   tab: Tab;
   onTabChange: (tab: Tab) => void;
+  /** The state of this phone's link to a computer. */
+  link: LinkState;
+  /** Switch to a recorded computer; the connection screen owns the write. */
+  onSwitchConnection: (entry: SavedConnection) => void;
+  /** Retry the current door after a failure or an exhausted backoff. */
+  onRetryLink: () => void;
   onOpenProject: (root: string) => void;
   /** A pane was opened (or found) for this conversation. */
   onOpenSession: (runtimeId: string, root: string, title: string) => void;
@@ -300,6 +310,129 @@ function SessionSheet({
   );
 }
 
+/**
+ * The computer this phone is talking to, and how that is going.
+ *
+ * It sits under the title bar rather than inside the settings screen: which
+ * computer and whether it is reachable decide what every list below means, and
+ * a link that has been reconnecting for a minute should not be invisible.
+ */
+function LinkBar({ link, onOpen }: { link: LinkState; onOpen: () => void }) {
+  const name = link.name ?? (link.phase === "connected" ? "电脑" : "没有连接电脑");
+  return (
+    <button
+      type="button"
+      className="linkbar"
+      onClick={onOpen}
+      aria-label={`连接：${name}，${linkSummary(link)}`}
+    >
+      <span className={`dot ${linkTone(link)}`} aria-hidden="true" />
+      <span className="linkbar-main">
+        <span className="linkbar-name">{name}</span>
+        <span className="linkbar-state">{linkSummary(link)}</span>
+      </span>
+      <span className="chev" aria-hidden="true">
+        ⌄
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 切换连接: the computers already paired, plus the two ways to do something
+ * about the current one — retry a failure, or go to the settings screen where
+ * pairing, sign-in and forgetting live.
+ */
+function SwitchSheet({
+  link,
+  saved,
+  onClose,
+  onSwitch,
+  onRetry,
+  onManage,
+}: {
+  link: LinkState;
+  saved: SavedConnection[];
+  onClose: () => void;
+  onSwitch: (entry: SavedConnection) => void;
+  onRetry: () => void;
+  onManage: () => void;
+}) {
+  const busy = link.phase === "connecting" || link.phase === "reconnecting";
+  return (
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sheet switch-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="切换连接"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>切换连接</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <p className="switch-state">{linkSummary(link)}</p>
+        {link.error ? (
+          <div className="notice error">
+            <div>{link.error.message}</div>
+            {link.error.detail ? <div className="meta">{link.error.detail}</div> : null}
+          </div>
+        ) : null}
+        {saved.length > 0 ? (
+          <ul className="sheet-actions switch-list">
+            {saved.map((entry) => {
+              const here = link.phase === "connected" && link.target === entry.target;
+              const opening = busy && link.target === entry.target;
+              return (
+                <li key={`${entry.kind}:${entry.target}`}>
+                  <button
+                    type="button"
+                    className="switch-row"
+                    aria-current={here ? "true" : undefined}
+                    disabled={busy}
+                    onClick={() => onSwitch(entry)}
+                  >
+                    <span className="switch-main">
+                      <span className="switch-name">
+                        {entry.name}
+                        {here ? <span className="current-tag">当前</span> : null}
+                        {opening ? <span className="current-tag">连接中</span> : null}
+                      </span>
+                      <span className="switch-sub">
+                        {entry.kind === "lan"
+                          ? `局域网 · ${entry.target}`
+                          : "云端 · Reasonix 账号"}
+                      </span>
+                    </span>
+                    <span className="chev" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="meta">还没有连接过的电脑。</p>
+        )}
+        <div className="switch-foot">
+          {link.phase === "failed" || link.phase === "reconnecting" ? (
+            <button type="button" className="chip" onClick={onRetry}>
+              重试连接
+            </button>
+          ) : null}
+          <button type="button" className="chip accent" onClick={onManage}>
+            管理连接
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ProjectItem({
   project,
   drop,
@@ -395,6 +528,9 @@ export function Home({
   pending,
   tab,
   onTabChange,
+  link,
+  onSwitchConnection,
+  onRetryLink,
   onOpenProject,
   onOpenSession,
   onOpenRuntime,
@@ -404,6 +540,9 @@ export function Home({
 }: HomeProps) {
   const [query, setQuery] = useState("");
   const [sheet, setSheet] = useState(false);
+  const [switchSheet, setSwitchSheet] = useState(false);
+  /** Read when the sheet opens, so a settings change is reflected next time. */
+  const [saved, setSaved] = useState<SavedConnection[]>([]);
   const [busy, setBusy] = useState("");
   /** The conversation whose actions are showing, if any. */
   const [menu, setMenu] = useState<RecentRow | null>(null);
@@ -543,15 +682,7 @@ export function Home({
         ) : (
           <span className="bar-spacer" />
         )}
-        <h1>
-          Reasonix
-          <span
-            className={`dot ${snapshot.reach.kind === "ok" ? "ok" : "warn"}`}
-            role="img"
-            aria-label={snapshot.reach.kind === "ok" ? "已连接" : "未连接"}
-            title={snapshot.reach.kind === "ok" ? "已连接" : "未连接"}
-          />
-        </h1>
+        <h1>Reasonix</h1>
         <button
           type="button"
           className="iconbtn"
@@ -565,6 +696,14 @@ export function Home({
           ⟳
         </button>
       </div>
+
+      <LinkBar
+        link={link}
+        onOpen={() => {
+          setSaved(loadConnections());
+          setSwitchSheet(true);
+        }}
+      />
 
       <div className="body">
         <ReachBanner snapshot={snapshot} />
@@ -694,6 +833,23 @@ export function Home({
           onPick={(root) => {
             setSheet(false);
             onNewSession(root);
+          }}
+        />
+      ) : null}
+
+      {switchSheet ? (
+        <SwitchSheet
+          link={link}
+          saved={saved}
+          onClose={() => setSwitchSheet(false)}
+          onSwitch={(entry) => {
+            setSwitchSheet(false);
+            onSwitchConnection(entry);
+          }}
+          onRetry={onRetryLink}
+          onManage={() => {
+            setSwitchSheet(false);
+            onSettings?.();
           }}
         />
       ) : null}
