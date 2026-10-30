@@ -29,6 +29,20 @@
    - GitHub Release 的正文直接使用这份发布说明，不自动生成。
 6. 发布失败可用 `workflow_dispatch` 输入**已存在的 tag** 重跑；重跑会替换同名资产，不会另起一个版本。
 
+## 签名
+
+Release 用固定密钥签名，密钥不进仓库：
+
+- GitHub Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、
+  `ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。
+- 本机备份在 `%USERPROFILE%\.reasonix-android\`（`release.jks` 与
+  `keystore.properties`）。这两个文件丢了，后续版本就无法覆盖安装，只能换包名或让用户卸载。
+- 证书 SHA-256：`73:46:91:F2:BE:AF:83:50:2F:E5:8A:E8:4A:9A:1A:A9:95:24:66:6B:B6:19:57:CD:10:FB:56:AE:D1:7C:24:6C`。
+- 从 debug 包切到签名包的第一版，已装 debug 包的手机会因签名不同拒绝覆盖，需要卸载一次；
+  配对 cookie 和 origin 会一起丢失，更新说明里要写明。
+- release 工作流会还原密钥、构建 `assembleRelease`（含 R8）并用 `apksigner` 验签；
+  CI 的 debug APK 仍然只是测试产物。
+
 ## 不要
 
 - 不要为单个修复升版本或打 tag。
