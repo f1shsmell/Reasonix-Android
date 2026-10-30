@@ -295,7 +295,7 @@ describe("ToolDetail", () => {
 describe("UserBubble", () => {
   it("renders an uploaded image and hides its @reference", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(new Blob(["png"], { type: "image/png" }), { status: 200 }),
+      new Response("png", { status: 200, headers: { "content-type": "image/png" } }),
     );
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:message");
