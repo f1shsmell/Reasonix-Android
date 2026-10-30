@@ -61,7 +61,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
- * One kernel, two routes. The old mock answered every request with the
+ * One kernel, several routes. The old mock answered every request with the
  * history body, so `/todos` silently received a transcript as its checklist.
  */
 function stubKernel(
@@ -70,12 +70,19 @@ function stubKernel(
     historyStatus?: number;
     todos?: unknown;
     todosStatus?: number;
+    status?: unknown;
+    statusStatus?: number;
   } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/todos")) {
       return Promise.resolve(json(options.todos ?? [], options.todosStatus));
+    }
+    if (url.endsWith("/status")) {
+      return Promise.resolve(
+        json(options.status ?? { running: false, busy: false, decisions: [] }, options.statusStatus),
+      );
     }
     return Promise.resolve(json(options.history ?? [], options.historyStatus));
   });
@@ -571,7 +578,7 @@ describe("ChatScreen composer", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("offers the session/project sheet from the chat header", async () => {
+  it("offers a fresh conversation in the same project from the chat header", async () => {
     stubKernel();
     const onNewSession = vi.fn();
     root = createRoot(container);
@@ -588,10 +595,64 @@ describe("ChatScreen composer", () => {
     );
     await flush();
 
-    const plus = container.querySelector('button[aria-label="新建会话或切换项目"]');
+    const plus = container.querySelector('button[aria-label="在当前项目新建会话"]');
     act(() => (plus as HTMLButtonElement).click());
 
     expect(onNewSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the model picker from the header chip and shows the switched model", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/rt/r1/models")) {
+        return Promise.resolve(
+          json({
+            current: "deepseek/deepseek-flash",
+            label: "Flash",
+            default: "deepseek/deepseek-pro",
+            models: [
+              { ref: "deepseek/deepseek-flash", provider: "deepseek", model: "deepseek-flash", active: true },
+              { ref: "deepseek/deepseek-pro", provider: "deepseek", model: "deepseek-pro", default: true },
+            ],
+          }),
+        );
+      }
+      if (url.endsWith("/rt/r1/model") && init?.method === "POST") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (url.endsWith("/todos")) return Promise.resolve(json([]));
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        <ChatScreen connection={connection} snapshot={snapshot()} runtimeId="r1" onBack={() => {}} />,
+      ),
+    );
+    await flush();
+
+    const chip = container.querySelector('button[aria-label="切换模型"]');
+    expect(chip).toBeTruthy();
+    act(() => (chip as HTMLButtonElement).click());
+    await flush();
+
+    const sheet = container.querySelector('[aria-label="选择模型"]');
+    expect(sheet).toBeTruthy();
+
+    const row = Array.from(sheet?.querySelectorAll(".model-row") ?? []).find((candidate) =>
+      candidate.textContent?.includes("deepseek-pro"),
+    );
+    await act(async () => {
+      (row as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    // The sheet closes and the header now names the model that answered.
+    expect(container.querySelector('[aria-label="选择模型"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="切换模型"]')?.textContent).toBe("deepseek-pro");
   });
 
   it("uploads an image, inserts the kernel reference, and can remove it", async () => {
@@ -630,11 +691,110 @@ describe("ChatScreen composer", () => {
       expect.objectContaining({ method: "POST" }),
     );
 
-    act(() => (container.querySelector('button[aria-label="移除图片"]') as HTMLButtonElement).click());
+    act(() =>
+      (
+        container.querySelector('button[aria-label="移除图片 photo.png"]') as HTMLButtonElement
+      ).click(),
+    );
 
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
     expect(container.querySelector(".attachment")).toBeNull();
     expect(preview).toHaveBeenCalled();
+  });
+
+  it("accepts several images at once and keeps the ones that uploaded", async () => {
+    let call = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/rt/r1/attachments")) {
+        call += 1;
+        // The second upload is refused: one bad file must not sink the rest.
+        if (call === 2) {
+          return Promise.resolve(json({ code: "attachment.too_large" }, 413));
+        }
+        return Promise.resolve(
+          json({
+            path: `.reasonix/attachments/p${call}.png`,
+            ref: `@.reasonix/attachments/p${call}.png`,
+            image: true,
+          }),
+        );
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let blob = 0;
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:${++blob}`);
+
+    render(snapshot());
+    await flush();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.multiple).toBe(true);
+
+    const files = [
+      new File(["a"], "one.png", { type: "image/png" }),
+      new File(["b"], "two.png", { type: "image/png" }),
+      new File(["c"], "three.png", { type: "image/png" }),
+    ];
+    Object.defineProperty(input, "files", { value: files, configurable: true });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+    await flush();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("@.reasonix/attachments/p1.png");
+    expect(textarea.value).toContain("@.reasonix/attachments/p3.png");
+    expect(textarea.value).not.toContain("p2.png");
+    expect(container.querySelectorAll(".attachment")).toHaveLength(2);
+    expect(container.textContent).toContain("two.png");
+    expect(container.textContent).toContain("图片太大");
+  });
+
+  it("appends a second pick instead of replacing the first", async () => {
+    let call = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/rt/r1/attachments")) {
+        call += 1;
+        return Promise.resolve(
+          json({ path: `p${call}.png`, ref: `@p${call}.png`, image: true }),
+        );
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:one");
+
+    render(snapshot());
+    await flush();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    Object.defineProperty(input, "files", {
+      value: [new File(["a"], "one.png", { type: "image/png" })],
+      configurable: true,
+    });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+
+    // The attach control stays usable with an image already waiting.
+    const attach = container.querySelector('button[aria-label="添加图片"]') as HTMLButtonElement;
+    expect(attach.disabled).toBe(false);
+
+    Object.defineProperty(input, "files", {
+      value: [new File(["b"], "two.png", { type: "image/png" })],
+      configurable: true,
+    });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+
+    expect(container.querySelectorAll(".attachment")).toHaveLength(2);
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("@p1.png");
+    expect(textarea.value).toContain("@p2.png");
   });
 
   it("sends the uploaded reference as the turn input", async () => {
@@ -665,5 +825,308 @@ describe("ChatScreen composer", () => {
     const submitCall = fetchMock.mock.calls.find(([value]) => String(value).endsWith("/submit"));
     expect(submitCall).toBeTruthy();
     expect(JSON.parse(String(submitCall?.[1]?.body))).toEqual({ input: "@p.png" });
+  });
+});
+
+describe("ChatScreen interject", () => {
+  /** A kernel that accepts one inbox item and reports the given disposition. */
+  function inboxKernel(disposition: string, extra: Record<string, unknown> = {}) {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/inbox/items")) {
+        return Promise.resolve(
+          json({ itemId: "i1", disposition, position: 1, paused: false, ...extra }),
+        );
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function inboxCalls(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls.filter(([value]) => String(value).endsWith("/inbox/items"));
+  }
+
+  /** Put the screen into a running turn with text in the composer. */
+  async function runningWithDraft(text: string): Promise<void> {
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    typeDraft(text);
+  }
+
+  it("offers both ways only while a turn is running", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+    typeDraft("等一下");
+
+    // Idle: the send button is the way out, and there is nothing to steer.
+    expect(container.querySelector('[aria-label="发送到运行中的回合"]')).toBeNull();
+
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+
+    const group = container.querySelector('[aria-label="发送到运行中的回合"]');
+    expect(group).toBeTruthy();
+    expect(group?.textContent).toContain("排队");
+    expect(group?.textContent).toContain("插话");
+  });
+
+  it("queues a message without touching the running turn", async () => {
+    const fetchMock = inboxKernel("queued_followup");
+    await runningWithDraft("查完日志再说");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll(".interject button")).find(
+        (b) => b.textContent === "排队",
+      ) as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const calls = inboxCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
+      input: "查完日志再说",
+      intent: "followup",
+    });
+    // The receipt says what actually happened, including its place in line.
+    expect(container.textContent).toContain("已排队");
+    // A queued message is held by the kernel, so the composer is free again.
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("steers into the running turn and says so", async () => {
+    const fetchMock = inboxKernel("steer_accepted");
+    await runningWithDraft("停，先看这个");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll(".interject button")).find(
+        (b) => b.textContent === "插话",
+      ) as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const calls = inboxCalls(fetchMock);
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({
+      input: "停，先看这个",
+      intent: "steer",
+    });
+    expect(container.textContent).toContain("这一轮会看到");
+  });
+
+  it("reports a steer the kernel queued instead, rather than claiming it landed", async () => {
+    // The kernel may decide a steer cannot join the turn; the receipt is the
+    // only place that shows, and saying "已插话" would be a lie.
+    inboxKernel("queued_followup");
+    await runningWithDraft("改一下");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll(".interject button")).find(
+        (b) => b.textContent === "插话",
+      ) as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("已排队");
+    expect(container.textContent).not.toContain("这一轮会看到");
+  });
+
+  it("keeps the draft when the kernel refuses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/inbox/items")) {
+          return Promise.resolve(json({ code: "inbox.capacity_items" }, 409));
+        }
+        return Promise.resolve(json([]));
+      }),
+    );
+    await runningWithDraft("这条会被拒");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll(".interject button")).find(
+        (b) => b.textContent === "排队",
+      ) as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("队列满了");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("这条会被拒");
+  });
+
+  it("does not offer to interject into a read-only pane", async () => {
+    stubKernel();
+    render(
+      snapshot({ kind: "turn_started" }, [
+        { id: "r1", base: "/rt/r1", root: "/w", name: "w", readOnly: true },
+      ]),
+    );
+    await flush();
+    typeDraft("只读也不能发");
+
+    expect(container.querySelector('[aria-label="发送到运行中的回合"]')).toBeNull();
+  });
+});
+
+describe("ChatScreen structured asks", () => {
+  it("draws a surface question as a form and answers with Value, not Selected", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/answer") && init?.method === "POST") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (url.endsWith("/todos")) return Promise.resolve(json([]));
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      snapshot({
+        kind: "ask_request",
+        ask: {
+          id: "ask-9",
+          questions: [
+            {
+              id: "q1",
+              header: "配置",
+              prompt: "选一下",
+              options: [],
+              surface: {
+                spec_version: 1,
+                body: [
+                  {
+                    kind: "choice_card",
+                    key: "mode",
+                    label: "模式",
+                    field: {
+                      type: "choice",
+                      required: true,
+                      options: [
+                        { value: "fast", label: "快速" },
+                        { value: "full", label: "完整" },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    await flush();
+
+    // The option path would have said "这个问题没有可选项"; a form is drawn.
+    expect(container.textContent).not.toContain("没有可选项");
+    expect(container.querySelector(".surface")).toBeTruthy();
+
+    const pick = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes("完整"),
+    ) as HTMLButtonElement;
+    act(() => pick.click());
+
+    const confirm = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === "确认",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      confirm.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+
+    const call = fetchMock.mock.calls.find(([value]) => String(value).endsWith("/answer"));
+    expect(call).toBeTruthy();
+    const body = JSON.parse(String(call?.[1]?.body)) as {
+      id: string;
+      answers: { QuestionID: string; Selected: string[]; Value?: Record<string, unknown> }[];
+    };
+    expect(body.id).toBe("ask-9");
+    // The kernel's surface validation refuses a label here: the answer is the
+    // field values, with `Selected` empty.
+    expect(body.answers).toEqual([{ QuestionID: "q1", Selected: [], Value: { mode: "full" } }]);
+  });
+
+  it("falls back to options for a question without a surface", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/answer") && init?.method === "POST") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      snapshot({
+        kind: "ask_request",
+        ask: {
+          id: "ask-8",
+          questions: [
+            { id: "q1", prompt: "要茶吗", options: [{ label: "要" }, { label: "不要" }] },
+          ],
+        },
+      }),
+    );
+    await flush();
+
+    expect(container.querySelector(".surface")).toBeNull();
+    const pick = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes("要"),
+    ) as HTMLButtonElement;
+    act(() => pick.click());
+    const confirm = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === "确认",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      confirm.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+
+    const call = fetchMock.mock.calls.find(([value]) => String(value).endsWith("/answer"));
+    const body = JSON.parse(String(call?.[1]?.body)) as {
+      answers: { QuestionID: string; Selected: string[] }[];
+    };
+    expect(body.answers).toEqual([{ QuestionID: "q1", Selected: ["要"] }]);
+  });
+});
+
+describe("ChatScreen stop", () => {
+  it("offers a labelled stop for a turn that was already running when it opened", async () => {
+    const fetchMock = stubKernel({ status: { running: true, busy: true, decisions: [] } });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    const stop = container.querySelector('[aria-label="停止"]') as HTMLButtonElement;
+    expect(stop).toBeTruthy();
+    expect(stop.textContent).toContain("停止");
+
+    await act(async () => {
+      stop.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("keeps the send button when the kernel reports no turn", async () => {
+    stubKernel({ status: { running: false, busy: false, decisions: [] } });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    expect(container.querySelector('[aria-label="发送"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="停止"]')).toBeNull();
   });
 });

@@ -64,6 +64,59 @@ describe("foldHistory", () => {
     expect(rows[0]?.kind === "tool" && rows[0].output).toBe("orphan output");
   });
 
+  it("folds a step's thinking into the tool card it preceded", () => {
+    const rows = foldHistory([
+      message({
+        role: "assistant",
+        msgIndex: 1,
+        reasoning: "look at the file first",
+        toolCalls: [{ id: "call_a", name: "read_file" }],
+      }),
+      message({ role: "tool", content: "contents", toolCallId: "call_a", msgIndex: 2 }),
+    ]);
+
+    // One row: the step is one record, and the thought is on its card.
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row?.kind === "tool") {
+      expect(row.reasoning).toBe("look at the file first");
+      expect(row.output).toBe("contents");
+    }
+  });
+
+  it("does not repeat the step's thinking on every call in it", () => {
+    const rows = foldHistory([
+      message({
+        role: "assistant",
+        msgIndex: 1,
+        reasoning: "run both",
+        toolCalls: [
+          { id: "a", name: "bash" },
+          { id: "b", name: "bash" },
+        ],
+      }),
+    ]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.kind === "tool" ? rows[0].reasoning : undefined).toBe("run both");
+    expect(rows[1]?.kind === "tool" ? rows[1].reasoning : undefined).toBeUndefined();
+  });
+
+  it("leaves an answer's thinking on its bubble, not on a later tool", () => {
+    const rows = foldHistory([
+      message({ role: "assistant", msgIndex: 1, content: "an answer", reasoning: "considered" }),
+      message({
+        role: "assistant",
+        msgIndex: 2,
+        toolCalls: [{ id: "a", name: "bash" }],
+      }),
+    ]);
+
+    expect(rows.map((row) => row.kind)).toEqual(["assistant", "tool"]);
+    expect(rows[0]?.kind === "assistant" ? rows[0].reasoning : undefined).toBe("considered");
+    expect(rows[1]?.kind === "tool" ? rows[1].reasoning : undefined).toBeUndefined();
+  });
+
   it("marks a stored failure with both its wording and its code", () => {
     const rows = foldHistory([
       message({

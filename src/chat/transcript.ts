@@ -24,6 +24,14 @@ export interface ToolRow {
   readOnly: boolean;
   /** A dispatch with no result yet: the call is still running. */
   running: boolean;
+  /**
+   * What the model thought before making this call, carried over from the
+   * reasoning-only step that preceded it. Folded into the card instead of
+   * being drawn as its own bubble: a 20-step turn would otherwise be 20 empty
+   * "思考了" cards, and dropping it entirely loses the only account of why the
+   * tool was called.
+   */
+  reasoning?: string;
 }
 
 export interface AssistantRow {
@@ -149,10 +157,12 @@ function confirmLocalUser(rows: Row[], text: string): Row[] | null {
 
 /**
  * A reasoning-only bubble is a step, not an answer: once its tool call starts,
- * the tool card is the useful record. Keeping the thought bubble too makes a
- * long agent turn read as a wall of empty "思考了" cards on a phone.
+ * the thought belongs to that call. This folds it into the tool card rather
+ * than leaving a second bubble — a long agent turn would read as a wall of
+ * empty "思考了" cards on a phone — and returns the thought so the caller can
+ * attach it.
  */
-function dropTrailingThought(rows: Row[]): Row[] {
+function takeTrailingThought(rows: Row[]): { rows: Row[]; reasoning: string } {
   let end = rows.length;
   while (end > 0) {
     const row = rows[end - 1];
@@ -162,7 +172,13 @@ function dropTrailingThought(rows: Row[]): Row[] {
     }
     break;
   }
-  return end === rows.length ? rows : rows.slice(0, end);
+  if (end === rows.length) return { rows, reasoning: "" };
+  const thought = rows
+    .slice(end)
+    .map((row) => (row.kind === "assistant" ? row.reasoning : ""))
+    .filter(Boolean)
+    .join("\n\n");
+  return { rows: rows.slice(0, end), reasoning: thought };
 }
 
 /**
@@ -291,6 +307,24 @@ export function markAnswered(
   return changed ? { ...transcript, rows } : transcript;
 }
 
+/**
+ * Close a structured question once the kernel accepted its values.
+ *
+ * The values themselves are kept in the form component, not here: a surface
+ * answer is an object of typed fields, and flattening it into the label map
+ * this row uses for option questions would render as a list of `[object
+ * Object]`. The row only needs to stop being answerable.
+ */
+export function markAnsweredSurface(transcript: Transcript, askId: string): Transcript {
+  let changed = false;
+  const rows = transcript.rows.map((row) => {
+    if (row.kind !== "ask" || row.id !== askId) return row;
+    changed = true;
+    return { ...row, pending: false };
+  });
+  return changed ? { ...transcript, rows } : transcript;
+}
+
 function toolRow(tool: WireTool, fallbackId: string, running: boolean): ToolRow {
   const base: ToolRow = {
     kind: "tool",
@@ -401,10 +435,10 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
     case "tool_dispatch": {
       const tool = event.tool;
       if (!tool) return transcript;
-      return {
-        ...transcript,
-        rows: [...dropTrailingThought(transcript.rows), toolRow(tool, nextId("tool"), true)],
-      };
+      const taken = takeTrailingThought(transcript.rows);
+      const row = toolRow(tool, nextId("tool"), true);
+      if (taken.reasoning) row.reasoning = taken.reasoning;
+      return { ...transcript, rows: [...taken.rows, row] };
     }
 
     case "tool_result": {
@@ -436,10 +470,10 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
         }
         return { ...transcript, rows };
       }
-      return {
-        ...transcript,
-        rows: [...dropTrailingThought(transcript.rows), toolRow(tool, nextId("tool"), false)],
-      };
+      const taken = takeTrailingThought(transcript.rows);
+      const row = toolRow(tool, nextId("tool"), false);
+      if (taken.reasoning) row.reasoning = taken.reasoning;
+      return { ...transcript, rows: [...taken.rows, row] };
     }
 
     case "ask_request": {

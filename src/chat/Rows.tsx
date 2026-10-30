@@ -11,6 +11,7 @@ import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
+import { SurfaceCard } from "./SurfaceCard";
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -167,7 +168,16 @@ export function ToolCard({ row }: { row: ToolRow }) {
           <span className={`status ${status.tone}`}>{status.label}</span>
           <span className="name">{row.name}</span>
           {row.readOnly ? <span className="status">只读</span> : null}
+          {row.reasoning ? <span className="status thought">想过</span> : null}
         </summary>
+        {/* The thought that led to this call. Folded into the card so a step is
+            one record: what it thought, what it ran, what came back. */}
+        {row.reasoning ? (
+          <details className="reasoning">
+            <summary>思考过程</summary>
+            <div className="body">{row.reasoning}</div>
+          </details>
+        ) : null}
         {row.args ? <pre>{row.args}</pre> : null}
         {row.err || row.refusalCode ? (
           <div className="refusal">
@@ -204,6 +214,14 @@ export function NoticeCard({ row }: { row: NoticeRow }) {
 export interface PromptHandlers {
   /** Every question in one ask, answered together — the kernel settles them as one. */
   onAnswer: (askId: string, selected: Record<string, string[]>) => void;
+  /**
+   * A structured question's answer: field values, not labels.
+   *
+   * The kernel keeps the two apart — a surface answer carries `Value` with
+   * `Selected` empty, and a surface ask may hold exactly one question — so
+   * this is its own call rather than a shape bolted onto `onAnswer`.
+   */
+  onAnswerSurface: (askId: string, questionId: string, values: Record<string, unknown>) => void;
   /**
    * `session` grants the rest of this conversation, `persist` writes a rule
    * that outlives it. They are separate because the kernel honours them
@@ -300,6 +318,27 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
     }
     handlers.onAnswer(row.ask.id, answers);
   };
+
+  // A surface question is a form, not a list of labels. `parseSurface` answers
+  // null for a payload this build cannot draw, and falling through to the
+  // option path would then show "这个问题没有可选项" — so a question that
+  // declares a surface but cannot be parsed is drawn as unanswerable rather
+  // than as an option question with nothing to pick.
+  const surfaces = questions.filter((question) => question.surface !== undefined);
+  if (surfaces.length > 0) {
+    return (
+      <div className="row prompt">
+        {surfaces.map((question) => (
+          <SurfaceCard
+            key={question.id}
+            surface={question.surface}
+            pending={row.pending}
+            onAnswer={(values) => handlers.onAnswerSurface(row.ask.id, question.id, values)}
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="row prompt">

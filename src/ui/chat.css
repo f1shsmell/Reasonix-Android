@@ -24,6 +24,88 @@
   min-width: 0;
 }
 
+/* The model this conversation runs on, and the way to change it. A chip
+   rather than a menu item: which model answered is something the person
+   checks while reading, so it belongs on screen. */
+.modelchip {
+  flex: none;
+  max-width: 38%;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- model sheet ---- */
+
+.model-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 2px;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.model-row.on {
+  color: var(--accent);
+}
+
+.model-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-provider {
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-mark {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.sheet-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+/* A section heading inside a sheet: the same small caps label the settings
+   page uses, so a sheet with two sections reads like one list. */
+.sheet-label {
+  margin: 14px 0 6px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.sheet-label:first-of-type {
+  margin-top: 4px;
+}
+
 .chat-head .title strong {
   display: block;
   font-size: 15px;
@@ -50,6 +132,8 @@
   place-items: center;
   font-size: 18px;
   line-height: 1;
+  border-radius: 50%;
+  border-color: transparent;
 }
 
 .transcript {
@@ -402,6 +486,18 @@
   flex: none;
 }
 
+/* The marker on a tool card that carries the step's thinking. Dim like the
+   other chips: it says "there is more inside", not "something is wrong". */
+.tool .status.thought {
+  border-style: dashed;
+}
+
+/* A thought folded into a tool card sits inside that card, so it takes the
+   card's own left margin rather than the bubble's. */
+.tool .reasoning {
+  margin: 4px 0 8px;
+}
+
 .tool .status.running { color: var(--warn); border-color: var(--warn); }
 .tool .status.failed { color: var(--bad); border-color: var(--bad); }
 .tool .status.done { color: var(--ok); border-color: var(--ok); }
@@ -611,6 +707,62 @@
   gap: 8px;
 }
 
+/* What the kernel said about the last message sent into a running turn. A
+   strip above the composer, because it answers "did my interruption land?" and
+   that question is asked while looking at the composer. */
+.inbox-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.inbox-note span {
+  flex: 1;
+  min-width: 0;
+}
+
+.inbox-note button {
+  min-height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+}
+
+/* 排队 / 插话: two ways into a turn that is still running. They sit under the
+   composer so the send button keeps its own meaning (stop). */
+.interject {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 8px;
+  background: var(--bg-raised);
+}
+
+.chip {
+  flex: 1;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.chip.accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .composer textarea {
   flex: 1;
   min-height: var(--tap);
@@ -651,9 +803,15 @@
 }
 
 .composer .stop {
+  width: auto;
+  min-width: 56px;
+  padding: 0 14px;
+  border-radius: 999px;
   background: var(--bg);
   color: var(--bad);
   border-color: var(--bad);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .composer .attach {
@@ -673,11 +831,20 @@
   display: none;
 }
 
+/* The images waiting to be sent: a wrapping row of chips, because a phone can
+   now pick several and they must not push the composer off screen. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 12px 8px;
+}
+
 .attachment {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 12px 8px;
+  max-width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -691,6 +858,18 @@
   object-fit: cover;
   border: 1px solid var(--line);
   border-radius: 7px;
+}
+
+/* The file name is the least useful part once there are several; it truncates
+   before the thumbnail does. */
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }
 
 .attachment span {
@@ -755,4 +934,275 @@
   display: block;
   margin-bottom: 6px;
   font-size: 16px;
+}
+
+/* ---- structured ask (surface) ---- */
+
+/* A surface card sits inside `.row.prompt`, which already draws the frame;
+   this only lays out what the kernel described. */
+.surface {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.surface-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.surface-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.surface-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.surface-row {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.surface-row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.surface-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.surface-tone-dim { color: var(--fg-dim); }
+.surface-tone-strong { font-weight: 600; }
+.surface-tone-ok { color: var(--ok); }
+.surface-tone-warn { color: var(--warn); }
+.surface-tone-err { color: var(--bad); }
+.surface-tone-accent { color: var(--accent); }
+
+.surface-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.surface-kv-key {
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.surface-kv-value {
+  text-align: right;
+  word-break: break-word;
+}
+
+.surface-pip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+
+.surface-pip.surface-tone-ok { background: var(--ok); }
+.surface-pip.surface-tone-warn { background: var(--warn); }
+.surface-pip.surface-tone-err { background: var(--bad); }
+.surface-pip.surface-tone-accent { background: var(--accent); }
+
+.surface-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.surface-meter-label {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.surface-meter-track {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.surface-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.surface-meter-fill.surface-tone-ok { background: var(--ok); }
+.surface-meter-fill.surface-tone-warn { background: var(--warn); }
+.surface-meter-fill.surface-tone-err { background: var(--bad); }
+
+.surface-divider {
+  height: 1px;
+  background: var(--line);
+}
+
+.surface-diff summary {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.surface-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.surface-dash-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.surface-dash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.surface-dash-cat {
+  flex: none;
+  width: 44px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surface-dash-bars {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.surface-dash-bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  min-width: 2px;
+}
+
+.surface-action {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 6px 0;
+}
+
+/* A field: the label over its control, because a phone cannot put a label and
+   an input side by side without shrinking both. */
+.surface-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.surface-field-label {
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.surface-required {
+  color: var(--bad);
+  margin-left: 3px;
+}
+
+.surface-field input[type="text"],
+.surface-field input[type="number"] {
+  min-height: var(--tap);
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px;
+}
+
+.surface-field input:disabled {
+  opacity: 0.6;
+}
+
+.surface-bool {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.surface-bool input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.surface-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.surface-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.surface-cards button {
+  flex: 1 1 45%;
+  min-width: 0;
+  text-align: left;
+  white-space: normal;
+  padding: 10px 12px;
+  line-height: 1.35;
+}
+
+.surface-choices button,
+.surface-cards button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.surface-choices button small,
+.surface-cards button small {
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.surface-choices button.chosen,
+.surface-cards button.chosen {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.surface-preview {
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

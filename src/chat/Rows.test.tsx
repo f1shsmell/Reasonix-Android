@@ -62,7 +62,7 @@ function askRow(overrides: Partial<AskRow> = {}): AskRow {
   };
 }
 
-const noop = { onAnswer: () => {}, onApprove: () => {} };
+const noop = { onAnswer: () => {}, onAnswerSurface: () => {}, onApprove: () => {} };
 
 describe("AskCard", () => {
   it("draws every option of the question it was given", () => {
@@ -282,6 +282,28 @@ describe("ToolCard", () => {
     );
 
     expect(container.innerHTML).toBe("");
+  });
+
+  it("carries the step's thinking inside the card, collapsed", () => {
+    render(<ToolCard row={toolRow({ name: "read_file", reasoning: "look at the file first" })} />);
+
+    // The chip in the summary says there is more inside, so a folded card
+    // still shows that this step thought something.
+    expect(container.querySelector(".tool summary")?.textContent).toContain("想过");
+
+    const thought = container.querySelector(".tool .reasoning");
+    expect(thought).toBeTruthy();
+    expect(thought?.querySelector(".body")?.textContent).toBe("look at the file first");
+    // Collapsed by default: the card's own row is the record, the thought is
+    // there for whoever wants to read it.
+    expect((thought as HTMLDetailsElement).open).toBe(false);
+  });
+
+  it("shows no thinking marker on a card that has none", () => {
+    render(<ToolCard row={toolRow({ name: "read_file" })} />);
+
+    expect(container.querySelector(".tool summary")?.textContent).not.toContain("想过");
+    expect(container.querySelector(".tool .reasoning")).toBeNull();
   });
 });
 

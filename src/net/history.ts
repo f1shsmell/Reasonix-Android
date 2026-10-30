@@ -81,10 +81,10 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
       const text = clean(message.content);
       const reasoning = clean(message.reasoning ?? "");
       const toolCalls = message.toolCalls ?? [];
-      // A tool step's reasoning is useful while it runs, but in a stored
-      // conversation the tool card is the record. Drawing a bubble per step
-      // gives the phone a wall of empty "思考了" cards; only a thought that
-      // never went on to call a tool stands on its own.
+      // A tool step's reasoning belongs to the call it preceded, not to a
+      // bubble of its own: drawing one per step gives the phone a wall of empty
+      // "思考了" cards. It is attached to the first tool card below instead, so
+      // the record still says why the tool ran.
       if ((text || reasoning) && (text !== "" || toolCalls.length === 0)) {
         rows.push({
           kind: "assistant",
@@ -100,7 +100,11 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
       for (const [ordinal, call] of toolCalls.entries()) {
         const id = historyId(index, ordinal + 1);
         if (call.id) calls.set(call.id, rows.length);
-        rows.push(toolRow(call, id));
+        const row = toolRow(call, id);
+        // The step's thinking explains the first call of the step. Later calls
+        // in the same message share it; repeating it on each would be noise.
+        if (ordinal === 0 && reasoning && text === "") row.reasoning = reasoning;
+        rows.push(row);
       }
       continue;
     }

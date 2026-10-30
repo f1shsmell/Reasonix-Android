@@ -90,6 +90,15 @@ export interface WireAskQuestion {
   /** A prefilled answer, for a form sent back to be corrected. */
   default?: string[];
   callId?: string;
+  /**
+   * A structured form instead of options.
+   *
+   * A question carrying this has no choices to pick: the answer is an object of
+   * field values, sent under `Value` with `Selected` empty. Rendered as a
+   * plain question it says "no options" and cannot be answered at all, which
+   * is what this field exists to fix.
+   */
+  surface?: unknown;
 }
 
 /**

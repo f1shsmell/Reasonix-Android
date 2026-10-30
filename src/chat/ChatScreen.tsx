@@ -9,16 +9,18 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import { cancel, submit } from "../net/submit";
+import { loadStatus } from "../net/status";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
 import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
+import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
 import { loadHistory } from "../net/history";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification, stopTurnNotification } from "../native/turn";
 import type { WireTodo } from "../wire/todos";
-import type { EventPayload } from "../wire/events";
-import { closeApproval, emptyTranscript, markAnswered, optimisticUser, reduce, removeLocalUser } from "./transcript";
+import type { EventPayload, WireAskAnswer } from "../wire/events";
+import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
 import type { Row, Transcript } from "./transcript";
 import {
   ApprovalCard,
@@ -31,14 +33,27 @@ import {
 import type { PromptHandlers } from "./Rows";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
+import { ModelSheet } from "./ModelSheet";
 
 export interface ChatScreenProps {
   connection: Connection;
   snapshot: ConnectionSnapshot;
   runtimeId: string;
+  /** The conversation's title, when the screen that opened it knew one. */
+  title?: string;
   onBack: () => void;
-  /** Open the session/project sheet. */
+  /** Start a fresh conversation in this chat's project. */
   onNewSession?: () => void;
+}
+
+/**
+ * A model ref as the chip shows it: `deepseek/deepseek-pro` is a routing
+ * identity, and the part a person recognises is the model name. The full ref
+ * stays in the sheet, where it is compared.
+ */
+function shortRef(ref: string): string {
+  const at = ref.lastIndexOf("/");
+  return at >= 0 ? ref.slice(at + 1) : ref;
 }
 
 function imageMessage(code: string): string {
@@ -267,7 +282,7 @@ function useTodos(
   return { todos: shown?.todos ?? [], state: shown?.state ?? "loading" };
 }
 
-export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSession }: ChatScreenProps) {
+export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onNewSession }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   const { transcript, history, reload, setTranscript } = useTranscript(
     snapshot,
@@ -281,10 +296,17 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
   const [draft, setDraft] = useState(() => loadDraft(runtimeId));
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
-  const [attachment, setAttachment] = useState<{ ref: string; name: string; url: string } | null>(null);
+  const [attachments, setAttachments] = useState<
+    { ref: string; name: string; url: string }[]
+  >([]);
   const [attachError, setAttachError] = useState("");
   const [attaching, setAttaching] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  /** The model the catalog last confirmed, shown until the transcript reports one. */
+  const [pickedModel, setPickedModel] = useState("");
+  const [modelSheet, setModelSheet] = useState(false);
+  /** What the kernel said about the last message sent into a running turn. */
+  const [inboxNote, setInboxNote] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageRef = useRef<HTMLInputElement | null>(null);
@@ -302,6 +324,24 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
     connection.attach(runtimeId);
     return () => connection.detach();
   }, [connection, runtimeId]);
+
+  // The stream carries what happens from now on, so a turn that was already
+  // running when the screen opened has no `turn_started` to flip the composer
+  // into its stop state. The kernel's own status is the only place that says
+  // so, and without this read the phone offers no way to stop work it can see
+  // is happening.
+  useEffect(() => {
+    const base = runtime?.base;
+    if (!base) return;
+    let cancelled = false;
+    void loadStatus(base).then((result) => {
+      if (cancelled || !result.ok || !result.status.running) return;
+      setTranscript((current) => (current.running ? current : { ...current, running: true }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime?.base, setTranscript]);
 
   // A running turn is exactly the window where the phone may be locked. The
   // native service keeps the process alive and tells the person when it ends.
@@ -365,60 +405,91 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
     };
   }, [grow]);
 
-  // The preview URL is ours to release. Rerunning on every attachment change
-  // revokes the image that was just replaced.
+  // The preview URL is ours to release. This runs on unmount only: rerunning
+  // per change would revoke the images that are still in the composer.
   useEffect(() => {
-    const url = attachment?.url;
+    const urls = attachments.map((entry) => entry.url);
     return () => {
-      if (url) URL.revokeObjectURL(url);
+      for (const url of urls) URL.revokeObjectURL(url);
     };
-  }, [attachment?.url]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Editing the reference out of the draft is also removing the attachment;
+  // Editing a reference out of the draft is also removing that attachment;
   // otherwise the chip would stay but the turn would not mention the image.
+  // Compared one by one so deleting one ref keeps the others.
   useEffect(() => {
-    if (attachment && !draft.includes(attachment.ref)) setAttachment(null);
-  }, [attachment, draft]);
+    setAttachments((current) => {
+      const kept = current.filter((entry) => draft.includes(entry.ref));
+      if (kept.length === current.length) return current;
+      for (const entry of current) {
+        if (!kept.includes(entry)) URL.revokeObjectURL(entry.url);
+      }
+      return kept;
+    });
+  }, [draft]);
 
   const pickImage = useCallback(() => {
     imageRef.current?.click();
   }, []);
 
+  /**
+   * Upload every chosen image, then append their references in one edit.
+   *
+   * The picker accepts several at once, and choosing again appends rather than
+   * replaces: a phone screenshot flow is "one more thing to show", and making
+   * the person re-pick the first image would be worse than the single-image
+   * limit it replaces. Each upload is independent, so one failure names that
+   * file and the others still land.
+   */
   const onImage = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
+      const files = Array.from(event.target.files ?? []);
       event.target.value = "";
-      if (!file || !runtime) return;
+      if (files.length === 0 || !runtime) return;
       setAttachError("");
       setAttaching(true);
-      const preview = URL.createObjectURL(file);
-      const result = await uploadImage(runtime.base, file);
-      if (!result.ok) {
-        URL.revokeObjectURL(preview);
-        setAttaching(false);
-        setAttachError(imageMessage(result.code));
-        return;
+
+      const uploaded: { ref: string; name: string; url: string }[] = [];
+      const failures: string[] = [];
+      for (const file of files) {
+        const preview = URL.createObjectURL(file);
+        const result = await uploadImage(runtime.base, file);
+        if (!result.ok) {
+          URL.revokeObjectURL(preview);
+          failures.push(`${file.name || "图片"}：${imageMessage(result.code)}`);
+          continue;
+        }
+        uploaded.push({ ref: result.attachment.ref, name: file.name || "图片", url: preview });
       }
+
       setAttaching(false);
-      setAttachment({ ref: result.attachment.ref, name: file.name, url: preview });
-      // The trailing newline is load-bearing: the caret goes to the end, so
-      // anything typed next starts on its own line instead of becoming part
-      // of the reference token.
-      setDraft((current) => {
-        const base = current.replace(/\s+$/, "");
-        return base ? `${base}\n${result.attachment.ref}\n` : `${result.attachment.ref}\n`;
-      });
-      window.setTimeout(grow, 0);
+      if (uploaded.length > 0) {
+        setAttachments((current) => [...current, ...uploaded]);
+        // The trailing newline is load-bearing: the caret goes to the end, so
+        // anything typed next starts on its own line instead of becoming part
+        // of the reference token.
+        setDraft((current) => {
+          const base = current.replace(/\s+$/, "");
+          const refs = uploaded.map((entry) => entry.ref).join("\n");
+          return base ? `${base}\n${refs}\n` : `${refs}\n`;
+        });
+        window.setTimeout(grow, 0);
+      }
+      if (failures.length > 0) setAttachError(failures.join("\n"));
     },
     [runtime, grow],
   );
 
-  const removeAttachment = useCallback(() => {
-    if (!attachment) return;
-    setDraft((current) => current.replace(attachment.ref, "").replace(/[ \t]+\n/g, "\n").trimEnd());
-    setAttachment(null);
+  const removeAttachment = useCallback((ref: string) => {
+    setDraft((current) => current.replace(ref, "").replace(/[ \t]+\n/g, "\n").trimEnd());
+    setAttachments((current) => {
+      const removed = current.find((entry) => entry.ref === ref);
+      if (removed) URL.revokeObjectURL(removed.url);
+      return current.filter((entry) => entry.ref !== ref);
+    });
     setAttachError("");
-  }, [attachment]);
+  }, []);
 
   const doSend = useCallback(
     async (text: string) => {
@@ -429,7 +500,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       // words now; `turn_started` later confirms this row by matching its text
       // instead of appending a second copy.
       const local = optimisticUser(outgoing);
-      const sentAttachment = attachment;
+      // A snapshot, so a send clears exactly the images it carried and leaves
+      // anything picked while the POST was in flight.
+      const sentAttachments = attachments;
       setTranscript((current) => ({ ...current, rows: [...current.rows, local] }));
       setSend({ kind: "sending" });
       const result = await submit(runtime.base, outgoing);
@@ -441,7 +514,13 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
           clearDraft(runtimeId);
           setDraft("");
         }
-        setAttachment((current) => (current === sentAttachment ? null : current));
+        setAttachments((current) => {
+          const kept = current.filter((entry) => !sentAttachments.includes(entry));
+          for (const entry of current) {
+            if (!kept.includes(entry)) URL.revokeObjectURL(entry.url);
+          }
+          return kept;
+        });
         setAttachError("");
         lastRetry.current = "";
         // The turn itself will report through the stream; the composer clears
@@ -460,7 +539,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       setTranscript((current) => removeLocalUser(current, local.id));
       lastRetry.current = outgoing;
     },
-    [runtime, scrollToBottom, attachment],
+    [runtime, scrollToBottom, attachments],
   );
 
   const onKeyDown = useCallback(
@@ -473,6 +552,42 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
       }
     },
     [draft, doSend, send.kind],
+  );
+
+  /**
+   * Send into a turn that is still running.
+   *
+   * Two buttons, because they are two promises. 排队 waits for the turn to end
+   * and changes nothing about it; 插话 is delivered into the running turn, so
+   * the model can act on it before its next step — and can be refused if the
+   * turn already moved past the point where that is possible.
+   */
+  const sendWhileRunning = useCallback(
+    async (intent: "followup" | "steer") => {
+      if (!runtime) return;
+      const text = isolateImageRefs(draft).trim();
+      if (!text) return;
+      setInboxNote(intent === "steer" ? "正在插话…" : "正在排队…");
+      setPromptError("");
+      const result = await sendToInbox(runtime.base, text, intent);
+      if (!result.ok) {
+        setInboxNote("");
+        setPromptError(inboxMessage(result.code));
+        return;
+      }
+      setInboxNote(receiptText(result.receipt));
+      // The kernel holds this message now, so the composer is free for the
+      // next thought — the same rule a normal send follows.
+      if (isolateImageRefs(draftRef.current).trim() === text) {
+        clearDraft(runtimeId);
+        setDraft("");
+        setAttachments((current) => {
+          for (const entry of current) URL.revokeObjectURL(entry.url);
+          return [];
+        });
+      }
+    },
+    [runtime, draft, runtimeId],
   );
 
   const handlers = useMemo<PromptHandlers>(
@@ -493,6 +608,22 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
           }
           setPromptError("");
           setTranscript((current) => markAnswered(current, askId, selected));
+        });
+      },
+      onAnswerSurface: (askId, questionId, values) => {
+        if (!runtime) return;
+        // A structured answer is one entry carrying `Value`, with `Selected`
+        // empty: the kernel's own validation rejects anything else for a
+        // surface question (`Selected` must be empty, and the ask holds
+        // exactly one question).
+        const entry: WireAskAnswer = { QuestionID: questionId, Selected: [], Value: values };
+        void answer(runtime.base, askId, [entry]).then((result) => {
+          if (!result.ok) {
+            setPromptError(`没答上：${result.code ?? "unknown"}`);
+            return;
+          }
+          setPromptError("");
+          setTranscript((current) => markAnsweredSurface(current, askId));
         });
       },
       onApprove: (approvalId, allow, session, persist) => {
@@ -540,14 +671,25 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
           ←
         </button>
         <div className="title">
-          <strong>{runtime.name}</strong>
+          <strong>{title ?? runtime.name}</strong>
           <span>
             {runtime.readOnly ? "只读 · " : ""}
-            {transcript.modelRef ?? runtime.root}
+            {runtime.name} · {runtime.root}
           </span>
         </div>
+        {runtime.readOnly ? null : (
+          <button
+            type="button"
+            className="modelchip"
+            onClick={() => setModelSheet(true)}
+            aria-label="切换模型"
+            title="切换模型"
+          >
+            {shortRef(pickedModel || transcript.modelRef || "") || "模型"}
+          </button>
+        )}
         {onNewSession ? (
-          <button type="button" className="iconbtn" onClick={onNewSession} aria-label="新建会话或切换项目">
+          <button type="button" className="iconbtn" onClick={onNewSession} aria-label="在当前项目新建会话">
             ＋
           </button>
         ) : null}
@@ -628,13 +770,21 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
         </div>
       ) : null}
 
-      {attachment && draft.includes(attachment.ref) ? (
-        <div className="attachment">
-          <img src={attachment.url} alt="已选择的图片" />
-          <span>{attachment.name}</span>
-          <button type="button" aria-label="移除图片" onClick={removeAttachment}>
-            ×
-          </button>
+      {attachments.length > 0 ? (
+        <div className="attachments">
+          {attachments.map((entry) => (
+            <div className="attachment" key={entry.ref}>
+              <img src={entry.url} alt="已选择的图片" />
+              <span className="attachment-name">{entry.name}</span>
+              <button
+                type="button"
+                aria-label={`移除图片 ${entry.name}`}
+                onClick={() => removeAttachment(entry.ref)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -647,12 +797,22 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
         </div>
       ) : null}
 
+      {inboxNote ? (
+        <div className="inbox-note" role="status">
+          <span>{inboxNote}</span>
+          <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
+            ×
+          </button>
+        </div>
+      ) : null}
+
       <div className="composer">
         <input
           ref={imageRef}
           className="file-input"
           type="file"
           accept="image/*"
+          multiple
           onChange={(event) => void onImage(event)}
         />
         <button
@@ -660,7 +820,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
           className="attach"
           aria-label="添加图片"
           onClick={pickImage}
-          disabled={runtime.readOnly === true || attaching || attachment !== null}
+          disabled={runtime.readOnly === true || attaching}
         >
           {attaching ? "…" : "📎"}
         </button>
@@ -687,7 +847,7 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
               });
             }}
           >
-            ■
+            停止
           </button>
         ) : (
           <button
@@ -701,6 +861,32 @@ export function ChatScreen({ connection, snapshot, runtimeId, onBack, onNewSessi
           </button>
         )}
       </div>
+
+      {/* While a turn runs, the composer's send button is the stop control, so
+          a message typed now needs its own way out. Two buttons rather than
+          one: queuing leaves the turn alone, steering joins it. */}
+      {streaming && draft.trim() && runtime.readOnly !== true ? (
+        <div className="interject" role="group" aria-label="发送到运行中的回合">
+          <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
+            排队
+          </button>
+          <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
+            插话
+          </button>
+        </div>
+      ) : null}
+
+      {modelSheet ? (
+        <ModelSheet
+          base={runtime.base}
+          {...(transcript.modelRef ? { fallback: transcript.modelRef } : {})}
+          onClose={() => setModelSheet(false)}
+          onSwitched={(ref) => {
+            setPickedModel(ref);
+            setModelSheet(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

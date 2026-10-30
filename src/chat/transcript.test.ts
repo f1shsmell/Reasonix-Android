@@ -339,12 +339,42 @@ describe("transcript", () => {
     expect(result.rows).toHaveLength(0);
   });
 
-  it("drops a reasoning-only step when its tool starts", () => {
+  it("folds a reasoning-only step into the tool card it preceded", () => {
     const result = feed([
       { kind: "reasoning", reasoning: "think" },
       { kind: "tool_dispatch", tool: { id: "c1", name: "read_file" } },
     ]);
 
+    // One row, not two: the step is one record. The thought is still there,
+    // on the card, so the reason the tool ran is not lost.
     expect(result.rows.map((row) => row.kind)).toEqual(["tool"]);
+    const tool = result.rows[0];
+    expect(tool?.kind === "tool" ? tool.reasoning : undefined).toBe("think");
+  });
+
+  it("joins several thought deltas before folding them into the card", () => {
+    const result = feed([
+      { kind: "reasoning", reasoning: "first " },
+      { kind: "reasoning", reasoning: "second" },
+      { kind: "tool_dispatch", tool: { id: "c1", name: "read_file" } },
+    ]);
+
+    expect(result.rows).toHaveLength(1);
+    const tool = result.rows[0];
+    expect(tool?.kind === "tool" ? tool.reasoning : undefined).toBe("first second");
+  });
+
+  it("leaves an answer's own thinking on its bubble", () => {
+    // Text and reasoning together is an answer, not a step: it must not be
+    // folded into a tool card that may follow it.
+    const result = feed([
+      { kind: "reasoning", reasoning: "considering" },
+      { kind: "message", text: "here is the answer", reasoning: "" },
+      { kind: "tool_dispatch", tool: { id: "c1", name: "read_file" } },
+    ]);
+
+    expect(result.rows.map((row) => row.kind)).toEqual(["assistant", "tool"]);
+    const tool = result.rows[1];
+    expect(tool?.kind === "tool" ? tool.reasoning : undefined).toBeUndefined();
   });
 });
