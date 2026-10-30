@@ -114,12 +114,186 @@ matched `button`/`a`/`[role=button]` and its markup needs another pass.
 
 ## Sessions and projects on the phone
 
-The session list and chat header each expose one `＋` action, which opens a
-bottom sheet with "current project: new conversation" and the host's remembered
-projects. It reads `GET /rt/{id}/workspaces` and opens a fresh pane with `POST
-/runtimes {root}`. It deliberately does not call `/workspace` (that needs the
-host grant) and does not mirror desktop settings. A paired device may only open
-roots the host already knows; there is no arbitrary folder picker.
+The phone opens on **最近** (every conversation, newest first), with **项目**
+one tap away, and a chat below that. The shape is modelled on Alma's phone
+client: a centred title with settings / new-session / refresh actions, a search
+field, a two-way segmented control, and rows of title + relative time + chevron.
+
+- The earlier shape listed open panes (`GET /runtimes`). That answered "what is
+  the desktop running", which is not the phone's question; it also drew one
+  project three times when three panes were open on it, and a conversation with
+  no pane could not be reached at all.
+- Both views are one read: `GET /tree?scope=active&limit=N`, the desktop
+  sidebar's own endpoint. Each project row carries its counts (`total`,
+  `remaining`) and its newest conversations (`path`, `title`, `lastActiveAt`,
+  `unread`, `runtimeId`). `/tree` is not host-only, so a paired device may read
+  it; the relay carries it too (`isKernelPath`).
+- 最近 is the merge of every project's rows by `lastActiveAt`, done in the
+  client. The tree already sorts inside a project; this is a merge, not a
+  second request. Search filters that list by title, transcript name, project
+  name and path — the loaded window only, which is the same data the list drew.
+- Tapping a conversation is `POST /runtimes {root, sessionPath}` — the hub binds
+  that transcript, or answers the pane already driving it. Tapping "新会话" (in
+  a project's list, or from the home `＋` after choosing a project) is the same
+  POST with no `sessionPath`. A paired device may only name a root the kernel
+  already knows, so there is still no folder picker.
+- The chat header shows the conversation's title (passed by whichever list
+  opened it) over `project · path`; `chatTitle`/`chatProject` in `App` remember
+  both because the pane may not be in the runtime snapshot yet.
+
+The tree is pulled, not subscribed: `GET /tree/events` exists for the desktop
+sidebar, and a phone sitting on it would spend battery on a list nobody is
+watching. Refresh is the button, a return from a chat, and a project open.
+
+## Needs You, and choosing a model
+
+Two things the home screen and the chat header read from the kernel without any
+new server-side aggregation.
+
+**Needs You** (`src/app/useNeedsYou.ts`, `src/net/status.ts`). A decision — a
+tool approval, a plan approval, a recovery choice, an ask — lives in the
+controller of a *running* pane; `GET /rt/{id}/status` derives it from the
+owning subsystem on every read, so nothing here is stored or cached. The sweep
+therefore visits only conversations that carry a `runtimeId`:
+
+- The honest limit is that a prompt raised in a session nobody has open is
+  invisible to the phone. That is also true on the desktop — the pane is what
+  blocks — so it is a property of the model, not a gap in the client.
+- One pane failing to answer is dropped silently, not reported. A phone that
+  could not reach one runtime must not claim the person has nothing to do.
+- The block renders nothing while empty or while the first sweep is running, so
+  a quiet list is not interrupted by an empty heading.
+- It sits on the 最近 view only, and hides while searching: "what needs me" is
+  about conversations, and a filtered list must stay filtered.
+- Tapping a card goes to the pane that is already open (`onOpenRuntime`), never
+  a `POST /runtimes` — the decision belongs to that controller, and a second
+  pane on the same transcript would not carry it.
+
+**The model chip** (`src/chat/ModelSheet.tsx`, `src/net/models.ts`). The chat
+header shows the model and opens a sheet that reads `GET /rt/{id}/models` on
+open, then `POST /rt/{id}/model {ref}`:
+
+- The catalog is read per open, never cached: a provider added or a key revoked
+  on the desktop would otherwise leave the sheet offering a model that refuses.
+- Switching is this conversation only. `POST /default-model` is a different
+  route and is deliberately not called — silently re-pointing the person's next
+  desktop session from a phone is not a switch they asked for.
+- The active model's row is disabled: re-posting the current ref is a request
+  the kernel would no-op or refuse.
+- A read-only pane hides the chip; its composer is disabled for the same
+  reason.
+- The chip shows the short name (`deepseek-pro`); the sheet shows the full ref,
+  because that is what is compared.
+
+The same sheet carries **thinking effort** (`src/net/models.ts`
+`switchEffort`). The choices come from the active model's own `efforts`
+declaration — a model that declares none gets no control rather than a tap the
+kernel refuses — with `auto` first. The value shown is read from
+`GET /rt/{id}/status`'s `effort`, not from the model's default, because those
+are different facts: one is what the catalog offers, the other is what this
+conversation is on. `auto` is posted as the word `auto`; the kernel's own
+display test asserts it round-trips as an empty effort.
+
+## Sending into a running turn, and the sidebar writes
+
+**插话 / 排队** (`src/net/inbox.ts`). While a turn runs, the composer's send
+slot becomes a labelled **停止** button, so a typed message needs its own way
+out. Two chips appear under the composer when there is a draft:
+
+- **排队** posts `{input, intent: "followup"}` and waits for the turn to end.
+- **插话** posts `{input, intent: "steer"}` and joins the running turn.
+
+The receipt's `disposition` is what the UI reports, not "success": the kernel
+may answer a steer with `queued_followup`, and saying «已插话» there would be a
+lie. `receiptText` maps each disposition to what actually happened, including
+the queue position. A refusal keeps the draft and shows `inboxMessage(code)`.
+
+The running state is not only what the stream saw. Opening a conversation that
+was already mid-turn has no `turn_started` to replay, so `ChatScreen` reads
+`GET /rt/{id}/status` on open and enters the stop state on `running: true`.
+Without that read the phone showed a send button for a turn it could not stop.
+
+**会话操作 and 项目排序** (`src/net/pin.ts`). Both are writes to the kernel's own
+tree, followed by a re-read — never a local reorder:
+
+- 置顶 is not a control on every row. A still press on a conversation opens the
+  row's action sheet (`src/app/Home.tsx`); its action posts
+  `POST /tree/sessions/pin {path, pinned}`. A pin also tells the kernel's
+  automatic archiver what to keep, so a phone-side flag would be a promise the
+  kernel did not make.
+- The kernel does **not** sort pinned rows first, so `recentConversations`
+  applies a stable partition: pinned rows lead, each group keeps its recency.
+- Project order is dragged, not stepped. A still press picks a row up
+  (`src/app/useProjectDrag.ts`), `src/app/projectOrder.ts` turns the gap under
+  the finger into "before this root" (`""` for the end), and
+  `POST /tree/workspaces/move {path, before}` places it — the same placement the
+  desktop's drag makes. Rows are not draggable while a search filters the list,
+  because the first row of a result is not the first project, and a folder the
+  kernel does not remember cannot be picked up at all.
+
+## Swiping between the two views
+
+`src/app/swipe.ts` holds the rule as a pure function, because the failure mode
+is invisible in a screenshot: a gesture that fires too eagerly steals the
+vertical scroll and the sideways card strip.
+
+- At least 56 px of travel, and 1.5× more horizontal than vertical, so a scroll
+  that drifted does not change views.
+- One step only, no wrap.
+- A touch that began inside `.cards` (the Needs You strip, which scrolls
+  sideways on its own) or inside an input is ignored.
+
+## The settings page
+
+`ConnectScreen` is the settings screen. Beyond the connection and account
+groups it now carries:
+
+- **外观** — `src/app/theme.ts`. Three choices written as `data-theme` on the
+  document root, applied in `main.tsx` before the first paint so a cold start
+  does not flash the wrong palette. `auto` **removes** the attribute rather
+  than writing `data-theme="auto"`, or the `prefers-color-scheme` block would
+  stop applying. Only this phone: the desktop's appearance is its own setting.
+- **工作方式** — `src/net/approval.ts`. The five postures the kernel's
+  `ParseToolApprovalMode` accepts (`readOnly ask auto dontAsk yolo`), posted to
+  `POST /rt/{id}/tool-approval-mode`. Labels live beside the wire values, never
+  in their place: a translated word is a 400 the person cannot explain. The
+  control is hidden when no pane exists to address, since a write with no
+  target would silently pick one.
+- **关于** — the version comes from `package.json` through `define
+  __APP_VERSION__` in `vite.config.ts` (declared in `src/env.d.ts`). A
+  hand-written string would drift the first time someone bumps the version,
+  and the row exists to answer "which build is this?".
+
+## Structured asks (surface)
+
+A question may carry a `surface` instead of `options`. Such a question has no
+choices, and its answer is not a label list: it is an object of field values
+sent under `Value` with `Selected` empty. Rendering it through the option path
+is what produced the "这个问题没有可选项" card that could not be answered — the
+bug this section exists for.
+
+`src/wire/surface.ts` parses the spec; `src/chat/SurfaceCard.tsx` draws it.
+
+- **Inputs** (`field`, `choice_card`, `editable_text`, `map`, `comparison`) own
+  a `key` and a `field`, and their values make up the answer. A required field
+  must be filled; `false` for a bool counts as an answer, or a required
+  checkbox could not be answered negatively.
+- **Display** nodes (`text`, `kv`, `pip`, `meter`, `divider`, `diff_preview`,
+  `dashboard`) are drawn because they are often the reason the question is
+  being asked. `markdown` renders as plain text on purpose: a surface is
+  untrusted structure from the model, and this client's Markdown path is for
+  finished assistant answers.
+- **Unknown kinds are skipped, not fatal** — the kernel may grow one, and a
+  phone that cannot draw a card must still let the person answer the rest.
+- **`button` nodes are shown, not pressed.** A button is an action the kernel
+  validates against the spec's own action table, and this client's answer
+  carries field values only. Wiring actions needs a route the kernel does not
+  expose to a paired device; until then the label is drawn so the person sees
+  what the form was for.
+- A surface ask holds exactly one question (the kernel's `validateSurfaceAnswer`
+  requires it), so `AskCard` renders the surface path and skips the option
+  path entirely. `POST /answer` carries
+  `{QuestionID, Selected: [], Value: {...}}`.
 
 ## Images
 
@@ -184,6 +358,17 @@ The same-Wi-Fi retry is real but limited: the proxy remembers candidate origins
 and `/__reasonix/refresh` probes them on a network change. If the computer's IP
 changes, no candidate answers and a new scan is required. Automatic discovery
 would need mDNS or UDP advertisement in the kernel.
+
+Both limits are eased by the connection records in `src/net/savedConnections.ts`.
+They are places, not credentials: a LAN origin or an account device id, the
+label it was given, and when it last worked. Every successful connect records
+one, the settings screen lists them with the current one marked (a tap switches,
+the × forgets), and recovery tries every remembered LAN address before falling
+back to the account. A LAN door is preferred even while a relay still answers —
+back on the computer's Wi-Fi the relay is the slower path — but it is trusted
+only after `/runtimes` answers through it. The proxy's own origin and candidates
+are part of the same list, so an install that predates the records still gains
+them on first boot.
 
 The LAN listener picks a free port unless `[serve].share_port` is set; its QR
 code carries `http://<ip>:<port>/#pair=<code>`. `/pair` does not exist on 8791

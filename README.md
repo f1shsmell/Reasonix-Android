@@ -16,8 +16,31 @@ the chat transcript, tool cards, todos, approval and question prompts, and
 cancel. The connection, chat, tool-card and prompt paths have been exercised
 in a browser against a real `reasonix serve`.
 
+The home screen also carries **待你处理** (Needs You): every conversation whose
+pane is blocked on an approval or a question, gathered from
+`GET /rt/{id}/status` and ordered above the list. A chat's header shows the
+model it runs on and switches it with `POST /rt/{id}/model` — this conversation
+only, never the desktop's default — and the same sheet carries the model's
+thinking effort (`POST /rt/{id}/effort`).
+
+While a turn is running the composer offers two ways in: **排队** queues the
+message for after it, and **插话** sends it into the turn
+(`POST /rt/{id}/inbox/items` with `intent`). What the kernel actually did is
+reported from the receipt's `disposition`, not assumed.
+
+Conversations can be pinned and projects reordered from the list, both by
+writing to `/tree` and re-reading — never by reordering a local copy. The
+settings page carries appearance (follow the system, light, dark), the tool
+approval posture, and the version. The two home views also switch on a
+sideways swipe, with the gesture rule kept in `src/app/swipe.ts`.
+
+A question that arrives as a kernel `surface` instead of options — the shape
+that used to render as "这个问题没有可选项" and could not be answered — is drawn
+as a real form (`src/chat/SurfaceCard.tsx`) and answered with field values
+under `Value`.
+
 The phone build has also run on a physical device: LAN pairing (through the
-Studio page in a hidden WebView), the session list, history, account sign-in
+Studio page in a hidden WebView), the recent/project list, history, account sign-in
 and the cloud connection work there. Assistant answers now render Markdown
 (`react-markdown` + `remark-gfm`): headings, lists, tables, fenced code and
 links; raw HTML stays text, and streaming deltas remain plain until the answer
@@ -32,8 +55,8 @@ request bodies, reads non-SSE responses with a timeout, and refuses
 state-changing control routes on GET; relay requests and reconnects are
 bounded, and an incomplete replay marks the transcript for a history reload.
 Sending no longer wipes text typed while the request was in flight, Android
-back closes the project sheet, and a render error boundary replaces the white
-screen. Assistant answers gained syntax highlighting and copy actions. A
+back walks the project → conversations → chat stack, and a render error
+boundary replaces the white screen. Assistant answers gained syntax highlighting and copy actions. A
 foreground service keeps a running turn alive while the phone is locked and
 posts a completion notification when it ends. The first two items are the ones
 to exercise on a real phone; none of the new native code has been re-run there

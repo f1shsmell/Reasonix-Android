@@ -138,8 +138,9 @@ Two details worth keeping:
 
 Written: `src/chat/transcript.ts` (the fold), `src/chat/Rows.tsx` (row
 renderers), `src/chat/ChatScreen.tsx` (scroll, composer, send state),
-`src/net/submit.ts` (send as a state machine), `src/app/SessionList.tsx`,
-`src/app/App.tsx` (one connection, one navigation state), `src/ui/chat.css`.
+`src/net/submit.ts` (send as a state machine), `src/app/Home.tsx`,
+`src/app/SessionList.tsx`, `src/net/tree.ts`, `src/app/App.tsx` (one connection,
+one navigation state), `src/ui/chat.css`.
 
 Verified against the real kernel through the dev proxy: index 200, `POST
 /auth/token` 204, `GET /runtimes` returned the open pane, SSE connected, and
@@ -274,11 +275,48 @@ subprotocol, X25519/HKDF/AES-GCM sealed `desktop.request` frames, and a polled
 `/events/replay` stream. The Connect screen lists signed-in devices and can
 start a cloud link.
 
-The phone's session/project action is one bottom sheet: `GET
-/rt/{id}/workspaces` supplies the current project and the host's remembered
-projects, and `POST /runtimes {root}` opens a fresh conversation. A paired
-device may only open roots the host already knows; there is no folder picker and
-no copy of desktop settings.
+The phone's home screen is two views of one tree, modelled on Alma's phone
+client. `GET /tree?scope=active&limit=N` — the desktop sidebar's own endpoint —
+returns one row per project with its counts and its newest conversations.
+**最近** merges every project's conversations by `lastActiveAt` (a client-side
+merge, not a second request); **项目** draws the projects, and tapping one shows
+its conversations. A search field filters either list by title, name, project
+or path. A conversation opens with `POST /runtimes {root, sessionPath}` (which
+binds the stored transcript, or answers the pane already driving it) and
+"新会话" is the same POST with no `sessionPath`; the home `＋` asks which
+project first. A paired device may only open roots the host already knows;
+there is no folder picker and no copy of desktop settings. The earlier flat
+list of open panes was replaced because it showed what the desktop was running,
+drew one project once per pane, and could not reach a conversation with no pane.
+
+The home screen's **待你处理** block aggregates `GET /rt/{id}/status` across
+every conversation that has a running pane: a tool approval, a plan approval, a
+recovery choice or an ask is derived by the kernel from the subsystem that owns
+it, so the phone stores nothing. A prompt in a session nobody has open is
+invisible — the pane is what blocks, on the desktop too. Tapping a card goes to
+that pane; it never opens a second one, because the decision belongs to that
+controller.
+
+The chat header's model chip reads `GET /rt/{id}/models` on open and switches
+with `POST /rt/{id}/model {ref}`. It changes this conversation only: the
+desktop's default is a different route and is deliberately not called. The
+catalog is never cached, so a key revoked on the desktop cannot leave the sheet
+offering a model that refuses. The same sheet carries the model's thinking
+effort (`POST /rt/{id}/effort`), offered only when the model declares any.
+
+Three more surfaces landed with it. A running turn accepts a message two ways —
+排队 (`intent: "followup"`) or 插话 (`intent: "steer"`) — and the receipt's
+`disposition` is what the screen reports, because the kernel may queue a steer.
+Conversations pin and projects reorder through `/tree`, both followed by a
+re-read rather than a local reorder. The settings page carries appearance,
+tool-approval posture and version. The two home views also switch on a sideways
+swipe; the rule lives in `src/app/swipe.ts` so the gesture cannot quietly steal
+the vertical scroll or the sideways card strip.
+
+A question that arrives as a kernel `surface` instead of `options` is drawn as a
+real form (`src/chat/SurfaceCard.tsx`) and answered with field values under
+`Value`, `Selected` empty. Before this, such a question rendered as "这个问题
+没有可选项" and could not be answered at all.
 
 Images use `POST /rt/{id}/attachments` with a JSON/base64 body because the
 installed kernel refused the raw `/attachments/upload` route with `415
