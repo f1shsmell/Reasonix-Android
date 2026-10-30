@@ -20,6 +20,7 @@ import {
 } from "../net/server";
 import type { DeviceGrant, ProxyConfig, RemoteDevice } from "../net/server";
 import { RequestTimeout } from "../net/http";
+import { forgetFleetPeer } from "../net/fleet";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
@@ -60,6 +61,7 @@ vi.mock("../native/turn", () => ({
   openNotificationSettings: vi.fn(),
 }));
 vi.mock("../net/relayStore", () => ({ clearRelayDevice: vi.fn() }));
+vi.mock("../net/fleet", () => ({ forgetFleetPeer: vi.fn(async () => {}) }));
 vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
   connectRelay: vi.fn(),
@@ -418,6 +420,7 @@ describe("ConnectScreen saved connections", () => {
 
     expect(container.textContent).not.toContain("192.168.9.9:51234");
     expect(container.textContent).toContain("192.168.5.2:56789");
+    expect(forgetFleetPeer).toHaveBeenCalledWith("lan", "http://192.168.9.9:51234");
   });
 
   it("forgets a removed cloud computer's identity along with the row", async () => {
@@ -433,6 +436,7 @@ describe("ConnectScreen saved connections", () => {
 
     expect(trustedDevice("dev1")).toBeNull();
     expect(container.textContent).not.toContain("工作室的电脑");
+    expect(forgetFleetPeer).toHaveBeenCalledWith("cloud", "dev1");
   });
 
   it("asks for an account before using a cloud row", async () => {

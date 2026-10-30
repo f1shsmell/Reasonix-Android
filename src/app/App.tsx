@@ -502,7 +502,12 @@ export function App() {
       <ConnectScreen
         onConnected={onConnected}
         onFailed={link.noteFailed}
-        onClose={() => setShowConnect(false)}
+        onClose={() => {
+          setShowConnect(false);
+          // A removed computer shifted the watch rows; re-read them before
+          // the home screen draws names from the old indexes.
+          syncFleet();
+        }}
         link={link.state}
         machineBase={snapshot.runtimes[0]?.base}
       />
