@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.json.JSONObject;
 import org.junit.Test;
 
 /** Pure request-parsing checks; no Android runtime is involved. */
@@ -109,5 +110,27 @@ public class LoopbackProxyTest {
     public void fleetRouteRefusesAnUnusableIndex() {
         assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet/abc/runtimes"));
         assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet//runtimes"));
+    }
+
+    @Test
+    public void devicePollFailuresKeepTheServicesCodes() throws Exception {
+        JSONObject expired = LoopbackProxy.pollFailure(
+                "{\"error\":{\"code\":\"expired_token\",\"message\":\"expired\"}}");
+        assertEquals("ended", expired.getString("status"));
+        assertEquals("expired_token", expired.getString("code"));
+
+        JSONObject denied = LoopbackProxy.pollFailure(
+                "{\"error\":{\"code\":\"access_denied\"}}");
+        assertEquals("ended", denied.getString("status"));
+
+        JSONObject invalid = LoopbackProxy.pollFailure(
+                "{\"error\":{\"code\":\"invalid_grant\"}}");
+        assertEquals("error", invalid.getString("status"));
+        assertEquals("invalid_grant", invalid.getString("code"));
+
+        // A shape from an older service still reads.
+        assertEquals("ended", LoopbackProxy.pollFailure("{\"code\":\"expired_token\"}")
+                .getString("status"));
+        assertEquals("", LoopbackProxy.pollFailure("not json").getString("code"));
     }
 }

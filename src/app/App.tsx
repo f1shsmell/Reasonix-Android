@@ -299,13 +299,17 @@ export function App() {
       const sent = await submit(opened.runtime.base, prompt);
       if (!sent.ok) return { ok: false, message: dispatchFailure(sent) };
       const firstLine = prompt.split(/\r?\n/, 1)[0]?.trim() ?? "";
-      startTurnNotification({
-        title: firstLine.slice(0, 60) || "派发的任务",
-        base: opened.runtime.base,
-        root,
-        runtimeId: opened.runtime.id,
-        ...(link.state.mode ? { mode: link.state.mode } : {}),
-      });
+      // The native watcher reads the LAN proxy; a relayed kernel has no path
+      // there. Do not start a foreground service that cannot answer.
+      if (link.state.mode !== "cloud") {
+        startTurnNotification({
+          title: firstLine.slice(0, 60) || "派发的任务",
+          base: opened.runtime.base,
+          root,
+          runtimeId: opened.runtime.id,
+          ...(link.state.mode ? { mode: link.state.mode } : {}),
+        });
+      }
       setActionError("");
       reloadTree();
       return { ok: true };

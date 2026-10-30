@@ -699,11 +699,14 @@ function NewSessionSheet({
 function DispatchSheet({
   projects,
   computerName,
+  notify,
   onClose,
   onDispatch,
 }: {
   projects: TreeProject[];
   computerName?: string | undefined;
+  /** The native watcher only reaches a LAN proxy; cloud has no background read. */
+  notify: boolean;
   onClose: () => void;
   onDispatch: (root: string, prompt: string) => Promise<{ ok: boolean; message?: string }>;
 }) {
@@ -749,7 +752,10 @@ function DispatchSheet({
           </button>
         </div>
         <p className="group-note">
-          在 {computerName ?? "这台电脑"} 后台运行；需要你处理或完成时会通知。
+          在 {computerName ?? "这台电脑"} 后台运行；
+          {notify
+            ? "需要你处理或完成时会通知。"
+            : "云端连接暂不支持后台通知，完成后回来查看。"}
         </p>
 
         <p className="group-label">项目</p>
@@ -1133,6 +1139,7 @@ export function Home({
         <DispatchSheet
           projects={tree.projects}
           computerName={link.name}
+          notify={link.mode !== "cloud"}
           onClose={() => setDispatchSheet(false)}
           onDispatch={onDispatch}
         />

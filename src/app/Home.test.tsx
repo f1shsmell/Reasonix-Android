@@ -364,6 +364,28 @@ describe("Home", () => {
       expect(container.querySelector(".dispatch-sheet")).toBeNull();
     });
 
+    it("says a cloud connection has no background notification", async () => {
+      render({
+        onDispatch: vi.fn(async () => ({ ok: true as const })),
+        link: {
+          phase: "connected",
+          completed: [],
+          attempt: 0,
+          target: "dev-1",
+          name: "Mac",
+          mode: "cloud",
+        },
+      });
+
+      act(() => {
+        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
+      });
+
+      expect(container.querySelector(".dispatch-sheet")?.textContent).toContain(
+        "云端连接暂不支持后台通知",
+      );
+    });
+
     it("keeps the sheet and the reason when the task cannot start", async () => {
       const onDispatch = vi.fn(async () => ({ ok: false, message: "连不上电脑。" }));
       render({ onDispatch });
