@@ -27,6 +27,7 @@ import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "
 import type { PromptHandlers } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
 import { buildDisplay } from "./process";
+import { loadFoldMode } from "./folding";
 import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
@@ -438,6 +439,9 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
   const [planBusy, setPlanBusy] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   const [headMenu, setHeadMenu] = useState(false);
+  // Read once per mount: the settings screen replaces this one, so returning
+  // from it is a fresh mount and must not need an event to notice the change.
+  const [fold] = useState(loadFoldMode);
   /** The run whose timeline is open, or one long thought. */
   const [process, setProcess] = useState<{ title: string; steps: ProcessStep[] } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -898,8 +902,8 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
 
   const streaming = transcript.running;
   const display = useMemo(
-    () => buildDisplay(transcript.rows, transcript.running),
-    [transcript.rows, transcript.running],
+    () => buildDisplay(transcript.rows, transcript.running, fold),
+    [transcript.rows, transcript.running, fold],
   );
   const openProcess = (entry: { steps: ProcessStep[] }) =>
     setProcess({ title: `已处理 ${entry.steps.length} 个操作`, steps: entry.steps });
@@ -981,7 +985,12 @@ export function ChatScreen({ connection, snapshot, runtimeId, title, onBack, onN
                   />
                 ))
               ) : (
-                <ProcessSummary key={entry.id} steps={entry.steps} onOpen={() => openProcess(entry)} />
+                <ProcessSummary
+                  key={entry.id}
+                  steps={entry.steps}
+                  running={entry.running}
+                  onOpen={() => openProcess(entry)}
+                />
               )
             ) : (
               <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />

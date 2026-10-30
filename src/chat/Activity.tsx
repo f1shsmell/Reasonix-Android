@@ -85,13 +85,16 @@ export function ActivityRow({
   );
 }
 
-/** A finished run: one row that opens the timeline. */
+/** One run: one row that opens the timeline. */
 export function ProcessSummary({
   steps,
   onOpen,
+  running = false,
 }: {
   steps: ProcessStep[];
   onOpen: () => void;
+  /** Compact fold: the run is still going, so the summary says so. */
+  running?: boolean;
 }) {
   const failed = steps.some(
     (step) => step.kind === "tool" && Boolean(step.row.err || step.row.refusalCode),
@@ -99,8 +102,11 @@ export function ProcessSummary({
   const title = processTitle(steps);
   return (
     <button type="button" className="process-row" onClick={onOpen}>
-      <span className={`activity-icon ${failed ? "bad" : "done"}`} aria-hidden="true">
-        {failed ? "!" : "✓"}
+      <span
+        className={`activity-icon ${failed ? "bad" : running ? "running" : "done"}`}
+        aria-hidden="true"
+      >
+        {failed ? "!" : running ? "•" : "✓"}
       </span>
       <span className="process-title">{title}</span>
       <span className="process-count">{steps.length} 个操作</span>

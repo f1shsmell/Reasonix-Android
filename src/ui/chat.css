@@ -479,6 +479,18 @@
 .activity-icon.think { color: var(--accent); }
 .activity-icon.done { color: var(--ok); }
 .activity-icon.bad { color: var(--bad); }
+.activity-icon.running {
+  color: var(--accent);
+  animation: process-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes process-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-icon.running { animation: none; }
+}
 
 .activity-title {
   flex: none;

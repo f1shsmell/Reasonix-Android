@@ -293,6 +293,49 @@ including `RelayLink.reconnect`, recomputes and compares without asking.
   does guarantee is continuity — the second key must equal the first this
   phone approved.
 
+## The link hero
+
+The top of `ConnectScreen` is a hero, not a settings card: the product mark,
+the computer, the link state, and — while a stage is running — the three step
+names. `src/app/ConnectionHero.tsx` owns the copy and the tone; the tone comes
+from `linkTone`, so the hero and the home chip cannot disagree about colour.
+
+The mark is `src/app/RMark.tsx`, the desktop's three-stroke geometry with
+`pathLength={100}`. The stylesheet holds the one dash rule
+(`24 76`, 2.2 s, path delays −0.72 s / −1.44 s) and applies it only under
+`data-live`, which is set for `connecting`, `reconnecting`, or a manual
+`busy` label. Idle, connected and failed states show the whole glyph: a mark
+that keeps moving with nothing happening is the interface claiming work.
+`prefers-reduced-motion` restores the static glyph.
+
+The boot `ConnectScreen` (no verified upstream yet) passes the link state too;
+before the machine starts, `link` is idle and the hero shows the setup line.
+The step list is drawn only when the machine is working, not for a manual
+attempt — one `POST` is not three stages.
+
+## Transcript folds
+
+`src/chat/folding.ts` stores this phone's preference under
+`reasonix.folding.v1`: 精简 / 标准 / 详尽, default 标准. `buildDisplay` takes
+the mode:
+
+- **standard** — a finished run is one summary; a running run is individual
+  (the original behaviour).
+- **compact** — thinking is dropped, and even a running run is one summary,
+  marked `running` so `ProcessSummary` draws a pulsing dot. Failed steps still
+  take the `!` icon.
+- **full** — `flush` always marks the entry live, so every step is its own
+  row, finished or not.
+
+The chat reads the preference once at mount. Opening settings replaces the
+chat screen, so returning is a fresh mount and no event or subscription is
+needed; that is also why changing the setting cannot update a chat that is
+still mounted underneath.
+
+Not verified: the animation's frame rate on a physical device's WebView. The
+CSS is the desktop's rule at a larger size (40 px vs 15 px), where the same
+24 % dash reads as a lighter trace; a phone capture is the next check.
+
 ## Structured asks (surface)
 
 A question may carry a `surface` instead of `options`. Such a question has no

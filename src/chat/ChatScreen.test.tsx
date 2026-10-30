@@ -1170,6 +1170,50 @@ describe("ChatScreen activity", () => {
     expect(sheet?.textContent).toContain("读取文件");
   });
 
+  it("summarises a running step in compact mode and hides thinking", async () => {
+    localStorage.setItem("reasonix.folding.v1", "compact");
+    stubKernel();
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    render(snapshot({ kind: "reasoning", reasoning: "先看目录" }));
+    await flush();
+
+    expect(container.querySelector(".activity-row")).toBeNull();
+
+    render(
+      snapshot({
+        kind: "tool_dispatch",
+        tool: { id: "c1", name: "bash", args: '{"command":"ls"}' },
+      }),
+    );
+    await flush();
+
+    expect(container.querySelector(".activity-row")).toBeNull();
+    const summary = container.querySelector(".process-row");
+    expect(summary?.textContent).toContain("1 个操作");
+    expect(container.querySelector(".activity-icon.running")).not.toBeNull();
+  });
+
+  it("keeps each step in full mode after the turn ends", async () => {
+    localStorage.setItem("reasonix.folding.v1", "full");
+    stubKernel();
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    render(
+      snapshot({ kind: "tool_dispatch", tool: { id: "c1", name: "bash", args: '{"command":"ls"}' } }),
+    );
+    await flush();
+    render(
+      snapshot({ kind: "tool_dispatch", tool: { id: "c2", name: "read_file", args: '{"path":"a"}' } }),
+    );
+    await flush();
+    render(snapshot({ kind: "turn_done" }));
+    await flush();
+
+    expect(container.querySelectorAll(".activity-row")).toHaveLength(2);
+    expect(container.querySelector(".process-row")).toBeNull();
+  });
+
   it("lifts a thought into its own row", async () => {
     stubKernel();
     render(snapshot({ kind: "turn_started" }));

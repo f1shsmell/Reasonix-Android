@@ -5,12 +5,14 @@
  * thought, another call, and finally an answer. Drawn one card each, a phone
  * scrolls through a wall of steps before reaching the words it came for. This
  * module keeps the steps — they are the record — but groups a finished run
- * into one "已处理 N 个操作" entry. A run that is still going stays individual,
- * because that is when watching each step is useful.
+ * into one "已处理 N 个操作" entry.
  *
- * Pure and transport-free: the caller supplies the folded rows.
+ * How much is grouped is the transcript's fold preference: standard groups a
+ * finished run but draws a running one step by step; compact groups even a
+ * running run and drops thinking; full never groups. Pure and transport-free.
  */
 
+import type { FoldMode } from "./folding";
 import type {
   ApprovalRow,
   AskRow,
@@ -37,7 +39,15 @@ export type ProcessStep =
     };
 
 export type DisplayRow =
-  | { kind: "steps"; id: string; steps: ProcessStep[]; live: boolean }
+  | {
+      kind: "steps";
+      id: string;
+      steps: ProcessStep[];
+      /** Draw each step as its own row instead of one summary. */
+      live: boolean;
+      /** The run is still in flight, so a summary row must say so. */
+      running: boolean;
+    }
   | { kind: "assistant"; id: string; row: AssistantRow }
   | { kind: "user"; id: string; row: UserRow }
   | { kind: "ask"; id: string; row: AskRow }
@@ -56,26 +66,41 @@ function stepOfReasoning(id: string, text: string, thoughtMs?: number): ProcessS
 /**
  * Fold a transcript into rows the chat can draw.
  *
- * `live` means "draw the steps individually": true for a single step, and for
- * the trailing run while the turn is still in flight. Everything else with
- * more than one step becomes a summary row.
+ * `trailing` marks the run the turn is still producing. In standard mode that
+ * run stays individual, because watching each step is the point while work is
+ * happening; compact summarises it and drops thinking; full never groups.
  */
-export function buildDisplay(rows: Row[], running: boolean): DisplayRow[] {
+export function buildDisplay(
+  rows: Row[],
+  running: boolean,
+  fold: FoldMode = "standard",
+): DisplayRow[] {
   const out: DisplayRow[] = [];
   let steps: ProcessStep[] = [];
 
-  const flush = (live: boolean) => {
+  const flush = (trailing: boolean) => {
     if (steps.length === 0) return;
-    out.push({ kind: "steps", id: `steps:${steps[0]?.id ?? out.length}`, steps, live: live || steps.length === 1 });
+    const live = fold === "full" ? true : fold === "compact" ? false : trailing || steps.length === 1;
+    out.push({
+      kind: "steps",
+      id: `steps:${steps[0]?.id ?? out.length}`,
+      steps,
+      live,
+      running: trailing,
+    });
     steps = [];
+  };
+
+  const thinking = (id: string, text: string, thoughtMs?: number) => {
+    // Compact is about reaching the answer: a thought is not drawn on its own.
+    if (fold === "compact") return;
+    steps.push(stepOfReasoning(id, text, thoughtMs));
   };
 
   for (const row of rows) {
     switch (row.kind) {
       case "assistant": {
-        if (row.reasoning.trim()) {
-          steps.push(stepOfReasoning(row.id, row.reasoning, row.thoughtMs));
-        }
+        if (row.reasoning.trim()) thinking(row.id, row.reasoning, row.thoughtMs);
         if (row.text.trim()) {
           flush(false);
           out.push({ kind: "assistant", id: row.id, row });
@@ -84,9 +109,7 @@ export function buildDisplay(rows: Row[], running: boolean): DisplayRow[] {
       }
       case "tool": {
         // A tool step's thinking belongs before the call it led to.
-        if (row.reasoning?.trim()) {
-          steps.push(stepOfReasoning(row.id, row.reasoning));
-        }
+        if (row.reasoning?.trim()) thinking(row.id, row.reasoning);
         steps.push({ kind: "tool", id: row.id, row });
         break;
       }
