@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { emptyFleet, Fleet, peerTone, syncFleetPeer } from "./fleet";
+import { emptyFleet, Fleet, forgetFleetPeer, peerTone, syncFleetPeer } from "./fleet";
 import type { FleetSnapshot } from "./fleet";
 import type { FleetEntry } from "./server";
 
@@ -169,10 +169,35 @@ describe("syncFleetPeer", () => {
     await syncFleetPeer("lan", "http://new:56789", "new");
 
     const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
-    expect(written).toHaveLength(3);
-    // Appended, never reordered: the indexes other readers cached stay true.
+    // The cloud placeholder is dropped: it cannot answer a sweep and would
+    // spend one of the four rows a LAN computer needs.
+    expect(written).toHaveLength(2);
     expect(written[0]?.target).toBe("http://old:56789");
-    expect(written[2]).toMatchObject({ kind: "lan", target: "http://new:56789", name: "new" });
+    expect(written[1]).toMatchObject({ kind: "lan", target: "http://new:56789", name: "new" });
+  });
+
+  it("cleans cloud placeholders even when the computer is already watched", async () => {
+    serverMock.loadFleet.mockResolvedValue([
+      lanPeer("alpha"),
+      { kind: "cloud", target: "dev-1", name: "Mac", watchable: false },
+    ]);
+
+    await syncFleetPeer("lan", "http://alpha:56789", "alpha");
+
+    const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
+    expect(written).toEqual([lanPeer("alpha")]);
+  });
+
+  it("removes cloud placeholders when a cloud computer connects", async () => {
+    serverMock.loadFleet.mockResolvedValue([
+      lanPeer("alpha"),
+      { kind: "cloud", target: "dev-1", name: "Mac", watchable: false },
+    ]);
+
+    await syncFleetPeer("cloud", "dev-2", "Laptop");
+
+    const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
+    expect(written).toEqual([lanPeer("alpha")]);
   });
 
   it("does not rewrite a watched computer on a reconnect", async () => {
@@ -228,6 +253,42 @@ describe("syncFleetPeer", () => {
     await syncFleetPeer("lan", "http://mymac.local", "Mac");
 
     expect(serverMock.saveFleet).not.toHaveBeenCalled();
+  });
+});
+
+describe("forgetFleetPeer", () => {
+  it("removes the computer wherever its row sits", async () => {
+    serverMock.loadFleet.mockResolvedValue([
+      lanPeer("alpha"),
+      lanPeer("beta"),
+      lanPeer("gamma"),
+    ]);
+
+    await forgetFleetPeer("lan", "http://beta:56789");
+
+    const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
+    expect(written.map((entry) => entry.target)).toEqual([
+      "http://alpha:56789",
+      "http://gamma:56789",
+    ]);
+  });
+
+  it("does nothing for a computer that is not watched", async () => {
+    serverMock.loadFleet.mockResolvedValue([lanPeer("alpha")]);
+
+    await forgetFleetPeer("lan", "http://other:56789");
+
+    expect(serverMock.saveFleet).not.toHaveBeenCalled();
+  });
+
+  it("recognises the forgotten computer whatever case its host was spelled in", async () => {
+    serverMock.loadFleet.mockResolvedValue([
+      { kind: "lan", target: "http://mymac.local:80", name: "Mac", watchable: true },
+    ]);
+
+    await forgetFleetPeer("lan", "http://MyMac.local");
+
+    expect(serverMock.saveFleet).toHaveBeenCalledWith([]);
   });
 });
 

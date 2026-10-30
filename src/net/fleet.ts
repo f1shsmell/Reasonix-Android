@@ -28,7 +28,11 @@ import type { RuntimeView } from "../wire/runtime";
 
 export type { FleetEntry };
 
-/** The proxy refuses a longer list; the app repeats the bound it enforces. */
+/**
+ * The proxy refuses a longer list; the app repeats the bound it enforces.
+ * Only watchable peers count: a cloud row cannot answer a sweep and would
+ * spend a slot that a LAN computer needs.
+ */
 const MAX_PEERS = 4;
 /** A visible sweep is cheap; a hidden phone is a dark screen. */
 const VISIBLE_SWEEP_MS = 20_000;
@@ -151,8 +155,12 @@ export class Fleet {
   private watchable = new Map<number, boolean>();
   private kinds = new Map<number, "lan" | "cloud">();
   private targets = new Map<number, string>();
-  /** The last sweep's verdict per peer; the snapshot is composed from it. */
-  private verdicts = new Map<number, { state: PeerState["state"]; at: number }>();
+  /**
+   * The last sweep's verdict per peer, keyed by the computer rather than the
+   * row: forgetting a row shifts every index after it, and an index-keyed
+   * verdict would then describe another computer.
+   */
+  private verdicts = new Map<string, { state: PeerState["state"]; at: number }>();
   private timer: number | null = null;
   private tick: (() => void) | null = null;
   private sweeping = false;
@@ -163,6 +171,8 @@ export class Fleet {
    */
   private generation = 0;
   private activePeer = -1;
+  /** `kind + originKey` of the connection in use; re-resolved after a rebuild. */
+  private activeKey: string | null = null;
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -181,7 +191,7 @@ export class Fleet {
 
   private publish(): void {
     const peers = [...this.names.keys()].sort((a, b) => a - b).map((index) => {
-      const verdict = this.verdicts.get(index);
+      const verdict = this.verdicts.get(this.peerKey(index));
       const unwatchable = this.watchable.get(index) === false;
       return {
         index,
@@ -201,18 +211,28 @@ export class Fleet {
     for (const listener of this.listeners) listener(this.snapshot);
   }
 
+  /** The stable key a row is known by, so a shifted index is not a computer. */
+  private peerKey(index: number): string {
+    const kind = this.kinds.get(index) ?? "lan";
+    return `${kind} ${originKey(kind, this.targets.get(index) ?? "")}`;
+  }
+
+  /** Which row the active connection is on, now that the list is rebuilt. */
+  private resolveActive(): number {
+    if (this.activeKey === null) return -1;
+    for (const index of this.names.keys()) {
+      if (this.peerKey(index) === this.activeKey) return index;
+    }
+    return -1;
+  }
+
   /**
    * Name the peer the active connection is. Its rows are the home screen's
    * own blocks already; the fleet hides them instead of doubling them.
    */
   setActiveTarget(kind: "lan" | "cloud", target: string): void {
-    const key = originKey(kind, target);
-    let index = -1;
-    for (const [candidate, entryKind] of this.kinds) {
-      if (entryKind === kind && originKey(kind, this.targets.get(candidate) ?? "") === key) {
-        index = candidate;
-      }
-    }
+    this.activeKey = `${kind} ${originKey(kind, target)}`;
+    const index = this.resolveActive();
     if (index === this.activePeer) return;
     this.activePeer = index;
     this.publish();
@@ -245,10 +265,18 @@ export class Fleet {
       this.targets.set(index, peer.target);
       this.watchable.set(index, peer.watchable);
     }
-    for (const index of [...this.verdicts.keys()]) {
-      if (index >= peers.length) this.verdicts.delete(index);
+    const live = new Set([...this.names.keys()].map((index) => this.peerKey(index)));
+    for (const key of [...this.verdicts.keys()]) {
+      if (!live.has(key)) this.verdicts.delete(key);
     }
-    if (this.activePeer >= peers.length) this.activePeer = -1;
+    this.activePeer = this.resolveActive();
+    // A sweep that started against the old list must not write its rows into
+    // the new indexes. Publish the peer list before the sweep as well: a
+    // removed row shifts the ones after it, so pending/running items from the
+    // old list must not be drawn against the new names.
+    ++this.generation;
+    this.snapshot = { active: this.activePeer, peers: this.snapshot.peers, pending: [], running: [] };
+    this.publish();
     await this.sweep();
   }
 
@@ -283,7 +311,7 @@ export class Fleet {
           : read.code === "device.unauthorized"
             ? "unauthorized"
             : "offline";
-        this.verdicts.set(index, { state, at: Date.now() });
+        this.verdicts.set(this.peerKey(index), { state, at: Date.now() });
         if (read.ok) {
           pending.push(...read.pending);
           running.push(...read.running);
@@ -376,21 +404,49 @@ export async function syncFleetPeer(
 ): Promise<void> {
   const current = await loadFleet();
   if (current === null) return;
-  const row: FleetEntry = { kind, target, name, watchable: kind === "lan" };
+  // A cloud placeholder cannot answer a sweep, so it must not spend one of
+  // the four rows a LAN computer needs. Existing placeholders are dropped on
+  // this write, which also migrates a list written by the first version.
+  const peers = current.filter((entry) => entry.watchable !== false);
+  if (kind === "cloud") {
+    if (peers.length !== current.length) await saveFleet(peers);
+    return;
+  }
+  const row: FleetEntry = { kind, target, name, watchable: true };
   const key = originKey(kind, target);
-  const at = current.findIndex(
+  const at = peers.findIndex(
     (entry) => entry.kind === kind && originKey(entry.kind, entry.target) === key,
   );
   if (at >= 0) {
-    const existing = current[at];
+    const existing = peers[at];
     // A reconnect to a watched computer is the common case; only a changed
     // name is worth another write to the proxy.
-    if (existing && existing.name === name) return;
-    const next = [...current];
+    if (existing && existing.name === name) {
+      if (peers.length !== current.length) await saveFleet(peers);
+      return;
+    }
+    const next = [...peers];
     next[at] = { ...row, target: existing?.target ?? target };
     await saveFleet(next);
     return;
   }
-  if (current.length >= MAX_PEERS) return;
-  await saveFleet([...current, row]);
+  if (peers.length >= MAX_PEERS) {
+    if (peers.length !== current.length) await saveFleet(peers);
+    return;
+  }
+  await saveFleet([...peers, row]);
+}
+
+/** Drop a forgotten computer so it stops occupying a watch slot. */
+export async function forgetFleetPeer(
+  kind: "lan" | "cloud",
+  target: string,
+): Promise<void> {
+  const current = await loadFleet();
+  if (current === null) return;
+  const key = originKey(kind, target);
+  const next = current.filter(
+    (entry) => !(entry.kind === kind && originKey(entry.kind, entry.target) === key),
+  );
+  if (next.length !== current.length) await saveFleet(next);
 }

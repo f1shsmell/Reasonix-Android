@@ -56,6 +56,7 @@ import {
 } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
 import { RequestTimeout } from "../net/http";
+import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
 import {
@@ -639,6 +640,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
 
   const signOut = useCallback(async () => {
     setSignInError("");
+    const cloudRows = loadConnections().filter((entry) => entry.kind === "cloud");
     try {
       setAccount(await signOutAccount());
       setDevices([]);
@@ -648,6 +650,9 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
       // Cloud rows name devices this account can no longer reach; the LAN
       // ones are still places this phone may connect without an account.
       setSaved(forgetCloudConnections());
+      for (const row of cloudRows) {
+        void forgetFleetPeer("cloud", row.target).catch(() => {});
+      }
     } catch (failure) {
       setError(failure instanceof Error ? `退出失败：${failure.message}` : "退出失败");
     }
@@ -815,6 +820,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
                         // becomes approvable: its old identity goes with it.
                         if (entry.kind === "cloud") forgetDevice(entry.target);
                         setSaved(forgetConnection(entry.kind, entry.target));
+                        // The fleet must stop spending a watch slot on it.
+                        void forgetFleetPeer(entry.kind, entry.target).catch(() => {});
                       }}
                     >
                       ×
