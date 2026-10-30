@@ -9,6 +9,7 @@ import {
   configureProxy,
   listRemoteDevices,
   markRelay,
+  probeUpstream,
   readProxyConfig,
   signOutAccount,
 } from "../net/server";
@@ -17,6 +18,7 @@ import { connectRelay, clearRelayRouting } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { loadStatus } from "../net/status";
 import { rememberConnection } from "../net/savedConnections";
+import type { LinkError } from "../net/link";
 
 /**
  * ConnectScreen is the only place a phone can acquire a kernel, and the only
@@ -63,6 +65,16 @@ vi.mock("../net/server", () => ({
   startAccount: vi.fn(),
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
+  probeUpstream: vi.fn(),
+  ProxyError: class ProxyError extends Error {
+    readonly status: number;
+    readonly code: string;
+    constructor(status: number, code: string) {
+      super(code);
+      this.status = status;
+      this.code = code;
+    }
+  },
 }));
 // The posture read goes through `loadStatus`; stubbing it keeps these tests
 // about the screen rather than about the transport.
@@ -101,6 +113,7 @@ beforeEach(() => {
   vi.mocked(readProxyConfig).mockResolvedValue(config());
   vi.mocked(configureProxy).mockResolvedValue(config());
   vi.mocked(listRemoteDevices).mockResolvedValue([]);
+  vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
   vi.mocked(clearRelay).mockResolvedValue(config());
   vi.mocked(signOutAccount).mockResolvedValue({ signedIn: false });
   vi.mocked(markRelay).mockResolvedValue(config({ mode: "relay", relayDevice: "dev1" }));
@@ -118,7 +131,7 @@ afterEach(() => {
 
 async function renderScreen(
   onClose?: () => void,
-  props: { runtimeBase?: string } = {},
+  props: { runtimeBase?: string; onFailed?: (error: LinkError) => void } = {},
 ): Promise<void> {
   act(() => root?.unmount());
   root = createRoot(container);
@@ -431,5 +444,60 @@ describe("ConnectScreen saved connections", () => {
     await renderScreen();
 
     expect(container.textContent).toContain("楼下的台式机");
+  });
+});
+
+describe("ConnectScreen verification", () => {
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("does not call a dead LAN address connected", async () => {
+    vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "client.offline" });
+    await renderScreen();
+
+    await press("连接");
+    await settle();
+
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("读不到会话");
+  });
+
+  it("closes a cloud link whose kernel does not answer", async () => {
+    rememberConnection("cloud", "dev1", "工作室的 Mac");
+    vi.mocked(readProxyConfig).mockResolvedValue(config({ account: { signedIn: true } }));
+    vi.mocked(listRemoteDevices).mockResolvedValue([device({ name: "工作室的 Mac" })]);
+    vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "client.offline" });
+    await renderScreen();
+
+    await pressRow("工作室的 Mac", "云端");
+    await settle();
+
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(clearRelayRouting).toHaveBeenCalled();
+    expect(container.textContent).toContain("读不到会话");
+  });
+
+  it("tells the app that a switched address could not be verified", async () => {
+    const onFailed = vi.fn();
+    vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "client.offline" });
+    await renderScreen(undefined, { onFailed });
+
+    await press("连接");
+    await settle();
+
+    expect(onFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "client.offline", retryable: true }),
+    );
+  });
+
+  it("connects when the kernel answers after the switch", async () => {
+    await renderScreen();
+    await press("连接");
+    await settle();
+    expect(onConnected).toHaveBeenCalledTimes(1);
   });
 });

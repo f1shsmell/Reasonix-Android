@@ -28,12 +28,15 @@ import {
   markRelay,
   parseServerLink,
   pollAccount,
+  probeUpstream,
   readProxyConfig,
   refreshProxy,
   signOutAccount,
   startAccount,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
+import { linkFailure } from "../net/link";
+import type { LinkError } from "../net/link";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import {
@@ -53,6 +56,8 @@ import type { ThemeChoice } from "./theme";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
+  /** The upstream was switched but the kernel did not answer through it. */
+  onFailed?: (error: LinkError) => void;
   /** Present when this screen was opened over an existing connection. */
   onClose?: () => void;
   /**
@@ -67,7 +72,7 @@ export interface ConnectScreenProps {
   runtimeBase?: string;
 }
 
-export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -148,7 +153,7 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
       const viaWeb = Capacitor.isNativePlatform() && pairCodeValue !== "";
       setBusy(viaWeb ? "正在配对" : "正在连接");
       setError("");
-      const apply = (next: ProxyConfig) => {
+      const apply = async (next: ProxyConfig) => {
         // Only after the new LAN upstream is saved: a failed attempt must
         // leave an existing relay connection alone.
         clearRelayRouting();
@@ -156,6 +161,17 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
         setAccount(next.account);
         setOrigin(next.origin);
         setPairCode("");
+        // The proxy now has an address; that is not the same as a kernel.
+        // Read the conversation list before calling this a connection, so a
+        // dead address is refused here instead of on the home screen.
+        setBusy("正在读取会话");
+        const reach = await probeUpstream();
+        if (!reach.ok) {
+          const failure = linkFailure(reach.code);
+          onFailed?.(failure);
+          setError(`连上了地址，但读不到会话：${failure.message}`);
+          return;
+        }
         if (next.origin) setSaved(rememberConnection("lan", next.origin));
         onConnected();
       };
@@ -180,10 +196,10 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
             );
             return;
           }
-          apply(await configureProxy(base));
+          await apply(await configureProxy(base));
           return;
         }
-        apply(await configureProxy(base, pairCodeValue || undefined));
+        await apply(await configureProxy(base, pairCodeValue || undefined));
       } catch (failure) {
         const failureCode = failure instanceof Error ? failure.message : "unknown";
         const where = base;
@@ -207,7 +223,7 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
         setBusy("");
       }
     },
-    [onConnected],
+    [onConnected, onFailed],
   );
 
   const connectCloud = useCallback(
@@ -225,6 +241,17 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
         const next = await markRelay(deviceId);
         setConfig(next);
         setAccount(next.account);
+        // The handshake says the relay opened; it does not say the computer
+        // is still there. Ask the kernel through it before switching screens.
+        setBusy("正在读取会话");
+        const reach = await probeUpstream();
+        if (!reach.ok) {
+          clearRelayRouting();
+          const failure = linkFailure(reach.code);
+          onFailed?.(failure);
+          setError(`云端通道已打开，但读不到会话：${failure.message}`);
+          return;
+        }
         setSaved(rememberConnection("cloud", deviceId, target?.name));
         onConnected();
       } catch (failure) {
@@ -241,7 +268,7 @@ export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScre
         setBusy("");
       }
     },
-    [devices, onConnected],
+    [devices, onConnected, onFailed],
   );
 
   const applyLink = useCallback(
