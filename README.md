@@ -1,4 +1,4 @@
-# Reasonix Mobile
+# Reasonix For Android
 
 > 第三方、非官方的 Android 客户端，把 [Reasonix Studio](https://github.com/esengine/DeepSeek-Reasonix) 装进口袋。
 > 不内置内核；手机负责界面与连接，任务仍在你的桌面电脑上执行。
@@ -22,7 +22,7 @@
 
 ## 这是什么
 
-Reasonix Mobile 是一个 Android 客户端。它不运行模型，也不带内核，只通过手机与桌面端的连接使用
+Reasonix For Android 是一个 Android 客户端。它不运行模型，也不带内核，只通过手机与桌面端的连接使用
 Reasonix Studio 的能力：
 
 - **局域网**：扫描电脑上「设备访问」的二维码，手机与电脑同一 Wi-Fi 时直连。
@@ -74,7 +74,7 @@ Reasonix Studio 的能力：
 
 1. 打开 [CI 工作流](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml)；
 2. 选择最近一次成功的运行；
-3. 在 **Artifacts** 里下载 `reasonix-mobile-debug`。
+3. 在 **Artifacts** 里下载 `reasonix-for-android-debug`。
 
 ### 从 Releases 下载
 
@@ -140,7 +140,7 @@ docs/          交接文档、计划、界面渲染图
 
 ## 第三方声明
 
-**Reasonix Mobile 是第三方、非官方项目，与 Reasonix、DeepSeek 及其维护者没有隶属关系，
+**Reasonix For Android 是第三方、非官方项目，与 Reasonix、DeepSeek 及其维护者没有隶属关系，
 也未获其背书。** 仓库只包含手机客户端，**不包含内核**；使用前需要在电脑上单独安装并运行
 Reasonix Studio。名称与商标归各自所有者。依赖与许可清单见 [NOTICE.md](NOTICE.md)。
 
@@ -149,4 +149,4 @@ Reasonix Studio。名称与商标归各自所有者。依赖与许可清单见 [
 
 ## License
 
-[MIT](LICENSE) © 2026 f1shsmell and Reasonix Mobile contributors.
+[MIT](LICENSE) © 2026 f1shsmell and Reasonix For Android contributors.

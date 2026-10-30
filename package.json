@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.2",
   "type": "module",
-  "description": "Android client for Reasonix Studio. Phone UI, written from scratch.",
+  "description": "Reasonix For Android — an unofficial Android client for Reasonix Studio.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

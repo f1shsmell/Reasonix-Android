@@ -1,6 +1,6 @@
 # Notice
 
-Reasonix Mobile is an **unofficial, third-party Android client**. It is not
+Reasonix For Android is an **unofficial, third-party Android client**. It is not
 affiliated with, endorsed by, or maintained by Reasonix, DeepSeek, or the
 maintainers of Reasonix Studio.
 

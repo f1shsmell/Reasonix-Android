@@ -20,7 +20,7 @@
    - 分「新增 / 变更 / 修复」，写给用户看，不写实现流水账。
    - 关联 issue 或提交（如 `关联 #123`）。
 3. **合并到 main**，CI 全绿。
-4. **打标签**：在 main 的发布提交上 `git tag -a vX.Y.Z -m "Reasonix Mobile X.Y.Z"`，推送 tag。
+4. **打标签**：在 main 的发布提交上 `git tag -a vX.Y.Z -m "Reasonix For Android X.Y.Z"`，推送 tag。
 5. **release 工作流**会先校验，再构建并发布：
    - tag 必须是 `vX.Y.Z`（可带预发布后缀）；
    - tag 必须在 `main` 上；

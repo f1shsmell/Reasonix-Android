@@ -107,11 +107,11 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk \
-            "reasonix-mobile-${VERSION}.apk"
+            "reasonix-for-android-${VERSION}.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: reasonix-mobile-${{ needs.resolve.outputs.version }}
-          path: reasonix-mobile-*.apk
+          name: reasonix-for-android-${{ needs.resolve.outputs.version }}
+          path: reasonix-for-android-*.apk
           if-no-files-found: error
           retention-days: 30
       - name: Publish the release from its notes
@@ -120,14 +120,14 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          asset="reasonix-mobile-${VERSION}.apk"
+          asset="reasonix-for-android-${VERSION}.apk"
           notes="release-notes/android/${VERSION}.md"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$asset" --clobber
             gh release edit "$TAG" --notes-file "$notes"
           else
             gh release create "$TAG" "$asset" \
-              --title "Reasonix Mobile ${VERSION}" \
+              --title "Reasonix For Android ${VERSION}" \
               --notes-file "$notes" \
               --verify-tag
           fi

@@ -1,4 +1,4 @@
-# Reasonix Mobile — implementation plan
+# Reasonix For Android — implementation plan
 
 A native-feeling Android client for Reasonix Studio. React + Vite + Capacitor.
 The phone UI is written from scratch; no desktop component is reused.
