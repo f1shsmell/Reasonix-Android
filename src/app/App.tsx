@@ -6,29 +6,65 @@ import { Network } from "@capacitor/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
 import { bootstrap } from "../net/token";
-import { configureProxy, markRelay, readProxyConfig, refreshProxy } from "../net/server";
+import { configureProxy, markRelay, originAnswers, readProxyConfig, refreshProxy } from "../net/server";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay, ensureRelay } from "../net/relay";
 import { withTimeout } from "../net/http";
 import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
+import { loadConnections, rememberConnection } from "../net/savedConnections";
 import { ChatScreen } from "../chat/ChatScreen";
-import { SessionList } from "./SessionList";
+import { Home } from "./Home";
+import type { HomeTab } from "./swipe";
+import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
-import { ProjectSheet } from "./ProjectSheet";
+import { useNeedsYou } from "./useNeedsYou";
+import { useTree } from "./useTree";
+import { openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
 import "../ui/shell.css";
 import "../ui/chat.css";
 import "../ui/connect.css";
-import "../ui/sheet.css";
 
 const connection = new Connection();
 
 type Boot = "loading" | "connect" | "ready";
 
+/** Every LAN address worth trying, the proxy's own first, duplicates removed. */
+function lanDoors(config: ProxyConfig | null): string[] {
+  const saved = loadConnections()
+    .filter((row) => row.kind === "lan")
+    .map((row) => row.target);
+  return [...new Set([config?.origin ?? "", ...(config?.candidates ?? []), ...saved].filter(Boolean))];
+}
+
+/** The first remembered LAN address that answers at all, in preference order. */
+async function firstAnswering(doors: string[]): Promise<string | null> {
+  const answers = await Promise.all(
+    doors.map(async (origin) => ({ origin, ok: await originAnswers(origin) })),
+  );
+  return answers.find((entry) => entry.ok)?.origin ?? null;
+}
+
+/** The cloud device a recovery should try: the active one, the hint, then the record. */
+function relayDoor(config: ProxyConfig | null): string {
+  return (
+    config?.relayDevice ||
+    loadRelayDevice() ||
+    loadConnections().find((row) => row.kind === "cloud")?.target ||
+    ""
+  );
+}
+
 /**
  * The app shell. It holds one connection and one piece of navigation state,
  * because a phone shows one screen at a time and a second source of that truth
  * would only disagree with the first.
+ *
+ * Navigation is two levels deep before a conversation: projects, then that
+ * project's conversations, then the chat. A flat list of open panes was the
+ * earlier shape and it answered the wrong question — it showed what the
+ * desktop had running, drew one project three times when three panes were
+ * open on it, and could not reach a conversation that had no pane.
  *
  * On Android the bundle is served by the loopback proxy, and the first
  * question is whether that proxy has an upstream yet. A browser dev session
@@ -37,18 +73,37 @@ type Boot = "loading" | "connect" | "ready";
 export function App() {
   const [snapshot, setSnapshot] = useState<ConnectionSnapshot>(connection.current);
   const [openRuntime, setOpenRuntime] = useState<string | null>(null);
+  /** The project whose conversation list is showing, by root. */
+  const [project, setProject] = useState<string | null>(null);
+  /**
+   * Which home view was showing. It lives here so leaving a project returns to
+   * the list the person opened it from, not to the default view.
+   */
+  const [homeTab, setHomeTab] = useState<HomeTab>("recent");
+  /**
+   * The project the open chat belongs to. Held separately from the runtime
+   * snapshot because the pane was opened a moment ago and the list may not
+   * carry it yet; deriving it from there made the chat's "new session" button
+   * vanish exactly when a fresh conversation was open.
+   */
+  const [chatProject, setChatProject] = useState<string | null>(null);
+  /** The open conversation's title, as the list that opened it knew it. */
+  const [chatTitle, setChatTitle] = useState<string | null>(null);
   const [showConnect, setShowConnect] = useState(false);
   const [boot, setBoot] = useState<Boot>(() => (Capacitor.isNativePlatform() ? "loading" : "ready"));
-  const [sheet, setSheet] = useState<{ base: string; root: string } | null>(null);
+  const tree = useTree();
+  const pending = useNeedsYou(tree.projects, tree.revision);
   const configRef = useRef<ProxyConfig | null>(null);
   const recovering = useRef(false);
 
   /**
    * A phone changes networks while the app is open, and a Studio can restart
-   * under the same LAN address. One recovery pass: let the proxy re-probe its
-   * LAN candidates, read `/runtimes`, then try the other transport if that
-   * failed. It is idempotent and guarded so visibility and network events
-   * cannot overlap into two switches.
+   * under the same LAN address. One recovery pass, preferring the LAN: if any
+   * remembered local address answers, the relay is not needed even when it
+   * still works. The account is the fallback for when none does, and an open
+   * relay is reopened before its probe so a dead socket is not mistaken for a
+   * missing computer. It is idempotent and guarded so visibility and network
+   * events cannot overlap into two switches.
    */
   const recover = useCallback(async () => {
     if (recovering.current) return;
@@ -58,60 +113,52 @@ export function App() {
       const fresh = await refreshProxy();
       if (fresh !== null) configRef.current = fresh;
       const known = fresh ?? configRef.current;
+      const signedIn = known?.account.signedIn === true;
+      const device = signedIn ? relayDoor(known) : "";
+      const doors = lanDoors(known);
 
-      // A relay link that ended during the night must be reopened before the
-      // probe, or the probe would fail through a dead socket and trigger a
-      // needless switch to LAN.
-      if (known?.mode === "relay" && known.relayDevice) {
-        try {
-          await withTimeout(ensureRelay(known.relayDevice), 45_000, "relay did not open in time");
-        } catch {
-          // the probe below still runs; LAN is the other door
+      // Already on LAN: re-probing the candidates is the whole job while it
+      // answers. A failed read falls through to the other doors.
+      if (known?.mode !== "relay" && known?.origin) {
+        await connection.refresh();
+        if (reachKind() === "ok") {
+          rememberConnection("lan", known.origin);
+          return;
         }
       }
 
-      await connection.refresh();
-      if (reachKind() === "ok") return;
-
-      // relay -> LAN, the faster path when this phone is back on the Wi-Fi
-      if (known?.mode === "relay" && known.origin) {
+      // Prefer the LAN even while a relay works: back on the computer's Wi-Fi
+      // it is the faster path and the one that costs no account traffic. A
+      // door that answers is only trusted after the kernel itself does.
+      const alive = doors.length > 0 ? await firstAnswering(doors) : null;
+      if (alive !== null && !(known?.mode !== "relay" && alive === known?.origin)) {
         try {
-          const lan = await configureProxy(known.origin);
+          const next = await configureProxy(alive);
           clearRelayRouting();
-          configRef.current = lan;
+          configRef.current = next;
           await connection.refresh();
-          if (reachKind() === "ok") return;
-
-          // The saved LAN origin did not answer either. Restore the relay
-          // rather than leaving the person with two closed doors.
-          const device = known.relayDevice || loadRelayDevice();
-          if (device) {
-            try {
-              await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
-              configRef.current = await markRelay(device);
-              saveRelayDevice(device);
-              await connection.refresh();
-            } catch {
-              // leave the unreachable state visible
-            }
+          if (reachKind() === "ok") {
+            rememberConnection("lan", alive);
+            // Keep the cloud id as the hint for the next time this phone
+            // leaves the Wi-Fi.
+            if (device) saveRelayDevice(device);
+            return;
           }
         } catch {
-          // configureProxy refused; the current relay may still work
+          // The door answered but the kernel did not. The account is next.
         }
       }
 
-      // LAN -> relay, for leaving the house
-      if (known?.mode !== "relay" && known?.account.signedIn) {
-        const device = known.relayDevice || loadRelayDevice();
-        if (device) {
-          try {
-            await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
-            configRef.current = await markRelay(device);
-            saveRelayDevice(device);
-            await connection.refresh();
-          } catch {
-            // leave the LAN state visible
-          }
+      // The account is the other door, and the only one that leaves the LAN.
+      if (device) {
+        try {
+          await withTimeout(ensureRelay(device), 45_000, "relay did not open in time");
+          configRef.current = await markRelay(device);
+          saveRelayDevice(device);
+          rememberConnection("cloud", device);
+          await connection.refresh();
+        } catch {
+          // leave the unreachable state visible
         }
       }
     } finally {
@@ -138,15 +185,20 @@ export function App() {
         saveRelayDevice(config.relayDevice);
         try {
           await connectRelay(config.relayDevice);
+          rememberConnection("cloud", config.relayDevice);
           if (!cancelled) setBoot("ready");
         } catch {
-          // The relay did not open. A remembered LAN origin may still answer;
+          // The relay did not open. A remembered LAN address may still answer;
           // trying it is cheaper than sending the person back to a QR code.
-          if (config.origin) {
+          // Prefer an address that answers now, not only the one the proxy
+          // happened to hold before the relay took over.
+          const alive = await firstAnswering(lanDoors(config));
+          if (alive !== null) {
             try {
               clearRelayRouting();
-              const lan = await configureProxy(config.origin);
+              const lan = await configureProxy(alive);
               configRef.current = lan;
+              rememberConnection("lan", alive);
               if (!cancelled) setBoot("ready");
               return;
             } catch {
@@ -158,7 +210,19 @@ export function App() {
         return;
       }
       clearRelayRouting();
-      setBoot(config.origin ? "ready" : "connect");
+      if (config.origin) {
+        rememberConnection("lan", config.origin);
+        setBoot("ready");
+        return;
+      }
+      // No upstream, but a remembered one is still a way back to the app: the
+      // recovery pass right after boot is what actually connects it.
+      const recorded = loadConnections();
+      const remembered =
+        recorded.some((row) => row.kind === "lan") ||
+        (config.account.signedIn &&
+          (Boolean(loadRelayDevice()) || recorded.some((row) => row.kind === "cloud")));
+      setBoot(remembered ? "ready" : "connect");
     })();
     return () => {
       cancelled = true;
@@ -176,27 +240,58 @@ export function App() {
     };
   }, [boot, recover]);
 
-  const refresh = useCallback(() => void connection.refresh(), []);
-  const openSheet = useCallback(
-    (runtimeId?: string) => {
-      const id = runtimeId ?? openRuntime ?? snapshot.runtimes[0]?.id;
-      const runtime = snapshot.runtimes.find((candidate) => candidate.id === id);
-      if (!runtime) return;
-      setSheet({ base: runtime.base, root: runtime.root });
+  const [actionError, setActionError] = useState("");
+
+  const reloadTree = tree.reload;
+  const refresh = useCallback(() => {
+    void connection.refresh();
+    reloadTree();
+  }, [reloadTree]);
+
+  /** A pane the kernel just answered is not in the snapshot yet. */
+  const openedRuntime = useCallback(async (id: string, root: string, title: string) => {
+    setChatProject(root);
+    setChatTitle(title);
+    await connection.refresh();
+    setOpenRuntime(id);
+  }, []);
+
+  const openProject = useCallback(
+    (root: string) => {
+      setActionError("");
+      setProject(root);
+      // A project's list is a snapshot of its conversations; coming back to it
+      // after a turn is the moment it is most likely to be stale.
+      reloadTree();
     },
-    [openRuntime, snapshot.runtimes],
+    [reloadTree],
   );
 
-  const openedRuntime = useCallback(
-    async (id: string) => {
-      setSheet(null);
-      // The new pane is not in the snapshot yet; refresh before opening it so
-      // ChatScreen does not flash "session not found".
-      await connection.refresh();
-      setOpenRuntime(id);
+  /**
+   * Start a conversation in the project the chat belongs to. The phone may not
+   * pick a folder, but a project it is already inside is a known root, so this
+   * is the same `POST /runtimes` the project screen uses.
+   */
+  const newSessionInProject = useCallback(
+    async (root: string) => {
+      setActionError("");
+      const result = await openRuntimeOn(root);
+      if (!result.ok) {
+        setActionError(runtimeOpenMessage(result.code));
+        return;
+      }
+      setProject(root);
+      await openedRuntime(result.runtime.id, root, "新会话");
+      reloadTree();
     },
-    [],
+    [openedRuntime, reloadTree],
   );
+
+  /** Leaving a conversation returns to its project, not to the project list. */
+  const closeRuntime = useCallback(() => {
+    setOpenRuntime(null);
+    reloadTree();
+  }, [reloadTree]);
 
   const onConnected = useCallback(() => {
     setShowConnect(false);
@@ -261,19 +356,19 @@ export function App() {
     let cancelled = false;
     let remove: (() => void) | undefined;
     void NativeApp.addListener("backButton", () => {
-      // A sheet is the topmost surface even though it is rendered beside the
-      // screen, not inside it. Without this, back exits the app while a sheet
-      // is visibly open.
-      if (sheet) {
-        setSheet(null);
-        return;
-      }
       if (showConnect) {
         setShowConnect(false);
         return;
       }
+      // A conversation is inside a project, so leaving one lands on that
+      // project's list rather than at the top. The project list is the root.
       if (openRuntime) {
         setOpenRuntime(null);
+        reloadTree();
+        return;
+      }
+      if (project) {
+        setProject(null);
         return;
       }
       void NativeApp.exitApp();
@@ -290,7 +385,7 @@ export function App() {
       cancelled = true;
       remove?.();
     };
-  }, [openRuntime, sheet, showConnect]);
+  }, [openRuntime, project, showConnect, reloadTree]);
 
   useEffect(() => {
     if (!openRuntime || Capacitor.isNativePlatform()) return;
@@ -299,6 +394,18 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [openRuntime]);
+
+  const shownProject = project === null
+    ? null
+    : tree.projects.find((candidate) => candidate.root === project) ?? null;
+  /**
+   * Which project the open chat belongs to. The pane may not be in the
+   * snapshot yet, so the root recorded when it was opened wins; the snapshot is
+   * the fallback for a pane opened by the desktop and reached from here.
+   */
+  const chatRoot = chatProject
+    ?? snapshot.runtimes.find((candidate) => candidate.id === openRuntime)?.root
+    ?? "";
 
   let screen: ReactNode;
   if (boot === "loading") {
@@ -313,7 +420,15 @@ export function App() {
   } else if (boot === "connect") {
     screen = <ConnectScreen onConnected={onConnected} />;
   } else if (showConnect) {
-    screen = <ConnectScreen onConnected={onConnected} onClose={() => setShowConnect(false)} />;
+    // The kernel keeps the approval posture on the hub and persists it, so any
+    // pane speaks for it; the first one is simply the cheapest to address.
+    screen = (
+      <ConnectScreen
+        onConnected={onConnected}
+        onClose={() => setShowConnect(false)}
+        {...(snapshot.runtimes[0]?.base ? { runtimeBase: snapshot.runtimes[0].base } : {})}
+      />
+    );
   } else if (openRuntime) {
     screen = (
       <ChatScreen
@@ -321,18 +436,53 @@ export function App() {
         connection={connection}
         snapshot={snapshot}
         runtimeId={openRuntime}
-        onBack={() => setOpenRuntime(null)}
-        onNewSession={() => openSheet(openRuntime)}
+        {...(chatTitle ? { title: chatTitle } : {})}
+        onBack={closeRuntime}
+        {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
       />
+    );
+  } else if (project !== null) {
+    screen = shownProject ? (
+      <SessionList
+        snapshot={snapshot}
+        tree={tree}
+        project={shownProject}
+        onBack={() => setProject(null)}
+        onOpen={(id, title) => void openedRuntime(id, shownProject.root, title)}
+        onRefresh={refresh}
+      />
+    ) : (
+      <div className="shell">
+        <div className="bar">
+          <button type="button" className="iconbtn" onClick={() => setProject(null)} aria-label="返回项目列表">
+            ←
+          </button>
+          <h1>项目</h1>
+        </div>
+        <div className="centered">
+          <div>
+            <strong>找不到这个项目</strong>
+            它可能已经从桌面端的列表里移除了。
+          </div>
+        </div>
+      </div>
     );
   } else {
     screen = (
-      <SessionList
+      <Home
         snapshot={snapshot}
-        onOpen={setOpenRuntime}
+        tree={tree}
+        pending={pending}
+        tab={homeTab}
+        onTabChange={setHomeTab}
+        onOpenProject={openProject}
+        onOpenSession={(id, root, title) => void openedRuntime(id, root, title)}
+        // The pane is already running, so opening it is navigation only: the
+        // same call the list uses, minus the POST that opened it.
+        onOpenRuntime={(id, root, title) => void openedRuntime(id, root, title)}
+        onNewSession={(root) => void newSessionInProject(root)}
         onRefresh={refresh}
         onSettings={() => setShowConnect(true)}
-        {...(snapshot.runtimes.length > 0 ? { onNew: () => openSheet() } : {})}
       />
     );
   }
@@ -340,13 +490,13 @@ export function App() {
   return (
     <>
       {screen}
-      {sheet ? (
-        <ProjectSheet
-          base={sheet.base}
-          root={sheet.root}
-          onClose={() => setSheet(null)}
-          onOpened={(id) => void openedRuntime(id)}
-        />
+      {actionError ? (
+        <div className="sendfail" role="alert">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError("")}>
+            知道了
+          </button>
+        </div>
       ) : null}
     </>
   );

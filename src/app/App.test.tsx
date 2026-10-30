@@ -7,16 +7,23 @@ import { App } from "./App";
 import {
   configureProxy,
   markRelay,
+  originAnswers,
   readProxyConfig,
   refreshProxy,
 } from "../net/server";
 import { connectRelay, ensureRelay } from "../net/relay";
+import { openRuntime } from "../net/workspaces";
+import { loadTree } from "../net/tree";
+import { rememberConnection } from "../net/savedConnections";
 
 /**
  * The shell has three jobs: choose the boot screen from the proxy config,
  * replace a failed relay with a remembered LAN origin, and move between the
- * session list, the connect overlay and a chat. The child screens are stubs
- * here so the assertions are about navigation, not their CSS.
+ * project list, a project's conversations, the connect overlay and a chat.
+ *
+ * The three navigation levels are the point of the newest shape, so they are
+ * exercised through the real components: a project row opens a conversation
+ * list, and a conversation row opens a chat. The chat itself is a stub.
  */
 
 const connectionMock = vi.hoisted(() => ({
@@ -60,10 +67,11 @@ vi.mock("@capacitor/network", () => ({
   Network: { addListener: vi.fn(async () => ({ remove: vi.fn() })) },
 }));
 vi.mock("../net/token", () => ({ bootstrap: vi.fn(async () => {}) }));
-vi.mock("../net/relayStore", () => ({
-  loadRelayDevice: vi.fn(() => "saved-device"),
+const relayStoreMock = vi.hoisted(() => ({
+  loadRelayDevice: vi.fn<() => string | null>(() => null),
   saveRelayDevice: vi.fn(),
 }));
+vi.mock("../net/relayStore", () => relayStoreMock);
 vi.mock("../net/relay", () => ({
   connectRelay: vi.fn(),
   ensureRelay: vi.fn(),
@@ -74,32 +82,10 @@ vi.mock("../net/server", () => ({
   refreshProxy: vi.fn(),
   configureProxy: vi.fn(),
   markRelay: vi.fn(),
+  originAnswers: vi.fn(),
 }));
-vi.mock("./SessionList", () => ({
-  SessionList: ({ onOpen, onRefresh, onSettings, onNew }: {
-    onOpen: (id: string) => void;
-    onRefresh: () => void;
-    onSettings?: () => void;
-    onNew?: () => void;
-  }) => (
-    <div data-testid="sessions">
-      <button type="button" onClick={() => onOpen("r1")}>open</button>
-      <button type="button" onClick={onRefresh}>refresh</button>
-      {onNew ? <button type="button" onClick={onNew}>new-session</button> : null}
-      {onSettings ? (
-        <button type="button" onClick={onSettings}>settings</button>
-      ) : null}
-    </div>
-  ),
-}));
-vi.mock("./ProjectSheet", () => ({
-  ProjectSheet: ({ onClose, onOpened }: { onClose: () => void; onOpened: (id: string) => void }) => (
-    <div data-testid="sheet">
-      <button type="button" onClick={() => onOpened("r7")}>open-new</button>
-      <button type="button" onClick={onClose}>close-sheet</button>
-    </div>
-  ),
-}));
+vi.mock("../net/tree", () => ({ loadTree: vi.fn(), DEFAULT_TREE_LIMIT: 60 }));
+vi.mock("../net/workspaces", () => ({ openRuntime: vi.fn() }));
 vi.mock("./ConnectScreen", () => ({
   ConnectScreen: ({ onConnected, onClose }: { onConnected: () => void; onClose?: () => void }) => (
     <div data-testid="connect">
@@ -109,10 +95,19 @@ vi.mock("./ConnectScreen", () => ({
   ),
 }));
 vi.mock("../chat/ChatScreen", () => ({
-  ChatScreen: ({ runtimeId, onBack }: { runtimeId: string; onBack: () => void }) => (
+  ChatScreen: ({
+    runtimeId,
+    onBack,
+    onNewSession,
+  }: {
+    runtimeId: string;
+    onBack: () => void;
+    onNewSession?: () => void;
+  }) => (
     <div data-testid="chat">
       {runtimeId}
       <button type="button" onClick={onBack}>back</button>
+      {onNewSession ? <button type="button" onClick={onNewSession}>new-in-project</button> : null}
     </div>
   ),
 }));
@@ -123,7 +118,35 @@ function lanConfig() {
     candidates: ["http://192.168.5.2:56789"],
     paired: true,
     mode: "lan" as const,
-    account: { signedIn: false },
+    account: { signedIn: true },
+  };
+}
+
+function treeBody() {
+  return {
+    ok: true as const,
+    projects: [
+      {
+        root: "/work/app",
+        name: "app",
+        open: true,
+        remembered: true,
+        total: 2,
+        remaining: 0,
+        sessions: [
+          { path: "/work/app/a.jsonl", name: "a", title: "修一下登录" },
+          { path: "/work/app/b.jsonl", name: "b", runtimeId: "r2" },
+        ],
+      },
+      {
+        root: "/work/docs",
+        name: "docs",
+        remembered: true,
+        total: 0,
+        remaining: 0,
+        sessions: [],
+      },
+    ],
   };
 }
 
@@ -132,19 +155,30 @@ let root: Root | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  relayStoreMock.loadRelayDevice.mockReturnValue(null);
   appMock.back = null;
   appMock.exitApp.mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
-  vi.clearAllMocks();
-  connectionMock.current = { reach: { kind: "ok" }, runtimes: [], stream: { kind: "idle" } };
+  connectionMock.current = {
+    reach: { kind: "ok" },
+    runtimes: [{ id: "r2", base: "/rt/r2", root: "/work/app", name: "app" }],
+    stream: { kind: "idle" },
+  };
   vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
   vi.mocked(readProxyConfig).mockResolvedValue(lanConfig());
   vi.mocked(refreshProxy).mockResolvedValue(lanConfig());
   vi.mocked(configureProxy).mockResolvedValue(lanConfig());
+  vi.mocked(originAnswers).mockResolvedValue(false);
   vi.mocked(connectRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>);
   vi.mocked(ensureRelay).mockResolvedValue({ close: vi.fn() } as unknown as Awaited<ReturnType<typeof ensureRelay>>);
   vi.mocked(markRelay).mockResolvedValue({ ...lanConfig(), mode: "relay", relayDevice: "saved-device" });
+  vi.mocked(loadTree).mockResolvedValue(treeBody());
+  vi.mocked(openRuntime).mockResolvedValue({
+    ok: true,
+    runtime: { id: "r9", base: "/rt/r9", root: "/work/app", name: "app" },
+  });
 });
 
 afterEach(() => {
@@ -155,7 +189,7 @@ afterEach(() => {
 });
 
 async function settle(): Promise<void> {
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -175,18 +209,27 @@ function text(): string {
   return container.textContent ?? "";
 }
 
+function click(label: string): void {
+  const found = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (!found) throw new Error(`no button labelled ${label}`);
+  act(() => found.click());
+}
+
 describe("App", () => {
-  it("lands on the session list when the proxy remembers an origin", async () => {
+  it("lands on the recent conversations when the proxy remembers an origin", async () => {
     await renderApp();
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
-    expect(text()).not.toContain("boot");
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+    expect(text()).toContain("最近");
     expect(readProxyConfig).toHaveBeenCalled();
+    expect(loadTree).toHaveBeenCalled();
   });
 
   it("treats an unreadable proxy as a browser session instead of trapping loading", async () => {
     vi.mocked(readProxyConfig).mockResolvedValue(null);
     await renderApp();
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
   });
 
   it("asks for a connection when the proxy has no origin", async () => {
@@ -196,7 +239,7 @@ describe("App", () => {
     expect(text()).toContain("boot");
   });
 
-  it("opens a relay and reaches the list when the saved mode is relay", async () => {
+  it("opens a relay and reaches the home screen when the saved mode is relay", async () => {
     vi.mocked(readProxyConfig).mockResolvedValue({
       ...lanConfig(),
       mode: "relay",
@@ -204,7 +247,7 @@ describe("App", () => {
     });
     await renderApp();
     expect(connectRelay).toHaveBeenCalledWith("saved-device");
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
   });
 
   it("falls back to the remembered LAN origin when the relay will not open", async () => {
@@ -214,78 +257,205 @@ describe("App", () => {
       relayDevice: "saved-device",
     });
     vi.mocked(connectRelay).mockRejectedValue(new Error("relay down"));
+    vi.mocked(originAnswers).mockResolvedValue(true);
     await renderApp();
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
   });
 
-  it("moves from the list into a chat and back", async () => {
+  it("prefers a LAN door even while the relay still works", async () => {
+    const relayed = { ...lanConfig(), mode: "relay" as const, relayDevice: "saved-device" };
+    vi.mocked(readProxyConfig).mockResolvedValue(relayed);
+    vi.mocked(refreshProxy).mockResolvedValue(relayed);
+    vi.mocked(originAnswers).mockResolvedValue(true);
     await renderApp();
-    const open = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "open");
-    act(() => open?.click());
-    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r1");
 
-    const back = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "back");
-    act(() => back?.click());
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+  });
+
+  it("stays on the relay when no LAN address answers", async () => {
+    const relayed = { ...lanConfig(), mode: "relay" as const, relayDevice: "saved-device" };
+    vi.mocked(readProxyConfig).mockResolvedValue(relayed);
+    vi.mocked(refreshProxy).mockResolvedValue(relayed);
+    vi.mocked(originAnswers).mockResolvedValue(false);
+    await renderApp();
+
+    expect(configureProxy).not.toHaveBeenCalled();
+    expect(ensureRelay).toHaveBeenCalledWith("saved-device");
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+  });
+
+  it("boots to the app from a saved LAN record when the proxy lost its origin", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    await renderApp();
+
+    expect(container.querySelector('[data-testid="connect"]')).toBeNull();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+  });
+
+  it("opens a stored conversation straight from the recent list", async () => {
+    await renderApp();
+
+    await act(async () => {
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      );
+      (row as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(openRuntime).toHaveBeenCalledWith("/work/app", "/work/app/a.jsonl");
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("walks projects → conversations → chat and back to each level", async () => {
+    await renderApp();
+
+    click("项目");
+    expect(container.querySelectorAll(".project")).toHaveLength(2);
+
+    act(() => (container.querySelector(".project") as HTMLButtonElement).click());
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+    expect(text()).toContain("修一下登录");
+
+    await act(async () => {
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      );
+      (row as HTMLButtonElement).click();
+    });
+    await settle();
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+
+    click("back");
+    await settle();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+    expect(container.querySelector('[data-testid="chat"]')).toBeNull();
+
+    click("←");
+    expect(container.querySelectorAll(".project")).toHaveLength(2);
+    expect(container.querySelectorAll(".session")).toHaveLength(0);
+    expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      "项目",
+    );
+  });
+
+  it("opens a fresh conversation in the project from its list", async () => {
+    await renderApp();
+    click("项目");
+    act(() => (container.querySelector(".project") as HTMLButtonElement).click());
+
+    await act(async () => {
+      click("新会话");
+    });
+    await settle();
+
+    expect(openRuntime).toHaveBeenCalledWith("/work/app", undefined);
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("starts a new conversation from the home plus after choosing a project", async () => {
+    await renderApp();
+    click("＋");
+    const sheet = container.querySelector(".sheet");
+    expect(sheet).toBeTruthy();
+    expect(sheet?.textContent).toContain("在哪个项目新建");
+
+    await act(async () => {
+      const pick = Array.from(sheet?.querySelectorAll(".project") ?? []).find((candidate) =>
+        candidate.textContent?.includes("app"),
+      );
+      (pick as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(openRuntime).toHaveBeenCalledWith("/work/app");
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("starts a new conversation in the chat's own project", async () => {
+    await renderApp();
+    await act(async () => {
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      );
+      (row as HTMLButtonElement).click();
+    });
+    await settle();
+
+    await act(async () => {
+      click("new-in-project");
+    });
+    await settle();
+
+    expect(openRuntime).toHaveBeenLastCalledWith("/work/app");
   });
 
   it("opens settings over the list and closes them without losing the list", async () => {
     await renderApp();
-    const settings = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "settings");
-    act(() => settings?.click());
+    click("⚙");
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
 
-    const close = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "close");
-    act(() => close?.click());
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    click("close");
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
   });
 
-  it("uses Android back to close settings and chat, then exits", async () => {
+  it("uses Android back to close settings, then a chat, then a project, then exits", async () => {
     await renderApp();
 
-    const settings = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "settings");
-    act(() => settings?.click());
+    click("⚙");
     await settle();
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
     act(() => appMock.back?.());
     await settle();
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
 
-    const open = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "open");
-    act(() => open?.click());
+    click("项目");
+    act(() => (container.querySelector(".project") as HTMLButtonElement).click());
+    await act(async () => {
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      );
+      (row as HTMLButtonElement).click();
+    });
     await settle();
     expect(container.querySelector('[data-testid="chat"]')).toBeTruthy();
+
     act(() => appMock.back?.());
     await settle();
-    expect(container.querySelector('[data-testid="sessions"]')).toBeTruthy();
+    expect(container.querySelectorAll(".session")).toHaveLength(2);
+
+    act(() => appMock.back?.());
+    await settle();
+    expect(container.querySelectorAll(".project")).toHaveLength(2);
+    expect(container.querySelectorAll(".session")).toHaveLength(0);
 
     act(() => appMock.back?.());
     expect(appMock.exitApp).toHaveBeenCalled();
   });
 
-  it("opens the session/project sheet and then the fresh runtime", async () => {
-    connectionMock.current = {
-      reach: { kind: "ok" },
-      runtimes: [{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }],
-      stream: { kind: "idle" },
-    };
+  it("keeps the home screen reachable when the tree cannot be read", async () => {
+    vi.mocked(loadTree).mockResolvedValue({ ok: false, code: "client.offline" });
+    await renderApp();
+    expect(text()).toContain("读不到项目列表");
+    expect(text()).toContain("client.offline");
+  });
+
+  it("shows a refusal when a conversation will not open", async () => {
+    vi.mocked(openRuntime).mockResolvedValue({ ok: false, code: "session.running" });
     await renderApp();
 
-    const newSession = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "new-session",
-    );
-    act(() => newSession?.click());
-    expect(container.querySelector('[data-testid="sheet"]')).toBeTruthy();
-
-    const openNew = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "open-new",
-    );
-    act(() => openNew?.click());
+    await act(async () => {
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      );
+      (row as HTMLButtonElement).click();
+    });
     await settle();
 
-    expect(connectionMock.refresh).toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r7");
-    expect(container.querySelector('[data-testid="sheet"]')).toBeNull();
+    expect(text()).toContain("这个会话正在桌面端跑");
+    expect(container.querySelector('[data-testid="chat"]')).toBeNull();
   });
 });
