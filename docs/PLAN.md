@@ -343,7 +343,8 @@ needs mDNS/UDP advertisement in the kernel.
 Verified on a Pixel 6 / API 36 emulator: the Connect screen renders; after
 configuring `http://127.0.0.1:8791` through `adb reverse`, the session list
 loads, a chat opens, and its stream indicator is green (SSE through the
-proxy). Screenshots: `docs/screenshots/{connect,sessions,chat}.png`.
+proxy). Screenshots (rendered from the web build in a headless browser, not
+device captures): `docs/screenshots/{home,chat,operations,composer}.png`.
 
 Not verified: the camera scanner (the emulator has no camera), the relay
 against a live account or online Studio, and an IP change beyond the candidate

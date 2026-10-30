@@ -1,109 +1,99 @@
 # Reasonix Mobile
 
-An Android client for [Reasonix Studio](https://github.com/esengine/DeepSeek-Reasonix)
-that does not reuse a single desktop component. The phone UI is written for a
-phone: thumb reach, safe areas, a software keyboard, rotation, and a
-connection that drops.
+> 第三方、非官方的 Android 客户端，把 [Reasonix Studio](https://github.com/esengine/DeepSeek-Reasonix) 装进口袋。
+> 不内置内核；手机负责界面与连接，任务仍在你的桌面电脑上执行。
 
-React + Vite + Capacitor. The desktop app is also a React app inside a shell
-(Electron there, Capacitor here), so the two share wire types without sharing
-screens.
+[![CI](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml/badge.svg)](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml)
+[![Release](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/release.yml/badge.svg)](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Android 8+](https://img.shields.io/badge/Android-8%2B-3ddc84)
 
-## Status
+<p align="center">
+  <img src="docs/screenshots/home.png" width="30%" alt="首页：最近会话与连接状态" />
+  <img src="docs/screenshots/chat.png" width="30%" alt="对话：活动行、已处理 N 个操作与输入区" />
+  <img src="docs/screenshots/operations.png" width="30%" alt="操作时间线" />
+</p>
 
-Milestones 1–4 are written: token bootstrap, runtime list, SSE with resume,
-the chat transcript, tool cards, todos, approval and question prompts, and
-cancel. The connection, chat, tool-card and prompt paths have been exercised
-in a browser against a real `reasonix serve`.
+<p align="center">
+  <img src="docs/screenshots/composer.png" width="46%" alt="输入区与添加菜单" />
+</p>
 
-The home screen also carries **待你处理** (Needs You): every conversation whose
-pane is blocked on an approval or a question, gathered from
-`GET /rt/{id}/status` and ordered above the list. A chat's header shows the
-model it runs on and switches it with `POST /rt/{id}/model` — this conversation
-only, never the desktop's default — and the same sheet carries the model's
-thinking effort (`POST /rt/{id}/effort`).
+<p align="center"><sub>界面图为 Web 构建在无头浏览器中的渲染，不是实机截图。</sub></p>
 
-While a turn is running the composer offers two ways in: **排队** queues the
-message for after it, and **插话** sends it into the turn
-(`POST /rt/{id}/inbox/items` with `intent`). What the kernel actually did is
-reported from the receipt's `disposition`, not assumed.
+## 这是什么
 
-Conversations can be pinned and projects reordered from the list, both by
-writing to `/tree` and re-reading — never by reordering a local copy. The
-settings page carries appearance (follow the system, light, dark), the tool
-approval posture, and the version. The two home views also switch on a
-sideways swipe, with the gesture rule kept in `src/app/swipe.ts`.
+Reasonix Mobile 是一个 Android 客户端。它不运行模型，也不带内核，只通过手机与桌面端的连接使用
+Reasonix Studio 的能力：
 
-A question that arrives as a kernel `surface` instead of options — the shape
-that used to render as "这个问题没有可选项" and could not be answered — is drawn
-as a real form (`src/chat/SurfaceCard.tsx`) and answered with field values
-under `Value`.
+- **局域网**：扫描电脑上「设备访问」的二维码，手机与电脑同一 Wi-Fi 时直连。
+- **云端**：登录 Reasonix 账号，通过账号中继连接，不在同一网络也能用。
+- **自动切换**：回到同一 Wi-Fi 自动切回局域网，离开后回落到云端；已连过的电脑会留下记录，
+  在首页连接条或设置里一键切回。
 
-The phone build has also run on a physical device: LAN pairing (through the
-Studio page in a hidden WebView), the recent/project list, history, account sign-in
-and the cloud connection work there. Assistant answers now render Markdown
-(`react-markdown` + `remark-gfm`): headings, lists, tables, fenced code and
-links; raw HTML stays text, and streaming deltas remain plain until the answer
-finishes. Tool output flagged as a diff is split into lines with added,
-removed and hunk tones instead of one monospace block. The latest proxy fix —
-sending `Origin` on forwarded POSTs — is built but has not been re-tested on
-the phone yet.
+手机端复用了桌面端的 HTTP/SSE 约定，但界面、连接桥和 Android 原生部分都是为手机重写的。
 
-A hardening pass on 2026-10-30 added the parts a prototype usually skips:
-every kernel and proxy request has a deadline; the loopback proxy bounds
-request bodies, reads non-SSE responses with a timeout, and refuses
-state-changing control routes on GET; relay requests and reconnects are
-bounded, and an incomplete replay marks the transcript for a history reload.
-Sending no longer wipes text typed while the request was in flight, Android
-back walks the project → conversations → chat stack, and a render error
-boundary replaces the white screen. Assistant answers gained syntax highlighting and copy actions. A
-foreground service keeps a running turn alive while the phone is locked and
-posts a completion notification when it ends. The first two items are the ones
-to exercise on a real phone; none of the new native code has been re-run there
-yet.
+## 功能
 
-**Pick up here: [docs/HANDOFF.md](docs/HANDOFF.md).** It lists the environment
-traps, the decisions that will look wrong if you undo them, and what is *not*
-verified.
+**连接**
+- 扫码、粘贴链接、手动地址三种配对方式；账号登录使用设备码 + 应用内登录页。
+- 已连接的电脑会保存为记录（局域网地址 / 云端设备），当前连接有标记，可一键切换或移除。
+- 连接状态机：`探测地址 → 切换上游 → 读取会话`，失败可重试，网络变化/回到前台自动重连，
+  退避重试带次数提示；只有 `/runtimes` 真正答上才算连接成功。
 
-See [docs/PLAN.md](docs/PLAN.md) for scope and milestones, and
-[docs/PRIOR_ART.md](docs/PRIOR_ART.md) for the survey this design answers to.
-[docs/SELF_HOST.md](docs/SELF_HOST.md) records the decision to reach this
-Studio through a Cloudflare Tunnel instead of the account relay, and what it
-costs.
+**对话**
+- 「最近」聚合所有项目的会话；「项目」按文件夹浏览，长按项目可拖动排序。
+- 长按会话打开操作表：置顶、打开；置顶会话排在前面并保留 📌。
+- **活动行**：思考、执行命令、读取/修改文件都是一行，点开看参数、输出与 diff。
+- 任务结束后，同一轮的多步操作收成一条「已处理 N 个操作」，点开是带时间线的操作记录。
+- 回答以正文呈现；长思考可以进单页阅读。运行中可**停止**；输入框里可**排队 / 插话**。
+- 模型选择、计划模式、图片/相机附件、任务清单进度、审批与结构化问答。
+- 断线补历史、流中断提示、前台服务保活与完成通知。
 
-## Running it
+**设置**
+- 主题（跟随系统 / 浅色 / 深色）、工具批准姿势、连接记录、账号与云端电脑、版本信息。
 
-A dev session needs a kernel to talk to:
+## 安装
+
+### 从 GitHub Actions 下载
+
+每次推送，CI 都会构建一个可安装的 debug APK：
+
+1. 打开 [CI 工作流](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml)；
+2. 选择最近一次成功的运行；
+3. 在 **Artifacts** 里下载 `reasonix-mobile-debug`。
+
+### 从 Releases 下载
+
+打 `v*` 标签（或手动触发 release 工作流）会构建 APK 并发布到
+[Releases](https://github.com/f1shsmell/Reasonix-Android/releases)。
+
+### 命令行安装
 
 ```bash
-reasonix serve --addr 127.0.0.1:8791 --auth token --token-file /tmp/t.token
-REASONIX_SERVE=http://127.0.0.1:8791 npm run dev
+adb install -r app-debug.apk
 ```
 
-Then open `http://<your-lan-ip>:5274/#token=<token>` — the fragment token is
-exchanged for a cookie and wiped from the URL. Without `REASONIX_SERVE` the dev
-server starts anyway and every kernel call 404s, which reads as a broken app
-rather than a missing backend.
+> 这些是 debug 签名的测试包。仓库暂未配置发布签名；需要正式版时请自行提供
+> `android/keystore.properties`。
+
+## 开发
+
+环境：Node 22+、JDK 21、Android SDK（API 35/36）。
 
 ```bash
+npm ci
 npm run typecheck
 npm test
 npm run build
 ```
 
-## The contract rule
+浏览器里接一个真实内核预览：
 
-The phone and the desktop update on different schedules, so the wire contract
-only grows: fields and event kinds are added, never renamed or removed. The
-client ignores what it does not know, and nothing is inferred from wording — an
-error a caller must tell apart carries a code, not a sentence.
+```bash
+REASONIX_SERVE=http://<desktop>:8791 npm run dev
+```
 
-## Android shell
-
-Capacitor 8.6.0 (`capacitor.config.ts`). The `android/` project is checked in
-because it holds the loopback proxy that makes the kernel same-origin with the
-WebView, not only generated files. Build an APK with:
+构建 Android 包：
 
 ```bash
 npm run build
@@ -111,33 +101,36 @@ node ./node_modules/@capacitor/cli/bin/capacitor sync android
 cd android && ./gradlew assembleDebug
 ```
 
-The debug APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`
-(36.97 MB, version 0.1.0). The WebView serves the bundle from `127.0.0.1:8788`
-and forwards kernel routes through `LoopbackProxy`; the first screen scans a
-Studio LAN QR code or takes an address. The loopback listener requires a
-per-install HttpOnly cookie that `MainActivity` installs before the WebView
-starts; a missing or foreign cookie gets `403 proxy.unauthorized`. Verified on
-an API 36 emulator (first screen, auth 403/200, session list, chat, SSE), and
-the operator has run the phone build on a physical device. The Internet relay
-channel is implemented in `src/net/relay.ts`: account grant through the in-app
-login cookie, X25519/HKDF/AES-GCM, request transport, polled events, and a
-native OkHttp WebSocket that sends the `Origin: https://reasonix.io` the relay
-requires. The operator reports a live cloud connection working; a formal
-end-to-end relay run is still not recorded.
+产物：`android/app/build/outputs/apk/debug/app-debug.apk`。
+原生单元测试：`cd android && ./gradlew testDebugUnitTest`。
 
-The launcher icon and splash are app-owned: adaptive icon
-(`drawable/ic_launcher_foreground.xml`, dark `#0F172A` background) and a
-layer-list launch background. `versionCode` and `versionName` live in
-`android/gradle.properties` (`reasonix.versionCode` / `reasonix.versionName`)
-so a release bump is one edit. Release builds enable R8 and resource shrinking;
-the keep rules for Capacitor's reflective plugin bridge are in
-`android/app/proguard-rules.pro`. `assembleRelease` now fails unless
-`android/keystore.properties` exists — copy `keystore.properties.example` and
-fill it in. Native unit tests run with `cd android && ./gradlew
-testDebugUnitTest`; they cover request-body limits, chunked bodies, header
-length, control-route methods and WebView URL schemes.
+## CI 与产物
 
-A running turn starts `TurnService` (foreground, `dataSync`, partial wake
-lock) and stops it on `turn_done`. The service is priority, not a second
-transport: if the process dies, the kernel keeps running and the next launch
-resumes from the SSE cursor.
+- **`.github/workflows/ci.yml`**：Web 类型检查、全量测试、构建；Android 原生单元测试与
+  debug APK。APK 作为 workflow artifact 保留 14 天。
+- **`.github/workflows/release.yml`**：手动触发或 `v*` 标签触发，构建 APK 并作为
+  GitHub Release 资产发布。
+
+## 目录
+
+```
+src/app/       应用外壳、首页、连接设置、连接状态机与已保存连接
+src/chat/      对话记录折叠、活动行、操作时间线、输入区与模型面板
+src/net/       内核 / 代理 / 中继客户端，HTTP 超时与连接验证
+src/wire/      桌面端与手机共享的 wire 类型
+android/       Capacitor 壳、LoopbackProxy、扫码/登录/配对/保活等原生插件
+docs/          交接文档、计划、界面渲染图
+```
+
+## 第三方声明
+
+**Reasonix Mobile 是第三方、非官方项目，与 Reasonix、DeepSeek 及其维护者没有隶属关系，
+也未获其背书。** 仓库只包含手机客户端，**不包含内核**；使用前需要在电脑上单独安装并运行
+Reasonix Studio。名称与商标归各自所有者。依赖与许可清单见 [NOTICE.md](NOTICE.md)。
+
+界面设计参考了 Qoder 手机端的交互组织方式（活动行、操作时间线、悬浮输入区），
+代码与实现均为本项目自有。
+
+## License
+
+[MIT](LICENSE) © 2026 f1shsmell and Reasonix Mobile contributors.

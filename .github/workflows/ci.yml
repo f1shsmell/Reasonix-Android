@@ -1,12 +1,22 @@
-name: reasonix-mobile
+name: ci
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   web:
+    name: Web · typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,7 +29,9 @@ jobs:
       - run: npm run build
 
   android:
+    name: Android · unit tests, debug APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,9 +43,11 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
       - run: npm ci
       - run: npm run build
-      - run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
+      - name: Copy the web bundle into the Android shell
+        run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
       - name: Unit tests and debug APK
         working-directory: android
         run: |
@@ -41,6 +55,7 @@ jobs:
           ./gradlew testDebugUnitTest assembleDebug --console=plain
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: reasonix-mobile-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
