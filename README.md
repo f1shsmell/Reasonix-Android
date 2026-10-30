@@ -78,8 +78,9 @@ Reasonix Studio 的能力：
 
 ### 从 Releases 下载
 
-打 `v*` 标签（或手动触发 release 工作流）会构建 APK 并发布到
-[Releases](https://github.com/f1shsmell/Reasonix-Android/releases)。
+[Releases](https://github.com/f1shsmell/Reasonix-Android/releases) 只包含**明确的版本发布**；
+日常提交和修复只跑 CI，不产生 Release。发版需要有版本号、`release-notes/android/<version>.md`
+和 main 上的 tag，流程见 [RELEASING.md](RELEASING.md)。
 
 ### 命令行安装
 
@@ -120,10 +121,11 @@ cd android && ./gradlew assembleDebug
 
 ## CI 与产物
 
-- **`.github/workflows/ci.yml`**：Web 类型检查、全量测试、构建；Android 原生单元测试与
-  debug APK。APK 作为 workflow artifact 保留 14 天。
-- **`.github/workflows/release.yml`**：手动触发或 `v*` 标签触发，构建 APK 并作为
-  GitHub Release 资产发布。
+- **`.github/workflows/ci.yml`**：每次 push / PR 跑 Web 类型检查、全量测试、构建；
+  Android 原生单元测试与 debug APK。APK 是测试产物（artifact，保留 14 天），不是发布。
+- **`.github/workflows/release.yml`**：只在 `vX.Y.Z` tag 或手动指定已有 tag 时运行。
+  构建前会校验 tag 在 main 上、发布说明存在、版本号一致；Release 正文直接使用
+  `release-notes/android/<version>.md`。规则见 [RELEASING.md](RELEASING.md)。
 
 ## 目录
 
