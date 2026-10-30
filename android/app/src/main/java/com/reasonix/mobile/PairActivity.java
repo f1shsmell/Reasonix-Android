@@ -1,6 +1,7 @@
 package com.reasonix.mobile;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -8,6 +9,8 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -28,6 +31,7 @@ import android.widget.TextView;
  */
 public class PairActivity extends Activity {
     private static final long TIMEOUT_MS = 15_000;
+    static final String EXTRA_REASON = "reason";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private String origin = "";
@@ -40,7 +44,7 @@ public class PairActivity extends Activity {
         String url = getIntent().getStringExtra("url");
         origin = getIntent().getStringExtra("origin");
         if (!Urls.isWebUrl(url) || !Urls.isWebUrl(origin)) {
-            finish();
+            finishWith(RESULT_CANCELED, "invalid_url");
             return;
         }
         startedAt = System.currentTimeMillis();
@@ -57,7 +61,12 @@ public class PairActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame()) finishWith(RESULT_CANCELED, "load_failed");
+            }
+        });
         web.setAlpha(0f);
         root.addView(web, new FrameLayout.LayoutParams(2, 2));
 
@@ -77,11 +86,7 @@ public class PairActivity extends Activity {
         Button cancel = new Button(this);
         cancel.setText("取消");
         cancel.setAllCaps(false);
-        cancel.setOnClickListener(v -> {
-            done = true;
-            setResult(RESULT_CANCELED);
-            finish();
-        });
+        cancel.setOnClickListener(v -> finishWith(RESULT_CANCELED, "cancelled"));
 
         card.addView(progress);
         card.addView(label);
@@ -100,20 +105,46 @@ public class PairActivity extends Activity {
 
     private void poll() {
         if (done) return;
-        String cookie = CookieManager.getInstance().getCookie(origin.endsWith("/") ? origin : origin + "/");
-        if (cookie != null && cookie.contains("reasonix_device=")) {
-            done = true;
-            setResult(RESULT_OK);
-            finish();
+        if (hasDeviceCookie()) {
+            // Persist the credential the page just set before the activity goes.
+            CookieManager.getInstance().flush();
+            finishWith(RESULT_OK, "paired");
             return;
         }
         if (System.currentTimeMillis() - startedAt > TIMEOUT_MS) {
-            done = true;
-            setResult(RESULT_CANCELED);
-            finish();
+            // A cookie that landed just after the last check is a success,
+            // not a pairing to ask for a new code.
+            CookieManager.getInstance().flush();
+            boolean paired = hasDeviceCookie();
+            finishWith(paired ? RESULT_OK : RESULT_CANCELED, paired ? "paired" : "timeout");
             return;
         }
         handler.postDelayed(this::poll, 250);
+    }
+
+    private boolean hasDeviceCookie() {
+        try {
+            String cookie = CookieManager.getInstance()
+                    .getCookie(origin.endsWith("/") ? origin : origin + "/");
+            return cookie != null && cookie.contains("reasonix_device=");
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void finishWith(int resultCode, String reason) {
+        if (done) return;
+        done = true;
+        Intent data = new Intent();
+        data.putExtra(EXTRA_REASON, reason);
+        setResult(resultCode, data);
+        finish();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        finishWith(RESULT_CANCELED, "cancelled");
     }
 
     @Override

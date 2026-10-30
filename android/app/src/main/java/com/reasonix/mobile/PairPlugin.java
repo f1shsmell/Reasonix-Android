@@ -31,7 +31,14 @@ public class PairPlugin extends Plugin {
     private void pairResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
         JSObject out = new JSObject();
-        out.put("paired", result.getResultCode() == android.app.Activity.RESULT_OK);
+        boolean paired = result.getResultCode() == android.app.Activity.RESULT_OK;
+        android.content.Intent data = result.getData();
+        // A result without data is not the person's cancel: the page may have
+        // died, and the direct exchange is still worth trying.
+        String reason = paired ? "paired"
+                : data == null ? "unavailable" : data.getStringExtra(PairActivity.EXTRA_REASON);
+        out.put("paired", paired);
+        out.put("reason", reason == null ? "unavailable" : reason);
         call.resolve(out);
     }
 }

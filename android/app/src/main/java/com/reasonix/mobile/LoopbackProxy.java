@@ -760,9 +760,33 @@ public final class LoopbackProxy {
         int status = conn.getResponseCode();
         if (status == 200 || status == 204) {
             storeCookies(uri, conn);
+            persistWebCookie(uri, conn);
         }
         conn.disconnect();
         return status;
+    }
+
+    /**
+     * The proxy's jar is memory-only; the WebView's cookie store is what
+     * survives a restart. A pairing made through this POST must leave the
+     * device credential in the store every later request already reads.
+     */
+    private void persistWebCookie(URI uri, HttpURLConnection conn) {
+        try {
+            android.webkit.CookieManager web = android.webkit.CookieManager.getInstance();
+            for (Map.Entry<String, List<String>> entry : conn.getHeaderFields().entrySet()) {
+                if (entry.getKey() == null || !"set-cookie".equalsIgnoreCase(entry.getKey())) continue;
+                for (String value : entry.getValue()) {
+                    // Only the device credential is this exchange's to keep;
+                    // other cookies belong to the page and its own lifetime.
+                    if (!value.startsWith("reasonix_device=")) continue;
+                    web.setCookie(uri.toString(), value);
+                }
+            }
+            web.flush();
+        } catch (RuntimeException ignored) {
+            // The in-memory jar still serves this process; only a restart loses it.
+        }
     }
 
     // ---- account device flow ------------------------------------------

@@ -90,10 +90,16 @@ export async function readProxyConfig(): Promise<ProxyConfig | null> {
 }
 
 export async function configureProxy(origin: string, pairCode?: string): Promise<ProxyConfig> {
-  return request<ProxyConfig>("/__reasonix/config", {
-    method: "POST",
-    body: JSON.stringify({ origin, ...(pairCode ? { pairCode } : {}) }),
-  });
+  // The proxy may spend 25 s reaching a share listener before it can name the
+  // refusal; a shorter client deadline would replace that code with a timeout.
+  return request<ProxyConfig>(
+    "/__reasonix/config",
+    {
+      method: "POST",
+      body: JSON.stringify({ origin, ...(pairCode ? { pairCode } : {}) }),
+    },
+    pairCode ? 35_000 : undefined,
+  );
 }
 
 export async function refreshProxy(): Promise<ProxyConfig | null> {
