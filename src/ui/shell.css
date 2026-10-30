@@ -429,6 +429,45 @@ pre.frame {
   letter-spacing: 0.02em;
 }
 
+.need-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A decision the person has not opened since it appeared. It survives a
+   restart until the card is opened, then never comes back. */
+.need-new {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+}
+
+.need-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.need-meta .need-where {
+  flex: 1;
+  min-width: 0;
+}
+
+.need-age {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .need-what,
 .need-where {
   max-width: 100%;
