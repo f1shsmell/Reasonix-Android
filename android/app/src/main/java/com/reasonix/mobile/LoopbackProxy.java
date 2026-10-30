@@ -808,13 +808,8 @@ public final class LoopbackProxy {
         int status = conn.getResponseCode();
         storeCookies(URI.create(IDENTITY + "/device/poll"), conn);
         conn.disconnect();
-        if (status == 400 || status == 403) {
-            JSONObject out = new JSONObject(text);
-            String error = out.optString("code", "");
-            if ("access_denied".equals(error) || "expired_token".equals(error)) {
-                return new JSONObject().put("status", "ended").put("code", error);
-            }
-            return new JSONObject().put("status", "error").put("code", error);
+        if (status == 400 || status == 403 || status == 410) {
+            return pollFailure(text);
         }
         if (status < 200 || status >= 300) {
             throw new IOException("account poll answered " + status);
@@ -933,30 +928,15 @@ public final class LoopbackProxy {
     private void accountLogout() {
         String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
         String cookie = webCookie();
-        if (!token.isEmpty() || !cookie.isEmpty()) {
-            try {
-                HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/logout").toURL().openConnection();
-                conn.setRequestMethod("POST");
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(2000);
-                conn.setReadTimeout(3000);
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setRequestProperty("Origin", "https://reasonix.io");
-                conn.setRequestProperty("User-Agent", USER_AGENT);
-                if (!cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
-                if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
-                byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
-                conn.setFixedLengthStreamingMode(payload.length);
-                try (OutputStream out = conn.getOutputStream()) {
-                    out.write(payload);
-                }
-                readText(conn);
-                persistAccountCookies(conn);
-                conn.disconnect();
-            } catch (IOException e) {
-                Log.w(TAG, "cannot end the account session", e);
-            }
+        // The identity service's /auth/logout deletes one credential, cookie
+        // first. Two calls end both sessions: the web cookie and the device
+        // token minted by the poll. The token call runs beside the cookie call
+        // so sign-out does not pay two network deadlines in series.
+        if (!token.isEmpty()) {
+            final String deviceToken = token;
+            new Thread(() -> endSession("", deviceToken), "reasonix-logout-token").start();
         }
+        endSession(cookie, "");
         try {
             android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
             jar.setCookie("https://id.reasonix.io/",
@@ -964,6 +944,34 @@ public final class LoopbackProxy {
             jar.flush();
         } catch (RuntimeException e) {
             Log.w(TAG, "cannot expire the account cookie", e);
+        }
+    }
+
+    private void endSession(String cookie, String token) {
+        if (cookie.isEmpty() && token.isEmpty()) return;
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/logout").toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(1500);
+            conn.setReadTimeout(2500);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Origin", "https://reasonix.io");
+            conn.setRequestProperty("User-Agent", USER_AGENT);
+            if (!cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
+            byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(payload);
+            }
+            readText(conn);
+            persistAccountCookies(conn);
+        } catch (IOException e) {
+            Log.w(TAG, "cannot end the account session", e);
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -978,6 +986,32 @@ public final class LoopbackProxy {
             jar.flush();
         } catch (RuntimeException e) {
             Log.w(TAG, "cannot keep the account cookie", e);
+        }
+    }
+
+    /**
+     * A refused device poll, as the sign-in loop reads it.
+     *
+     * The account service nests its code under `error.code`; older bodies put
+     * it at the top. An expired or denied grant ends the wait, everything else
+     * is a failure the person can retry.
+     */
+    static JSONObject pollFailure(String text) {
+        String code = "";
+        try {
+            JSONObject body = new JSONObject(text);
+            JSONObject error = body.optJSONObject("error");
+            code = error != null ? error.optString("code", "") : body.optString("code", "");
+        } catch (JSONException ignored) {
+            // A CDN page, not the service's error.
+        }
+        try {
+            if ("access_denied".equals(code) || "expired_token".equals(code)) {
+                return new JSONObject().put("status", "ended").put("code", code);
+            }
+            return new JSONObject().put("status", "error").put("code", code);
+        } catch (JSONException impossible) {
+            return new JSONObject();
         }
     }
 
