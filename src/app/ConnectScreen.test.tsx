@@ -240,6 +240,17 @@ describe("ConnectScreen", () => {
     expect(onConnected).toHaveBeenCalledTimes(1);
   });
 
+  it("folds the manual address fields behind a disclosure", async () => {
+    await renderScreen();
+
+    const manual = container.querySelector("details.manual-group") as HTMLDetailsElement;
+    expect(manual).not.toBeNull();
+    expect(manual.open).toBe(false);
+    expect(manual.querySelector("summary")?.textContent).toContain("手动填写地址");
+    const origin = manual.querySelector("input") as HTMLInputElement;
+    expect(origin.value).toMatch(/^http:\/\/192\.168\.5\.2:\d+$/);
+  });
+
   it("keeps the address and the refused code in a pairing error", async () => {
     vi.mocked(configureProxy).mockRejectedValue(new Error("device.pairing_invalid"));
     await renderScreen();

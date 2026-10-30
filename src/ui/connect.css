@@ -22,17 +22,28 @@
 
 /* ---- title bar ---- */
 
+/* The title and the pane switch stay reachable while the page scrolls: this
+   screen is long, and changing pane or closing it should not require a trip
+   back to the top. */
+.settings-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 4px 0 8px;
+  background: var(--bg);
+}
+
 .settings-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0 10px;
+  padding: 2px 0 6px;
 }
 
 .settings-head h1 {
   flex: 1;
   margin: 0;
-  font-size: 30px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -57,7 +68,7 @@
 }
 
 .settings-tabs {
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .machine-bar {
@@ -112,6 +123,46 @@
 .link-hero[data-tone="ok"] { --hero-tone: var(--ok); }
 .link-hero[data-tone="warn"] { --hero-tone: var(--warn); }
 .link-hero[data-tone="bad"] { --hero-tone: var(--bad); }
+
+/* A resting link is a fact, not an event: the tall animated card is kept for
+   a connection in progress; connected and failed states settle into one row. */
+.link-hero[data-compact] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "mark title"
+    "mark sub";
+  column-gap: 12px;
+  row-gap: 1px;
+  align-items: center;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.link-hero[data-compact] .link-hero-mark {
+  grid-area: mark;
+  width: 40px;
+  height: 40px;
+}
+
+.link-hero[data-compact] .rmark {
+  width: 26px;
+  height: 26px;
+}
+
+.link-hero[data-compact] .link-hero-title {
+  grid-area: title;
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.link-hero[data-compact] .link-hero-sub {
+  grid-area: sub;
+  max-width: none;
+  font-size: 12px;
+  line-height: 1.4;
+}
 
 .link-hero-mark {
   position: relative;
@@ -494,6 +545,27 @@ label.setting .setting-title {
 /* The action rows inside the grant card are their own separators. */
 .grant > .setting {
   border-top: 0;
+}
+
+/* ---- manual address ---- */
+
+/* The scan and paste rows are the path almost everyone takes; the address
+   fields stay folded for the case where the person already has one. */
+.manual-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.manual-summary::-webkit-details-marker {
+  display: none;
+}
+
+.manual-summary .chev {
+  transition: transform 0.15s ease;
+}
+
+.manual-group[open] .manual-summary .chev {
+  transform: rotate(90deg);
 }
 
 .connect-actions {
