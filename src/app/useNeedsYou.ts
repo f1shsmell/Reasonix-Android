@@ -19,6 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Attention, decisionKey, runningKey } from "./attention";
 import { loadStatus } from "../net/status";
 import type { Decision } from "../net/status";
 import type { TreeProject } from "../wire/tree";
@@ -32,6 +33,10 @@ export interface PendingItem {
   projectRoot: string;
   title: string;
   decision: Decision;
+  /** When this decision first appeared to the phone. */
+  firstSeenAt: number;
+  /** The person has not opened this card since it appeared. */
+  isNew: boolean;
 }
 
 /** A pane whose turn is still working, with no decision blocking it. */
@@ -41,6 +46,8 @@ export interface RunningItem {
   projectName: string;
   projectRoot: string;
   title: string;
+  /** When this turn was first seen running. */
+  firstSeenAt: number;
 }
 
 interface Candidate {
@@ -58,6 +65,8 @@ export interface NeedsYouState {
   status: "loading" | "loaded";
   /** Re-sweep without waiting for the tree to change. */
   refresh: () => void;
+  /** The card was opened; its new badge is done. */
+  markSeen: (item: PendingItem) => void;
 }
 
 /** Every conversation a pane is driving, with the labels its row needs. */
@@ -85,6 +94,9 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
   const [tick, setTick] = useState(0);
   /** A slow sweep must not overwrite the answer of a newer one. */
   const request = useRef(0);
+  /** First sighting and read state survive polls and app restarts. */
+  const attention = useRef<Attention | null>(null);
+  attention.current ??= new Attention();
 
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
@@ -103,15 +115,24 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
       candidates.map(async (candidate) => {
         const result = await loadStatus(candidate.base);
         if (!result.ok) return { pending: [], running: null };
+        const now = Date.now();
         return {
-          pending: result.status.decisions.map((decision) => ({
-            base: candidate.base,
-            runtimeId: candidate.runtimeId,
-            projectName: candidate.projectName,
-            projectRoot: candidate.projectRoot,
-            title: candidate.title,
-            decision,
-          })),
+          pending: result.status.decisions.map((decision) => {
+            const view = attention.current?.decision(
+              decisionKey(candidate.runtimeId, decision.id),
+              now,
+            );
+            return {
+              base: candidate.base,
+              runtimeId: candidate.runtimeId,
+              projectName: candidate.projectName,
+              projectRoot: candidate.projectRoot,
+              title: candidate.title,
+              decision,
+              firstSeenAt: view?.firstSeenAt ?? now,
+              isNew: view?.isNew ?? false,
+            };
+          }),
           running: result.status.running
             ? {
                 base: candidate.base,
@@ -119,6 +140,8 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
                 projectName: candidate.projectName,
                 projectRoot: candidate.projectRoot,
                 title: candidate.title,
+                firstSeenAt:
+                  attention.current?.running(runningKey(candidate.runtimeId), now) ?? now,
               }
             : null,
         };
@@ -150,5 +173,16 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
     };
   }, []);
 
-  return { items, running, status, refresh };
+  const markSeen = useCallback((item: PendingItem) => {
+    attention.current?.markSeen(decisionKey(item.runtimeId, item.decision.id));
+    setItems((current) =>
+      current.map((entry) =>
+        entry.runtimeId === item.runtimeId && entry.decision.id === item.decision.id
+          ? { ...entry, isNew: false }
+          : entry,
+      ),
+    );
+  }, []);
+
+  return { items, running, status, refresh, markSeen };
 }

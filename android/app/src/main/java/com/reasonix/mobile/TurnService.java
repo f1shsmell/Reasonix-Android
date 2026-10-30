@@ -322,12 +322,35 @@ public class TurnService extends Service {
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
+                // A prompt can carry code and paths; the lock screen says only
+                // that something is waiting until the phone is unlocked.
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(publicAsk())
                 .setContentIntent(openChat(askRequest(runtime)))
                 .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(askRequest(runtime)));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
         return builder.build();
+    }
+
+    /** The lock-screen stand-in: no session title, no question text. */
+    private Notification publicAsk() {
+        return new Notification.Builder(this, CHANNEL_ASK)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Reasonix")
+                .setContentText("有会话需要你处理")
+                .setContentIntent(openApp())
+                .build();
+    }
+
+    private Notification publicDone() {
+        return new Notification.Builder(this, CHANNEL_DONE)
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("Reasonix")
+                .setContentText("这一轮已完成")
+                .setContentIntent(openApp())
+                .build();
     }
 
     private void cancelAsk() {
@@ -413,7 +436,7 @@ public class TurnService extends Service {
         NotificationChannel ask = new NotificationChannel(
                 CHANNEL_ASK, "需要你处理", NotificationManager.IMPORTANCE_HIGH);
         ask.setDescription("有提问、批准或恢复选择等你回答");
-        ask.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        ask.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         manager.createNotificationChannel(ask);
     }
 
@@ -450,6 +473,8 @@ public class TurnService extends Service {
                 .setContentText("这一轮已完成")
                 .setSubText("Reasonix")
                 .setAutoCancel(true)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(publicDone())
                 .setContentIntent(openChat(doneRequest(runtime)))
                 .build();
         manager.notify(doneId(runtime), notification);

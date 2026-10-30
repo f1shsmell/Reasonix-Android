@@ -73,7 +73,7 @@ function tree(overrides: Partial<TreeState> = {}): TreeState {
 }
 
 function pending(overrides: Partial<NeedsYouState> = {}): NeedsYouState {
-  return { items: [], running: [], status: "loaded", refresh: vi.fn(), ...overrides };
+  return { items: [], running: [], status: "loaded", refresh: vi.fn(), markSeen: vi.fn(), ...overrides };
 }
 
 function Harness(props: Partial<React.ComponentProps<typeof Home>>): React.ReactElement {
@@ -342,6 +342,8 @@ describe("Home", () => {
         projectRoot: "/work/app",
         title: "修一下登录",
         decision: { id: "d1", kind: "ask" },
+        firstSeenAt: Date.now(),
+        isNew: false,
         ...overrides,
       };
     }
@@ -370,6 +372,36 @@ describe("Home", () => {
       expect(block?.textContent).toContain("app");
     });
 
+    it("marks a new decision with its computer and how long it has waited", () => {
+      render({
+        pending: pending({
+          items: [waiting({ firstSeenAt: Date.now() - 6 * 60_000, isNew: true })],
+        }),
+        link: {
+          phase: "connected",
+          completed: [],
+          attempt: 0,
+          target: "/work/app",
+          name: "studio",
+          mode: "lan",
+        },
+      });
+
+      const block = container.querySelector(".needs-you");
+      expect(block?.textContent).toContain("新");
+      expect(block?.textContent).toContain("等待 6 分钟");
+      expect(block?.textContent).toContain("studio · app");
+    });
+
+    it("marks a decision seen when its card is opened", () => {
+      const markSeen = vi.fn();
+      render({ pending: pending({ items: [waiting({ isNew: true })], markSeen }) });
+
+      act(() => (container.querySelector(".card-need") as HTMLButtonElement).click());
+
+      expect(markSeen).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: "r2" }));
+    });
+
     it("names the subsystem when the decision carries no question text", () => {
       render({ pending: pending({ items: [waiting({ decision: { id: "d2", kind: "tool_approval" } })] }) });
       expect(container.querySelector(".needs-you")?.textContent).toContain("待批准");
@@ -395,6 +427,7 @@ describe("Home", () => {
               projectName: "app",
               projectRoot: "/work/app",
               title: "修一下登录",
+              firstSeenAt: Date.now(),
             },
           ],
         }),
@@ -418,6 +451,7 @@ describe("Home", () => {
               projectName: "app",
               projectRoot: "/work/app",
               title: "修一下登录",
+              firstSeenAt: Date.now(),
             },
           ],
         }),

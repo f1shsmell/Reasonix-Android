@@ -162,19 +162,44 @@ function dropEdge(
  * The block draws nothing when nothing is waiting, so a quiet list is not
  * interrupted by an empty heading.
  */
+/** How long a card has waited, in the coarsest useful unit. */
+function duration(since: number): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - since) / 1000));
+  if (seconds < 60) return "刚刚";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes % 60} 分`;
+  return `${Math.floor(hours / 24)} 天`;
+}
+
+function waited(since: number): string {
+  const age = duration(since);
+  return age === "刚刚" ? age : `等待 ${age}`;
+}
+
+function runningFor(since: number): string {
+  const age = duration(since);
+  return age === "刚刚" ? "刚刚开始" : `运行 ${age}`;
+}
+
 function NeedsYou({
   pending,
+  computerName,
   onOpen,
 }: {
   pending: NeedsYouState;
+  /** What to call the computer in use; other computers are in the fleet bar. */
+  computerName?: string | undefined;
   onOpen: (item: { runtimeId: string; projectRoot: string; title: string }) => void;
 }) {
-  const waiting = pending.items;
+  // Oldest first: the thing that has waited longest is the one to look at.
+  const waiting = [...pending.items].sort((a, b) => a.firstSeenAt - b.firstSeenAt);
   // A blocked turn is already in the first list; repeating it under "running"
   // would make one conversation look like two.
-  const running = pending.running.filter(
-    (item) => !waiting.some((entry) => entry.runtimeId === item.runtimeId),
-  );
+  const running = pending.running
+    .filter((item) => !waiting.some((entry) => entry.runtimeId === item.runtimeId))
+    .sort((a, b) => a.firstSeenAt - b.firstSeenAt);
   if (pending.status === "loaded" && waiting.length === 0 && running.length === 0) return null;
   if (pending.status === "loading" && waiting.length === 0 && running.length === 0) return null;
 
@@ -192,13 +217,24 @@ function NeedsYou({
                 <button
                   type="button"
                   className="card-need"
-                  onClick={() => onOpen(item)}
+                  onClick={() => {
+                    pending.markSeen(item);
+                    onOpen(item);
+                  }}
                   aria-label={`${item.title} ${decisionVerb(item.decision)}`}
                 >
-                  <span className="need-verb">{decisionVerb(item.decision)}</span>
+                  <span className="need-top">
+                    <span className="need-verb">{decisionVerb(item.decision)}</span>
+                    {item.isNew ? <span className="need-new">新</span> : null}
+                  </span>
                   <strong>{item.title}</strong>
                   <span className="need-what">{decisionLabel(item.decision)}</span>
-                  <span className="need-where">{item.projectName}</span>
+                  <span className="need-meta">
+                    <span className="need-where">
+                      {[computerName, item.projectName].filter(Boolean).join(" · ")}
+                    </span>
+                    <span className="need-age">{waited(item.firstSeenAt)}</span>
+                  </span>
                 </button>
               </li>
             ))}
@@ -222,10 +258,17 @@ function NeedsYou({
                   onClick={() => onOpen(item)}
                   aria-label={`${item.title} 正在运行`}
                 >
-                  <span className="need-verb">运行中</span>
+                  <span className="need-top">
+                    <span className="need-verb">运行中</span>
+                  </span>
                   <strong>{item.title}</strong>
                   <span className="need-what">正在处理…</span>
-                  <span className="need-where">{item.projectName}</span>
+                  <span className="need-meta">
+                    <span className="need-where">
+                      {[computerName, item.projectName].filter(Boolean).join(" · ")}
+                    </span>
+                    <span className="need-age">{runningFor(item.firstSeenAt)}</span>
+                  </span>
                 </button>
               </li>
             ))}
@@ -870,6 +913,7 @@ export function Home({
         {tab === "recent" && !needle ? (
           <NeedsYou
             pending={pending}
+            computerName={link.name}
             onOpen={(item) => onOpenRuntime(item.runtimeId, item.projectRoot, item.title)}
           />
         ) : null}
