@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  # Feature branches are checked once, through pull_request; a second push
+  # run would only duplicate the same jobs under the same required names.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
