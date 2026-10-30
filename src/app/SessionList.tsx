@@ -166,7 +166,7 @@ export function SessionList({
             </div>
           </div>
         ) : (
-          <ul className="list">
+          <ul className="list grouped">
             {sessions.map((session) => (
               <SessionRow
                 key={session.path}

@@ -13,7 +13,7 @@
  * here — a stored transcript, not an open pane.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
@@ -30,6 +30,8 @@ import { useProjectDrag } from "./useProjectDrag";
 import type { ProjectDragHandlers, ProjectDragState } from "./useProjectDrag";
 import { useLongPress } from "./longPress";
 import { useBackCloser } from "./backStack";
+import { Segmented } from "./Segmented";
+import { RMark } from "./RMark";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
 import { runtimeOpenMessage, sessionTitle } from "./SessionList";
@@ -38,6 +40,11 @@ import type { TreeState } from "./useTree";
 import { openRuntime } from "../net/workspaces";
 
 type Tab = HomeTab;
+
+const HOME_TABS = [
+  { value: "recent", label: "最近" },
+  { value: "projects", label: "项目" },
+] as const;
 
 export interface HomeProps {
   snapshot: ConnectionSnapshot;
@@ -839,6 +846,13 @@ export function Home({
    * re-render the list.
    */
   const touch = useRef<{ x: number; y: number; owned: boolean } | null>(null);
+  /** The view that was showing before this one, for the slide direction. */
+  const previousTab = useRef(tab);
+  const direction = tab === previousTab.current ? "none" : tab === "projects" ? "forward" : "back";
+
+  useEffect(() => {
+    previousTab.current = tab;
+  }, [tab]);
 
   const recent = useMemo(() => recentConversations(tree.projects), [tree.projects]);
   const needle = query.trim().toLowerCase();
@@ -966,7 +980,12 @@ export function Home({
         ) : (
           <span className="bar-spacer" />
         )}
-        <h1>Reasonix</h1>
+        <h1>
+          <span className="brand-mark" aria-hidden="true">
+            <RMark />
+          </span>
+          Reasonix
+        </h1>
         {onDispatch ? (
           <button
             type="button"
@@ -1014,27 +1033,15 @@ export function Home({
           aria-label="搜索会话或项目"
         />
 
-        <div className="segmented" role="tablist" aria-label="列表">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "recent"}
-            className={tab === "recent" ? "on" : ""}
-            onClick={() => onTabChange("recent")}
-          >
-            最近
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "projects"}
-            className={tab === "projects" ? "on" : ""}
-            onClick={() => onTabChange("projects")}
-          >
-            项目
-          </button>
-        </div>
+        <Segmented
+          tablist
+          ariaLabel="列表"
+          value={tab}
+          options={HOME_TABS}
+          onChange={onTabChange}
+        />
 
+        <div className="home-view" data-dir={direction} key={tab}>
         {/* Only the recent view carries it: "what needs me" is about
             conversations, not about folders. */}
         {tab === "recent" && !needle ? (
@@ -1072,7 +1079,7 @@ export function Home({
         ) : null}
 
         {tab === "recent" && shownRecent.length > 0 ? (
-          <ul className="list">
+          <ul className="list grouped">
             {shownRecent.map((row) => (
               <RecentItem
                 key={`${row.project.root}\u0000${row.session.path}`}
@@ -1086,7 +1093,7 @@ export function Home({
         ) : null}
 
         {tab === "projects" && shownProjects.length > 0 ? (
-          <ul className="list" ref={drag.listRef}>
+          <ul className="list grouped" ref={drag.listRef}>
             {shownProjects.map((project, index) => (
               <ProjectItem
                 key={project.root}
@@ -1108,6 +1115,7 @@ export function Home({
             </div>
           </div>
         ) : null}
+        </div>
       </div>
 
       {menu ? (
