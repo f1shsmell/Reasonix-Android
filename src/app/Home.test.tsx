@@ -335,8 +335,14 @@ describe("Home", () => {
   });
 
   it("reports a project's newest conversation as its activity", () => {
-    const at = Date.now() - 60_000;
-    expect(projectActivity(project())).toBe(at);
+    const at = 1_700_000_000_000;
+    const loaded = project({
+      sessions: [
+        { path: "/work/app/a.jsonl", name: "a", title: "修一下登录", lastActiveAt: at - 30_000 },
+        { path: "/work/app/b.jsonl", name: "b", runtimeId: "r2", lastActiveAt: at },
+      ],
+    });
+    expect(projectActivity(loaded)).toBe(at);
   });
 
   describe("Dispatch", () => {
