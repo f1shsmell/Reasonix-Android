@@ -28,6 +28,7 @@
    - `package.json` 与 `android/gradle.properties` 的版本必须等于 tag；
    - GitHub Release 的正文直接使用这份发布说明，不自动生成。
 6. 发布失败可用 `workflow_dispatch` 输入**已存在的 tag** 重跑；重跑会替换同名资产，不会另起一个版本。
+   勾选 `dry_run` 则只还原密钥、构建 `assembleRelease` 并验签，不发布、不碰已有资产。
 
 ## 签名
 
