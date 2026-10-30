@@ -1,7 +1,7 @@
 {
   "name": "reasonix-mobile",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Android client for Reasonix Studio. Phone UI, written from scratch.",
   "scripts": {
