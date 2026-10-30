@@ -60,6 +60,7 @@ import { RequestTimeout } from "../net/http";
 import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
+import type { PairResult } from "../native/pair";
 import {
   loadBackgroundStatus,
   openBatterySettings,
@@ -114,6 +115,12 @@ const PANE_OPTIONS = [
 ] as const;
 
 type Pane = (typeof PANE_OPTIONS)[number]["value"];
+
+/** A typed refusal is an identity; only an unknown error has no code. */
+function refusalCode(failure: unknown): string {
+  if (failure instanceof ProxyError) return failure.code;
+  return failure instanceof Error ? failure.message : "unknown";
+}
 
 /** A refusal from the identity service while signing in or approving. */
 function accountFailureText(failure: unknown): string {
@@ -333,14 +340,33 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
       setBusy(viaWeb ? "正在配对" : "正在连接");
       setError("");
       setPending({ kind: "lan", name: base });
-      const apply = async (next: ProxyConfig) => {
+      const previous = config;
+      /** Put the working LAN upstream back when the new one cannot be read. */
+      const restore = async (attempted: ProxyConfig): Promise<boolean> => {
+        if (previous === null || previous.mode === "relay" || !previous.origin) return false;
+        if (normalizeTarget("lan", previous.origin) === normalizeTarget("lan", attempted.origin)) {
+          return false;
+        }
+        try {
+          const back = await configureProxy(previous.origin);
+          setConfig(back);
+          setAccount(back.account);
+          setOrigin(back.origin);
+          // Switching back is not proof the old computer still answers; only
+          // then may the link machine stay out of its failed state.
+          return (await probeUpstream()).ok;
+        } catch {
+          // The old address remains a hint; the attempt's error is what to show.
+          return false;
+        }
+      };
+      const apply = async (next: ProxyConfig): Promise<boolean> => {
         // Only after the new LAN upstream is saved: a failed attempt must
         // leave an existing relay connection alone.
         clearRelayRouting();
         setConfig(next);
         setAccount(next.account);
         setOrigin(next.origin);
-        setPairCode("");
         // The proxy now has an address; that is not the same as a kernel.
         // Read the conversation list before calling this a connection, so a
         // dead address is refused here instead of on the home screen.
@@ -348,54 +374,76 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         const reach = await probeUpstream();
         if (!reach.ok) {
           const failure = linkFailure(reach.code);
-          onFailed?.(failure);
+          // A restored upstream is still a live link; only an attempt that
+          // left the phone nowhere belongs in the link machine's failed state.
+          if (!(await restore(next))) onFailed?.(failure);
           setError(`连上了地址，但读不到会话：${failure.message}`);
-          return;
+          return false;
         }
+        setPairCode("");
         if (next.origin) setSaved(rememberConnection("lan", next.origin));
         onConnected();
+        return true;
       };
       try {
         if (viaWeb) {
-          let paired = false;
+          let outcome: PairResult = { paired: false, reason: "unavailable" };
           try {
             // The Studio page's own #pair bootstrap is the path a browser
             // uses; the hidden WebView runs it and leaves its cookie for the
             // proxy. The direct POST /pair below is only the fallback.
-            const result = await NativePair.pair({
+            outcome = await NativePair.pair({
               url: `${base}/#pair=${encodeURIComponent(pairCodeValue)}`,
               origin: base,
             });
-            paired = result.paired;
           } catch {
-            paired = false;
+            // The activity did not answer; the exchange below can still pair.
           }
-          if (!paired) {
-            setError(
-              "配对没有完成：配对码可能已过期，或已经被浏览器用过。请在电脑上点「换一个」后重新扫码。",
-            );
+          if (outcome.paired) {
+            await apply(await configureProxy(base));
             return;
           }
-          await apply(await configureProxy(base));
-          return;
+          if (outcome.reason === "cancelled") {
+            // Closing the sheet is a choice, not a failed pairing.
+            setError("");
+            return;
+          }
+          // The hidden page can fail without spending the code: an older
+          // share page has no #pair bootstrap, and a slow cookie is not a
+          // refusal. Let the exchange itself decide.
+          try {
+            if (await apply(await configureProxy(base, pairCodeValue))) return;
+            return;
+          } catch (failure) {
+            // A code the page already spent answers 403. Its cookie may
+            // still have landed, in which case the kernel can answer.
+            if (refusalCode(failure) === "device.pairing_invalid") {
+              try {
+                if (await apply(await configureProxy(base))) return;
+              } catch {
+                // Report the refusal below; it names the next step.
+              }
+            }
+            throw failure;
+          }
         }
         await apply(await configureProxy(base, pairCodeValue || undefined));
       } catch (failure) {
-        const failureCode = failure instanceof Error ? failure.message : "unknown";
+        const failureCode = refusalCode(failure);
         const where = base;
         if (failureCode === "device.pairing_invalid") {
           setError(
             `配对码已失效（地址 ${where}，App 用的码 ${pairCodeValue || "(空)"}）。` +
-              "浏览器能连时，点「粘贴链接」用浏览器地址栏的完整链接；或者点「换一个」重新扫码。",
+              "请在电脑上点「换一个」生成新码后重新扫码；在浏览器里打开过的码已经用完。",
           );
-          // Keep the code visible: it is the one value worth comparing with
-          // the browser's address bar when the scanner misread the QR.
+          // A refused code cannot answer a retry; asking again needs a new one.
+          setPairCode("");
         } else if (failureCode === "device.pair_route_missing") {
           setError(`这个地址不是局域网配对端口（${where}）。请用二维码里的地址，不要手填 8791。`);
           setPairCode("");
         } else if (failureCode === "device.pair_unreachable" || failureCode === "proxy.upstream_unreachable") {
+          // A network failure does not spend the code; keep it for the retry.
           setError("到不了这台电脑：确认手机和电脑在同一 Wi-Fi，并使用二维码里的地址。");
-          setPairCode("");
         } else {
           setError(`没连上：${failureCode}`);
         }
@@ -404,7 +452,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         setPending(null);
       }
     },
-    [onConnected, onFailed],
+    [config, onConnected, onFailed],
   );
 
   const connectCloud = useCallback(
@@ -920,7 +968,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           </button>
         </section>
         <p className="group-note">
-          浏览器扫码能连、App 不能时：复制浏览器地址栏的完整链接，点「粘贴链接」。
+          浏览器能连、App 不能时：在电脑上点「换一个」，把新链接复制到手机（先别在浏览器里打开），再点「粘贴链接」。
         </p>
 
         <details className="group manual-group">

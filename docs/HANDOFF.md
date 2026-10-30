@@ -529,19 +529,27 @@ every POST — submit, approve, answer, cancel — was refused with
 
 A second, browser-identical path exists for the case where the direct
 `POST /pair` is refused on a code the Studio page accepts. On Android, when a
-code is present, ConnectScreen no longer calls `/pair` at all: it opens the
-share link through the `Pair` plugin, which loads it in a hidden 2×2 WebView
-inside a translucent `PairActivity`. The page's own `#pair=` bootstrap spends
-the code and stores `reasonix_device`; `PairActivity` polls
-`CookieManager.getCookie(origin + "/")` and returns `paired` when the cookie
-appears. ConnectScreen then saves the origin without a code, and the proxy
-reuses that WebView cookie for `/runtimes` and the rest. The user sees only a
-brief "正在配对…" card, not the Studio page. The direct `POST /pair` remains
-for the browser build and for an address entered without a code.
+code is present, ConnectScreen opens the share link through the `Pair` plugin,
+which loads it in a hidden 2×2 WebView inside a translucent `PairActivity`.
+The page's own `#pair=` bootstrap spends the code and stores
+`reasonix_device`; `PairActivity` polls `CookieManager.getCookie(origin + "/")`
+and returns `paired` when the cookie appears. ConnectScreen then saves the
+origin without a code, and the proxy reuses that WebView cookie for
+`/runtimes` and the rest. The user sees only a brief "正在配对…" card, not the
+Studio page.
+
+That page is not the only way in. If it reports no cookie — a timeout, a page
+that never loaded, or a share page older than the bootstrap — ConnectScreen
+falls back to the proxy's direct `POST /pair` and probes the origin. A code the
+page already spent answers 403 there, so a successful probe is what proves its
+cookie did land; a cancel from the person does not fall back. The direct
+exchange copies its `Set-Cookie` into the WebView store, so that pairing
+survives a restart; a failed adoption restores the previous LAN upstream
+instead of leaving the phone on a computer it cannot read.
 
 The code is still one-time: opening the link in a browser first spends it for
-the app. A hidden pairing that never sees the cookie times out after 15 s and
-reports failure instead of hanging.
+the app. A hidden pairing that never sees the cookie times out after 15 s, and
+the direct exchange then decides rather than reporting a dead code.
 
 Verified on the emulator: the Connect screen renders; after configuring
 `http://127.0.0.1:8791` through an `adb reverse`, the session list loads, a
