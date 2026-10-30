@@ -26,6 +26,7 @@ import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
+import { listenForSpeech, speechSupported } from "../native/speech";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
@@ -538,6 +539,7 @@ export function ChatScreen({
   >([]);
   const [attachError, setAttachError] = useState("");
   const [attaching, setAttaching] = useState(false);
+  const [listening, setListening] = useState(false);
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
   );
@@ -700,6 +702,27 @@ export function ChatScreen({
     input.style.height = "auto";
     input.style.height = `${input.scrollHeight}px`;
   }, []);
+
+  /** Dictation appends to the draft; a cancel leaves it untouched. */
+  const dictate = useCallback(async () => {
+    if (listening) return;
+    setListening(true);
+    setPromptError("");
+    try {
+      const text = await listenForSpeech();
+      if (text) {
+        setDraft((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text));
+        requestAnimationFrame(() => {
+          grow();
+          inputRef.current?.focus();
+        });
+      }
+    } catch {
+      setPromptError("语音输入不可用，检查系统语音服务后重试。");
+    } finally {
+      setListening(false);
+    }
+  }, [grow, listening]);
 
   // A cold link may not know the session path on the first render. When it
   // arrives, adopt the draft taken under the pane id instead of abandoning it
@@ -1282,6 +1305,18 @@ export function ChatScreen({
           >
             {attaching ? "…" : "＋"}
           </button>
+          {speechSupported() ? (
+            <button
+              type="button"
+              className="iconbtn"
+              aria-label="语音输入"
+              title="语音输入"
+              onClick={() => void dictate()}
+              disabled={runtime.readOnly === true || listening}
+            >
+              {listening ? "…" : "◉"}
+            </button>
+          ) : null}
           {runtime.readOnly ? (
             <span className="composer-model">只读</span>
           ) : (

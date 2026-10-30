@@ -16,6 +16,7 @@ public class MainActivity extends BridgeActivity {
         LoopbackProxy.start(getApplicationContext());
         LoopbackProxy.installWebViewCookie(getApplicationContext());
         registerPlugin(LoginPlugin.class);
+        registerPlugin(SpeechPlugin.class);
         registerPlugin(PairPlugin.class);
         registerPlugin(RelaySocketPlugin.class);
         registerPlugin(TurnPlugin.class);

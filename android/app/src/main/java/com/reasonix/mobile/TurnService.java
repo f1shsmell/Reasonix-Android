@@ -182,6 +182,7 @@ public class TurnService extends Service {
         stopping = true;
         stopWatching();
         cancelAsks();
+        clearCounts();
         releaseWakeLock();
         releaseWifiLock();
         try {
@@ -485,6 +486,7 @@ public class TurnService extends Service {
 
     private void refreshRunning() {
         if (stopping) return;
+        rememberCounts();
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
         try {
@@ -493,6 +495,31 @@ public class TurnService extends Service {
             // A permission revoked mid-turn must not stop the watcher.
             Log.w(TAG, "cannot refresh the running notification", e);
         }
+    }
+
+    /** Keep the Quick Settings tile's counts in step with this summary. */
+    private void rememberCounts() {
+        int running = 0;
+        int waiting = 0;
+        for (Watch watch : watches.values()) {
+            if (watch.running) running++;
+            if (watch.waiting) waiting++;
+        }
+        getSharedPreferences(ReasonixTileService.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(ReasonixTileService.KEY_RUNNING, running)
+                .putInt(ReasonixTileService.KEY_WAITING, waiting)
+                .apply();
+        ReasonixTileService.requestRefresh(this);
+    }
+
+    private void clearCounts() {
+        getSharedPreferences(ReasonixTileService.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(ReasonixTileService.KEY_RUNNING, 0)
+                .putInt(ReasonixTileService.KEY_WAITING, 0)
+                .apply();
+        ReasonixTileService.requestRefresh(this);
     }
 
     private static String readText(InputStream input) throws Exception {
