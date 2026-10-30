@@ -160,6 +160,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   /** What a manual attempt is aiming at, before the proxy has switched. */
   const [pending, setPending] = useState<{ kind: "lan" | "cloud"; name: string } | null>(null);
   const trustResolve = useRef<((accepted: boolean) => void) | null>(null);
+  /** The scroll container; switching panes starts at the top, not mid-page. */
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const confirmTrust = useCallback(
     (prompt: TrustPrompt) =>
@@ -180,6 +182,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
 
   const cancelTrust = useCallback(() => settleTrust(false), [settleTrust]);
   useBackCloser(trustAsk !== null, cancelTrust);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [pane]);
 
   // A connection attempt waiting on a person must not outlive the screen.
   useEffect(
@@ -721,50 +727,52 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         : "局域网";
 
   return (
-    <div className="connect">
-      <header className="settings-head">
-        {onClose ? (
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="返回">
-            ←
-          </button>
-        ) : (
-          <span className="bar-spacer" />
-        )}
-        <h1>设置</h1>
-        {onClose ? (
-          <button type="button" className="linkbtn" onClick={onClose}>
-            完成
-          </button>
-        ) : (
-          <span className="bar-spacer" />
-        )}
-      </header>
+    <div className="connect" ref={scrollRef}>
+      <div className="settings-bar">
+        <header className="settings-head">
+          {onClose ? (
+            <button type="button" className="iconbtn" onClick={onClose} aria-label="返回">
+              ←
+            </button>
+          ) : (
+            <span className="bar-spacer" />
+          )}
+          <h1>设置</h1>
+          {onClose ? (
+            <button type="button" className="linkbtn" onClick={onClose}>
+              完成
+            </button>
+          ) : (
+            <span className="bar-spacer" />
+          )}
+        </header>
 
-      <div className="segmented settings-tabs" role="group" aria-label="设置页面">
-        <button
-          type="button"
-          className={pane === "connect" ? "on" : ""}
-          aria-pressed={pane === "connect"}
-          onClick={() => setPane("connect")}
-        >
-          电脑
-        </button>
-        <button
-          type="button"
-          className={pane === "machine" ? "on" : ""}
-          aria-pressed={pane === "machine"}
-          onClick={() => setPane("machine")}
-        >
-          机器
-        </button>
-        <button
-          type="button"
-          className={pane === "prefs" ? "on" : ""}
-          aria-pressed={pane === "prefs"}
-          onClick={() => setPane("prefs")}
-        >
-          偏好
-        </button>
+        <div className="segmented settings-tabs" role="group" aria-label="设置页面">
+          <button
+            type="button"
+            className={pane === "connect" ? "on" : ""}
+            aria-pressed={pane === "connect"}
+            onClick={() => setPane("connect")}
+          >
+            电脑
+          </button>
+          <button
+            type="button"
+            className={pane === "machine" ? "on" : ""}
+            aria-pressed={pane === "machine"}
+            onClick={() => setPane("machine")}
+          >
+            机器
+          </button>
+          <button
+            type="button"
+            className={pane === "prefs" ? "on" : ""}
+            aria-pressed={pane === "prefs"}
+            onClick={() => setPane("prefs")}
+          >
+            偏好
+          </button>
+        </div>
       </div>
 
       <div className="connect-body">
@@ -838,7 +846,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
 
         {pane === "connect" ? (
           <>
-            <p className="group-label">连接</p>
+            <p className="group-label">连接新电脑</p>
             <section className="group">
               <button type="button" className="setting" onClick={() => void scan()} disabled={busy !== ""}>
             <span className="setting-main">
@@ -865,8 +873,18 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           浏览器扫码能连、App 不能时：复制浏览器地址栏的完整链接，点「粘贴链接」。
         </p>
 
-        <p className="group-label">手动填写</p>
-        <section className="group">
+        <details className="group manual-group">
+          <summary className="setting manual-summary">
+            <span className="setting-main">
+              <span className="setting-title">手动填写地址</span>
+              <span className="setting-sub">
+                {origin.trim() ? origin : "填写服务器地址与配对码"}
+              </span>
+            </span>
+            <span className="chev" aria-hidden="true">
+              ›
+            </span>
+          </summary>
           <label className="setting">
             <span className="setting-title">服务器地址</span>
             <input
@@ -890,10 +908,6 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
               spellCheck={false}
             />
           </label>
-        </section>
-        <p className="group-note">配对码 5 分钟内有效，且只能用一次；建议直接扫码。</p>
-
-        <section className="group">
           <button
             type="button"
             className="setting action"
@@ -902,7 +916,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           >
             {busy === "正在连接" ? "正在连接…" : "连接"}
           </button>
-        </section>
+        </details>
+        <p className="group-note">
+          只有已知完整地址时才需要手动填写；配对码 5 分钟内有效，且只能用一次。
+        </p>
 
         {busy && busy !== "正在连接" && busy !== "正在打开相机" ? (
           <p className="group-note">{busy}…</p>

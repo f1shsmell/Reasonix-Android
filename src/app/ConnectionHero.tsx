@@ -31,12 +31,16 @@ export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHero
   const line = busy !== "" ? `${busy}…` : link ? heroLine(link, detail) : detail;
   const staged =
     busy === "" && link !== undefined && (link.phase === "connecting" || link.phase === "reconnecting");
+  // The resting state is one line of fact; only a working link earns the
+  // tall animated card.
+  const compact = !working && !staged;
 
   return (
     <section
       className="link-hero"
       data-tone={tone}
       data-live={working ? "true" : undefined}
+      data-compact={compact ? "true" : undefined}
       aria-label="连接状态"
     >
       <span className="link-hero-mark" aria-hidden="true">

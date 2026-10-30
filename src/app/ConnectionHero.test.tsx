@@ -42,6 +42,7 @@ describe("ConnectionHero", () => {
     expect(hero.querySelector(".link-hero-sub")?.textContent).toBe("局域网直连");
     expect(hero.querySelector(".link-hero")?.getAttribute("data-live")).toBeNull();
     expect(hero.querySelector(".link-hero")?.getAttribute("data-tone")).toBe("idle");
+    expect(hero.querySelector(".link-hero")?.getAttribute("data-compact")).toBe("true");
     expect(hero.querySelector(".link-steps")).toBeNull();
   });
 
@@ -55,6 +56,7 @@ describe("ConnectionHero", () => {
     const section = hero.querySelector(".link-hero");
     expect(section?.getAttribute("data-live")).toBe("true");
     expect(section?.getAttribute("data-tone")).toBe("busy");
+    expect(section?.getAttribute("data-compact")).toBeNull();
     expect(hero.querySelector(".link-hero-sub")?.textContent).toBe("正在切换连接…");
 
     const steps = Array.from(hero.querySelectorAll(".link-steps li"));
