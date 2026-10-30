@@ -120,7 +120,9 @@ describe("ProcessSummary", () => {
   it("names the count and opens the timeline", () => {
     const onOpen = vi.fn();
     render(<ProcessSummary steps={[toolStep(), toolStep({ id: "t2" })]} onOpen={onOpen} />);
-    expect(container.querySelector(".process-row")?.textContent).toContain("已处理 2 个操作");
+    const row = container.querySelector(".process-row")?.textContent ?? "";
+    expect(row).toContain("执行命令");
+    expect(row).toContain("2 个操作");
     act(() => (container.querySelector(".process-row") as HTMLButtonElement).click());
     expect(onOpen).toHaveBeenCalledTimes(1);
   });

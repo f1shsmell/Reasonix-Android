@@ -8,71 +8,11 @@
 
 import { useState } from "react";
 import type { ProcessStep } from "./process";
+import { processTitle } from "./process";
 import { ToolDetail } from "./Rows";
-import type { ToolRow } from "./transcript";
+import { toolLabel, toolSummary } from "./toolMeta";
 
-const TOOL_LABELS: Record<string, string> = {
-  bash: "执行命令",
-  shell: "执行命令",
-  execute_command: "执行命令",
-  run_command: "执行命令",
-  read_file: "读取文件",
-  write_file: "写入文件",
-  edit_file: "修改文件",
-  apply_patch: "修改文件",
-  str_replace_editor: "修改文件",
-  grep: "搜索内容",
-  content_search: "搜索内容",
-  glob: "查看目录",
-  list_dir: "查看目录",
-  ls: "查看目录",
-  web_search: "搜索网页",
-  fetch: "抓取网页",
-  web_fetch: "抓取网页",
-  todo_write: "更新任务",
-  complete_step: "完成任务",
-};
-
-export function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name;
-}
-
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/** The most specific string in a call's arguments, on one line. */
-export function toolSummary(row: ToolRow): string {
-  const raw = row.args?.trim() ?? "";
-  if (!raw) return "";
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const object = parsed as Record<string, unknown>;
-      for (const key of [
-        "command",
-        "cmd",
-        "path",
-        "file_path",
-        "query",
-        "pattern",
-        "url",
-        "prompt",
-        "content",
-      ]) {
-        const value = object[key];
-        if (typeof value === "string" && value.trim()) return oneLine(value);
-      }
-      const first = Object.values(object).find(
-        (value): value is string => typeof value === "string" && value.trim() !== "",
-      );
-      if (first) return oneLine(first);
-    }
-  } catch {
-    // A call whose arguments are not JSON is shown as written.
-  }
-  return oneLine(raw);
-}
+export { toolLabel, toolSummary } from "./toolMeta";
 
 function stepTitle(step: ProcessStep): string {
   return step.kind === "reasoning" ? "深度思考" : toolLabel(step.row.name);
@@ -156,12 +96,14 @@ export function ProcessSummary({
   const failed = steps.some(
     (step) => step.kind === "tool" && Boolean(step.row.err || step.row.refusalCode),
   );
+  const title = processTitle(steps);
   return (
     <button type="button" className="process-row" onClick={onOpen}>
       <span className={`activity-icon ${failed ? "bad" : "done"}`} aria-hidden="true">
         {failed ? "!" : "✓"}
       </span>
-      <span className="process-title">已处理 {steps.length} 个操作</span>
+      <span className="process-title">{title}</span>
+      <span className="process-count">{steps.length} 个操作</span>
       <span className="chev" aria-hidden="true">
         ›
       </span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDisplay } from "./process";
+import { buildDisplay, processCategories, processTitle } from "./process";
 import type { AssistantRow, Row, ToolRow, UserRow } from "./transcript";
 
 function user(id: string): UserRow {
@@ -91,5 +91,38 @@ describe("buildDisplay", () => {
     const display = buildDisplay([assistant("a1", "", "只在想")], false);
     expect(display.map((entry) => entry.kind)).toEqual(["steps"]);
     expect(display[0]?.kind === "steps" && display[0].steps[0]?.kind).toBe("reasoning");
+  });
+});
+
+describe("process categories", () => {
+  it("ranks the families a finished run was made of", () => {
+    const steps = [
+      { kind: "tool", id: "t1", row: tool("t1", { name: "read_file" }) },
+      { kind: "tool", id: "t2", row: tool("t2", { name: "read_file" }) },
+      { kind: "tool", id: "t3", row: tool("t3", { name: "grep" }) },
+      { kind: "tool", id: "t4", row: tool("t4", { name: "bash" }) },
+    ] as const;
+    expect(processCategories([...steps]).map((entry) => entry.category)).toEqual([
+      "read",
+      "search",
+      "command",
+    ]);
+    expect(processTitle([...steps])).toBe("读取、搜索、执行命令");
+  });
+
+  it("stops at three families and says there are more", () => {
+    const steps = [
+      { kind: "tool", id: "t1", row: tool("t1", { name: "read_file" }) },
+      { kind: "tool", id: "t2", row: tool("t2", { name: "grep" }) },
+      { kind: "tool", id: "t3", row: tool("t3", { name: "bash" }) },
+      { kind: "tool", id: "t4", row: tool("t4", { name: "edit_file" }) },
+    ] as const;
+    expect(processTitle([...steps])).toBe("读取、搜索、执行命令等");
+  });
+
+  it("calls a run that only thought a thought", () => {
+    expect(
+      processTitle([{ kind: "reasoning", id: "r1", text: "先想一下" }]),
+    ).toBe("深度思考");
   });
 });

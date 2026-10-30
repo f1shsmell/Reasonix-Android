@@ -20,6 +20,8 @@ import type {
   ToolRow,
   UserRow,
 } from "./transcript";
+import { CATEGORY_LABELS, toolCategory } from "./toolMeta";
+import type { ToolCategory } from "./toolMeta";
 
 export type ProcessStep =
   | {
@@ -97,4 +99,38 @@ export function buildDisplay(rows: Row[], running: boolean): DisplayRow[] {
   }
   flush(running);
   return out;
+}
+
+export interface RankedCategory {
+  category: ToolCategory;
+  count: number;
+}
+
+/**
+ * What a finished run was made of, biggest family first.
+ *
+ * A bare "5 个操作" says how much happened, not what. Ranking the tool
+ * families gives the collapsed row a title a person can scan ("读取、搜索、
+ * 执行命令"), while the timeline still carries every step.
+ */
+export function processCategories(steps: ProcessStep[]): RankedCategory[] {
+  const seen = new Map<ToolCategory, { count: number; first: number }>();
+  steps.forEach((step, index) => {
+    if (step.kind !== "tool") return;
+    const category = toolCategory(step.row.name);
+    const current = seen.get(category);
+    if (current === undefined) seen.set(category, { count: 1, first: index });
+    else current.count += 1;
+  });
+  return [...seen.entries()]
+    .sort((a, b) => b[1].count - a[1].count || a[1].first - b[1].first)
+    .map(([category, value]) => ({ category, count: value.count }));
+}
+
+/** The collapsed row's title: at most three families, then "等". */
+export function processTitle(steps: ProcessStep[]): string {
+  const ranked = processCategories(steps);
+  if (ranked.length === 0) return "深度思考";
+  const labels = ranked.slice(0, 3).map((entry) => CATEGORY_LABELS[entry.category]);
+  return labels.join("、") + (ranked.length > 3 ? "等" : "");
 }

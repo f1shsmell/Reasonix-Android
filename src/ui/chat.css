@@ -531,8 +531,19 @@
 
 .process-title {
   flex: 1;
-  color: var(--fg-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
   font-size: 13px;
+  font-weight: 600;
+}
+
+.process-count {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 12px;
 }
 
 /* ---- operation timeline ---- */
