@@ -15,6 +15,8 @@ import {
 import type { ProxyConfig, RemoteDevice } from "../net/server";
 import { connectRelay, clearRelayRouting } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
+import { loadStatus } from "../net/status";
+import { rememberConnection } from "../net/savedConnections";
 
 /**
  * ConnectScreen is the only place a phone can acquire a kernel, and the only
@@ -62,6 +64,14 @@ vi.mock("../net/server", () => ({
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
 }));
+// The posture read goes through `loadStatus`; stubbing it keeps these tests
+// about the screen rather than about the transport.
+vi.mock("../net/status", () => ({
+  loadStatus: vi.fn(async () => ({
+    ok: true,
+    status: { decisions: [], running: false, busy: false, plan: false },
+  })),
+}));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -85,6 +95,7 @@ function device(overrides: Partial<RemoteDevice> = {}): RemoteDevice {
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
+  localStorage.clear();
   onConnected = vi.fn<() => void>();
   vi.clearAllMocks();
   vi.mocked(readProxyConfig).mockResolvedValue(config());
@@ -105,17 +116,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function renderScreen(onClose?: () => void): Promise<void> {
+async function renderScreen(
+  onClose?: () => void,
+  props: { runtimeBase?: string } = {},
+): Promise<void> {
   act(() => root?.unmount());
   root = createRoot(container);
   await act(async () => {
     root?.render(
       onClose ? (
-        <ConnectScreen onConnected={onConnected} onClose={onClose} />
+        <ConnectScreen onConnected={onConnected} onClose={onClose} {...props} />
       ) : (
-        <ConnectScreen onConnected={onConnected} />
+        <ConnectScreen onConnected={onConnected} {...props} />
       ),
     );
+  });
+  await act(async () => {
+    await Promise.resolve();
   });
   await act(async () => {
     await Promise.resolve();
@@ -130,9 +147,27 @@ function button(text: string): HTMLButtonElement {
   return found;
 }
 
+/** A row whose label and subtitle are two lines: match on both. */
+function row(...parts: string[]): HTMLButtonElement {
+  const found = Array.from(container.querySelectorAll("button")).find((candidate) => {
+    const text = candidate.textContent ?? "";
+    return parts.every((part) => text.includes(part));
+  });
+  if (!found) throw new Error(`no row containing ${parts.join(" + ")}`);
+  return found;
+}
+
 function press(text: string): Promise<void> {
   return act(async () => {
     button(text).click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function pressRow(...parts: string[]): Promise<void> {
+  return act(async () => {
+    row(...parts).click();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -169,7 +204,7 @@ describe("ConnectScreen", () => {
     vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
     await renderScreen();
 
-    await press("DESKTOP · windows");
+    await pressRow("DESKTOP", "windows");
 
     expect(connectRelay).toHaveBeenCalledWith("dev1");
     expect(markRelay).toHaveBeenCalledWith("dev1");
@@ -183,8 +218,8 @@ describe("ConnectScreen", () => {
     vi.mocked(listRemoteDevices).mockResolvedValue([device({ capabilities: [] })]);
     await renderScreen();
 
-    const row = button("DESKTOP · windows（未开启远程访问）");
-    expect(row.disabled).toBe(true);
+    const deviceRow = row("DESKTOP", "windows", "未开启远程访问");
+    expect(deviceRow.disabled).toBe(true);
     expect(connectRelay).not.toHaveBeenCalled();
   });
 
@@ -196,7 +231,7 @@ describe("ConnectScreen", () => {
     vi.mocked(connectRelay).mockRejectedValue(new Error("relay down"));
     await renderScreen();
 
-    await press("DESKTOP · windows");
+    await pressRow("DESKTOP", "windows");
 
     expect(clearRelayRouting).not.toHaveBeenCalled();
   });
@@ -222,5 +257,179 @@ describe("ConnectScreen", () => {
 
     await renderScreen();
     expect(container.querySelector('button[aria-label="返回"]')).toBeNull();
+  });
+
+  describe("appearance, posture and about", () => {
+    beforeEach(() => {
+      localStorage.clear();
+      document.documentElement.removeAttribute("data-theme");
+    });
+
+    afterEach(() => {
+      document.documentElement.removeAttribute("data-theme");
+    });
+
+    it("pins a theme and remembers it", async () => {
+      await renderScreen();
+
+      await act(async () => {
+        button("深色").click();
+        await Promise.resolve();
+      });
+
+      expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+      expect(localStorage.getItem("reasonix.theme")).toBe("dark");
+    });
+
+    it("goes back to following the system, which is the absent attribute", async () => {
+      await renderScreen();
+      await act(async () => {
+        button("深色").click();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        button("跟随系统").click();
+        await Promise.resolve();
+      });
+
+      expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+      expect(localStorage.getItem("reasonix.theme")).toBeNull();
+    });
+
+    it("shows the version the build was given", async () => {
+      await renderScreen();
+      expect(container.textContent).toContain("版本");
+      // The value comes from `define`, so the test asserts it is not blank
+      // rather than pinning a number that a release would change.
+      const value = container.querySelector(".setting-value")?.textContent ?? "";
+      expect(value.trim()).not.toBe("");
+    });
+
+    it("hides the approval control when there is no pane to address", async () => {
+      await renderScreen();
+      expect(container.querySelector('[aria-label="工具批准"]')).toBeNull();
+    });
+
+    it("reads this conversation's posture and posts the chosen one", async () => {
+      vi.mocked(loadStatus).mockResolvedValue({
+        ok: true,
+        status: {
+          decisions: [],
+          running: false,
+          busy: false,
+          plan: false,
+          toolApprovalMode: "ask",
+        },
+      });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await renderScreen(undefined, { runtimeBase: "/rt/r1" });
+
+      expect(loadStatus).toHaveBeenCalledWith("/rt/r1");
+      expect(container.textContent).toContain("逐次询问");
+
+      const auto = Array.from(container.querySelectorAll(".approval")).find((node) =>
+        node.textContent?.includes("自动"),
+      ) as HTMLButtonElement | undefined;
+      expect(auto).toBeTruthy();
+
+      await act(async () => {
+        auto?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/rt/r1/tool-approval-mode",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ mode: "auto" }) }),
+      );
+    });
+
+    it("says why a posture change was refused", async () => {
+      vi.mocked(loadStatus).mockResolvedValue({
+        ok: true,
+        status: { decisions: [], running: false, busy: false, plan: false, toolApprovalMode: "ask" },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ code: "request.bad_value" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+
+      await renderScreen(undefined, { runtimeBase: "/rt/r1" });
+
+      const yolo = Array.from(container.querySelectorAll(".approval")).find((node) =>
+        node.textContent?.includes("全放开"),
+      ) as HTMLButtonElement | undefined;
+      await act(async () => {
+        yolo?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain("request.bad_value");
+    });
+  });
+});
+
+describe("ConnectScreen saved connections", () => {
+  it("records the current computer and marks it", async () => {
+    await renderScreen();
+
+    expect(container.textContent).toContain("已连接的电脑");
+    const current = row("192.168.5.2:56789", "当前");
+    expect(current).toBeTruthy();
+    // The proxy's own origin is a record worth keeping even before a scan.
+    expect(JSON.parse(localStorage.getItem("reasonix.connections.v1") ?? "[]")).toHaveLength(1);
+  });
+
+  it("switches to a saved computer with no code", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+
+    await pressRow("192.168.9.9:51234");
+
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.9.9:51234", undefined);
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets a saved computer without touching the rest", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+
+    act(() => {
+      (
+        container.querySelector('[aria-label="移除 192.168.9.9:51234"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(container.textContent).not.toContain("192.168.9.9:51234");
+    expect(container.textContent).toContain("192.168.5.2:56789");
+  });
+
+  it("asks for an account before using a cloud row", async () => {
+    rememberConnection("cloud", "dev1", "工作室的电脑");
+    await renderScreen();
+
+    await pressRow("工作室的电脑", "云端");
+
+    expect(container.textContent).toContain("先登录 Reasonix 账号");
+    expect(connectRelay).not.toHaveBeenCalled();
+  });
+
+  it("uses the computer name the account reports for a cloud row", async () => {
+    rememberConnection("cloud", "dev1");
+    vi.mocked(readProxyConfig).mockResolvedValue(
+      config({ account: { signedIn: true } }),
+    );
+    vi.mocked(listRemoteDevices).mockResolvedValue([device({ name: "楼下的台式机" })]);
+    await renderScreen();
+
+    expect(container.textContent).toContain("楼下的台式机");
   });
 });

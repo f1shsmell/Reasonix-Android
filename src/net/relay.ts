@@ -671,6 +671,10 @@ export class RelayEventSource {
 const KERNEL_PATHS = [
   "/runtimes",
   "/rt/",
+  // The sidebar tree: projects and their conversations. The phone's whole
+  // first two screens are this one read, so a relay that did not carry it
+  // would leave the app with nothing to draw.
+  "/tree",
   "/auth/",
   "/pair",
   "/device",
@@ -706,7 +710,8 @@ const KERNEL_PATHS = [
   "/host",
 ];
 
-function isKernelPath(pathname: string): boolean {
+/** Whether a request path belongs to the kernel rather than the app's bundle. */
+export function isKernelPath(pathname: string): boolean {
   return KERNEL_PATHS.some((prefix) =>
     prefix.endsWith("/") ? pathname.startsWith(prefix) : pathname === prefix || pathname.startsWith(`${prefix}/`),
   );

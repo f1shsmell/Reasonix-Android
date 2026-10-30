@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 
 /**
  * The kernel a dev session talks to. Override with REASONIX_SERVE, e.g.
@@ -9,10 +10,22 @@ import react from "@vitejs/plugin-react";
  */
 const serve = process.env.REASONIX_SERVE ?? "";
 
+/**
+ * The version the About row shows.
+ *
+ * Read from package.json rather than typed into a component: a hand-written
+ * string drifts the first time someone bumps the version, and the row that
+ * exists to answer "which build is this?" would then be wrong.
+ */
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
+
 /** Paths the kernel owns. Everything else is the app's own assets. */
 const KERNEL_PATHS = [
   "/runtimes",
   "/rt",
+  "/tree",
   "/auth",
   "/pair",
   "/device",
@@ -23,6 +36,9 @@ const KERNEL_PATHS = [
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   server: {
     host: true,
     port: 5274,

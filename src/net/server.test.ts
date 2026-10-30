@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseServerLink, ProxyError, readProxyConfig, configureProxy } from "./server";
+import {
+  configureProxy,
+  originAnswers,
+  parseServerLink,
+  ProxyError,
+  readProxyConfig,
+} from "./server";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -64,5 +70,30 @@ describe("proxy control plane", () => {
       status: 403,
       code: "device.pairing_invalid",
     } satisfies Partial<ProxyError>);
+  });
+});
+
+describe("originAnswers", () => {
+  it("asks the origin with a no-cors GET and no credentials", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(originAnswers(" http://192.168.5.2:56789/ ")).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://192.168.5.2:56789/",
+      expect.objectContaining({ method: "GET", mode: "no-cors", credentials: "omit" }),
+    );
+  });
+
+  it("answers false when the computer does not answer", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    await expect(originAnswers("http://10.0.0.9:1234")).resolves.toBe(false);
+  });
+
+  it("answers false for an empty origin without asking", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(originAnswers("   ")).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

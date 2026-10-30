@@ -36,16 +36,38 @@ import {
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
+import {
+  forgetCloudConnections,
+  forgetConnection,
+  loadConnections,
+  normalizeTarget,
+  rememberConnection,
+} from "../net/savedConnections";
+import type { SavedConnection } from "../net/savedConnections";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
+import { approvalLabel, approvalMessage, setApprovalMode, APPROVAL_CHOICES } from "../net/approval";
+import { loadStatus } from "../net/status";
+import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
+import type { ThemeChoice } from "./theme";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
   /** Present when this screen was opened over an existing connection. */
   onClose?: () => void;
+  /**
+   * A runtime to address the approval posture through.
+   *
+   * The write is `POST /rt/{id}/tool-approval-mode`, and the kernel then keeps
+   * that posture on the hub and persists it — so which pane answers is a
+   * transport detail, not a choice of scope. Without any pane there is nothing
+   * to address, and the control stays hidden rather than writing somewhere the
+   * person did not point at.
+   */
+  runtimeBase?: string;
 }
 
-export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onClose, runtimeBase }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -54,6 +76,12 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
   const [grant, setGrant] = useState<DeviceGrant | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
+  /** The posture this conversation is in; empty until `/status` answers. */
+  const [approval, setApproval] = useState("");
+  const [approvalError, setApprovalError] = useState("");
+  /** Computers this phone has connected to before, newest first. */
+  const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
 
   useEffect(() => {
     let cancelled = false;
@@ -62,10 +90,51 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
       setConfig(next);
       setAccount(next.account);
       setOrigin(next.origin);
+      // A connection made before this list existed, or by recovery, is still
+      // a place worth returning to.
+      if (next.mode === "relay" && next.relayDevice) {
+        setSaved(rememberConnection("cloud", next.relayDevice));
+      } else if (next.origin) {
+        setSaved(rememberConnection("lan", next.origin));
+      }
     });
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // The posture is per conversation, so it is read from the pane this screen
+  // was opened over. No pane means no reading and no control.
+  useEffect(() => {
+    if (!runtimeBase) return;
+    let cancelled = false;
+    void loadStatus(runtimeBase).then((result) => {
+      if (cancelled || !result.ok) return;
+      setApproval(result.status.toolApprovalMode ?? "");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtimeBase]);
+
+  const pickApproval = useCallback(
+    async (mode: string) => {
+      if (!runtimeBase) return;
+      setApprovalError("");
+      const result = await setApprovalMode(runtimeBase, mode);
+      if (!result.ok) {
+        setApprovalError(approvalMessage(result.code));
+        return;
+      }
+      setApproval(mode);
+    },
+    [runtimeBase],
+  );
+
+  const pickTheme = useCallback((choice: ThemeChoice) => {
+    setThemeState(choice);
+    saveTheme(choice);
+    applyTheme(choice);
   }, []);
 
   const connect = useCallback(
@@ -87,6 +156,7 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
         setAccount(next.account);
         setOrigin(next.origin);
         setPairCode("");
+        if (next.origin) setSaved(rememberConnection("lan", next.origin));
         onConnected();
       };
       try {
@@ -155,6 +225,7 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
         const next = await markRelay(deviceId);
         setConfig(next);
         setAccount(next.account);
+        setSaved(rememberConnection("cloud", deviceId, target?.name));
         onConnected();
       } catch (failure) {
         // `connectRelay` only replaces the active link after its handshake
@@ -372,63 +443,216 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
       clearRelayRouting();
       clearRelayDevice();
       await clearRelay();
+      // Cloud rows name devices this account can no longer reach; the LAN
+      // ones are still places this phone may connect without an account.
+      setSaved(forgetCloudConnections());
     } catch (failure) {
       setError(failure instanceof Error ? `退出失败：${failure.message}` : "退出失败");
     }
   }, []);
 
+  /**
+   * Switch to a recorded computer.
+   *
+   * A cloud row needs the account it was recorded under; a LAN row uses the
+   * pairing the proxy already holds, so no code is asked for again.
+   */
+  const switchTo = useCallback(
+    async (entry: SavedConnection) => {
+      if (busy) return;
+      if (entry.kind === "cloud") {
+        if (!account.signedIn) {
+          setError("这台电脑走云端连接。先登录 Reasonix 账号，再点它。");
+          return;
+        }
+        await connectCloud(entry.target);
+        return;
+      }
+      await connect(entry.target, "");
+    },
+    [account.signedIn, busy, connect, connectCloud],
+  );
+
+  const current = useCallback(
+    (entry: SavedConnection): boolean => {
+      if (!config) return false;
+      if (entry.kind === "cloud") {
+        return config.mode === "relay" && config.relayDevice === entry.target;
+      }
+      return config.mode !== "relay" && normalizeTarget("lan", config.origin) === entry.target;
+    },
+    [config],
+  );
+
   const known = config?.origin ?? "";
+  const mode = config?.mode === "relay" ? "云端连接" : known ? "局域网" : "";
 
   return (
     <div className="connect">
-      {onClose ? (
-        <button type="button" className="iconbtn connect-back" onClick={onClose} aria-label="返回">
-          ←
-        </button>
-      ) : null}
-      <div className="connect-head">
-        <h1>Reasonix</h1>
-        <p>连接一台正在运行 Reasonix 的电脑</p>
-      </div>
+      <header className="settings-head">
+        {onClose ? (
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="返回">
+            ←
+          </button>
+        ) : (
+          <span className="bar-spacer" />
+        )}
+        <h1>设置</h1>
+        {onClose ? (
+          <button type="button" className="linkbtn" onClick={onClose}>
+            完成
+          </button>
+        ) : (
+          <span className="bar-spacer" />
+        )}
+      </header>
 
       <div className="connect-body">
-        <button type="button" className="primary" onClick={() => void scan()} disabled={busy !== ""}>
-          {busy === "正在打开相机" ? "正在打开相机…" : "扫码连接"}
-        </button>
-        <button type="button" onClick={() => void pasteLink()} disabled={busy !== ""}>
-          粘贴链接
-        </button>
-        <div className="meta">
-          浏览器扫码能连、App 不能时：复制浏览器地址栏的完整链接，点「粘贴链接」。
-        </div>
-        <div className="divider">或者手动填写</div>
+        {/* The computer this phone is pointed at: the one fact every other
+            control below is judged against, so it leads. */}
+        <section className="group">
+          <div className="setting">
+            <span className="setting-main">
+              <span className="setting-title">{known || "没有连接电脑"}</span>
+              <span className="setting-sub">
+                {known ? mode : "扫码，或填一个地址"}
+                {config && config.candidates.length > 1
+                  ? ` · 还有 ${config.candidates.length - 1} 个备用地址`
+                  : ""}
+              </span>
+            </span>
+          </div>
+        </section>
 
-        <label>
-          服务器地址
-          <input
-            value={origin}
-            onChange={(event) => setOrigin(event.target.value)}
-            placeholder="http://192.168.5.2:8791"
-            inputMode="url"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          配对码（可选）
-          <input
-            value={pairCode}
-            onChange={(event) => setPairCode(event.target.value)}
-            placeholder="扫码后自动填写"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-        </label>
-        <div className="meta">配对码 5 分钟内有效，且只能用一次；建议直接扫码。</div>
-        {busy ? <div className="meta">{busy}…</div> : null}
-        <details className="meta">
+        {/* Places this phone has already connected to. The current one is
+            marked; the rest are one tap away, with a way to forget a computer
+            that moved or a device that left the account. */}
+        {saved.length > 0 ? (
+          <>
+            <p className="group-label">已连接的电脑</p>
+            <section className="group">
+              {saved.map((entry) => {
+                const label =
+                  entry.kind === "cloud"
+                    ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
+                    : entry.name;
+                const here = current(entry);
+                return (
+                  <div
+                    className="setting saved-row"
+                    key={`${entry.kind}:${entry.target}`}
+                  >
+                    <button
+                      type="button"
+                      className="saved-main"
+                      disabled={busy !== ""}
+                      aria-current={here ? "true" : undefined}
+                      onClick={() => void switchTo(entry)}
+                    >
+                      <span className="setting-main">
+                        <span className="setting-title">
+                          {label}
+                          {here ? <span className="saved-current">当前</span> : null}
+                        </span>
+                        <span className="setting-sub">
+                          {entry.kind === "lan" ? `局域网 · ${entry.target}` : "云端 · Reasonix 账号"}
+                        </span>
+                      </span>
+                      <span className="chev" aria-hidden="true">
+                        ›
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="saved-forget"
+                      aria-label={`移除 ${label}`}
+                      onClick={() => setSaved(forgetConnection(entry.kind, entry.target))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </section>
+            <p className="group-note">
+              回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换。
+            </p>
+          </>
+        ) : null}
+
+        <p className="group-label">连接</p>
+        <section className="group">
+          <button type="button" className="setting" onClick={() => void scan()} disabled={busy !== ""}>
+            <span className="setting-main">
+              <span className="setting-title">
+                {busy === "正在打开相机" ? "正在打开相机…" : "扫码连接"}
+              </span>
+              <span className="setting-sub">用电脑「设备访问」里的二维码</span>
+            </span>
+            <span className="chev" aria-hidden="true">
+              ›
+            </span>
+          </button>
+          <button type="button" className="setting" onClick={() => void pasteLink()} disabled={busy !== ""}>
+            <span className="setting-main">
+              <span className="setting-title">粘贴链接</span>
+              <span className="setting-sub">从浏览器地址栏复制完整链接</span>
+            </span>
+            <span className="chev" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        </section>
+        <p className="group-note">
+          浏览器扫码能连、App 不能时：复制浏览器地址栏的完整链接，点「粘贴链接」。
+        </p>
+
+        <p className="group-label">手动填写</p>
+        <section className="group">
+          <label className="setting">
+            <span className="setting-title">服务器地址</span>
+            <input
+              value={origin}
+              onChange={(event) => setOrigin(event.target.value)}
+              placeholder="http://192.168.5.2:8791"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </label>
+          <label className="setting">
+            <span className="setting-title">配对码</span>
+            <input
+              value={pairCode}
+              onChange={(event) => setPairCode(event.target.value)}
+              placeholder="扫码后自动填写"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </label>
+        </section>
+        <p className="group-note">配对码 5 分钟内有效，且只能用一次；建议直接扫码。</p>
+
+        <section className="group">
+          <button
+            type="button"
+            className="setting action"
+            onClick={() => void connect(origin, pairCode)}
+            disabled={busy !== "" || !origin.trim()}
+          >
+            {busy === "正在连接" ? "正在连接…" : "连接"}
+          </button>
+        </section>
+
+        {busy && busy !== "正在连接" && busy !== "正在打开相机" ? (
+          <p className="group-note">{busy}…</p>
+        ) : null}
+
+        {error ? <div className="notice error">{error}</div> : null}
+
+        <details className="group-note">
           <summary>局域网还是连不上？</summary>
           <div>
             用电脑「设备访问」里的局域网二维码，地址通常是 http://电脑IP:随机端口，不要手填
@@ -436,78 +660,146 @@ export function ConnectScreen({ onConnected, onClose }: ConnectScreenProps) {
             Wi-Fi、路由器是否开启了 AP 隔离或 VPN。
           </div>
         </details>
-        <button
-          type="button"
-          onClick={() => void connect(origin, pairCode)}
-          disabled={busy !== "" || !origin.trim()}
-        >
-          {busy === "正在连接" ? "正在连接…" : "连接"}
-        </button>
 
-        {known ? (
-          <div className="meta">
-            上次连接：{known}
-            {config && config.candidates.length > 1 ? ` · 还有 ${config.candidates.length - 1} 个备用地址` : ""}
+        <p className="group-label">外观</p>
+        <section className="group">
+          <div className="setting">
+            <span className="setting-title">主题</span>
+            <div className="segmented" role="group" aria-label="主题">
+              {THEME_CHOICES.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={theme === choice.value ? "on" : ""}
+                  aria-pressed={theme === choice.value}
+                  onClick={() => pickTheme(choice.value)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
           </div>
+        </section>
+        <p className="group-note">只影响这台手机；桌面端的外观是它自己的设置。</p>
+
+        {runtimeBase ? (
+          <>
+            {/* The posture's name used to be a row inside the same card as the
+                five choices, drawn exactly like them — so the card read as six
+                postures, the first one being "工具批准 / 全放开". The card now
+                holds only choices; the name of the setting is a group label,
+                and the current value is named in the note below. */}
+            <p className="group-label">工具批准</p>
+            <section className="group" role="group" aria-label="工具批准">
+              {APPROVAL_CHOICES.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={`approval${approval === choice.value ? " on" : ""}`}
+                  aria-pressed={approval === choice.value}
+                  onClick={() => void pickApproval(choice.value)}
+                >
+                  <span>{choice.label}</span>
+                  <small>{choice.hint}</small>
+                </button>
+              ))}
+            </section>
+            <p className="group-note">
+              {approvalLabel(approval) ? `现在是「${approvalLabel(approval)}」。` : ""}
+              只改这个会话；桌面端下次打开的新会话沿用它最近一次的选择。
+            </p>
+            {approvalError ? <div className="notice error">{approvalError}</div> : null}
+          </>
         ) : null}
 
-        {error ? <div className="notice error">{error}</div> : null}
+        <p className="group-label">关于</p>
+        <section className="group">
+          <div className="setting">
+            <span className="setting-title">版本</span>
+            <span className="setting-value">{__APP_VERSION__}</span>
+          </div>
+          <div className="setting">
+            <span className="setting-main">
+              <span className="setting-title">协议</span>
+              <span className="setting-sub">客户端只读它认识的字段，桌面端可以独立升级</span>
+            </span>
+          </div>
+        </section>
 
-        <div className="card account">
-          <h2>Reasonix 账号</h2>
+        <p className="group-label">Reasonix 账号</p>
+        <section className="group">
           {account.signedIn ? (
             <>
-              <div className="meta">
-                已登录{account.user?.label ?? account.user?.handle ? `：${account.user.label ?? account.user.handle}` : ""}
+              <div className="setting">
+                <span className="setting-main">
+                  <span className="setting-title">
+                    {account.user?.label ?? account.user?.handle ?? "已登录"}
+                  </span>
+                  <span className="setting-sub">云端连接使用同一个账号</span>
+                </span>
               </div>
-              <div className="meta">云端连接使用同一个账号；不需要两台设备在同一网络。</div>
-              <button type="button" onClick={() => void signOut()}>
+              <button type="button" className="setting action danger" onClick={() => void signOut()}>
                 退出登录
               </button>
             </>
           ) : (
-            <>
-              <div className="meta">登录后可在不同网络下使用云端连接；局域网扫码不需要账号。</div>
-              <button type="button" onClick={() => void signIn()} disabled={busy !== ""}>
-                登录 Reasonix 账号
-              </button>
-            </>
+            <button type="button" className="setting action" onClick={() => void signIn()} disabled={busy !== ""}>
+              登录 Reasonix 账号
+            </button>
           )}
-          {grant ? (
-            <div className="grant">
-              <div className="meta">在应用内登录页登录后，回到这里等待完成；也可以手动输入：</div>
-              <div className="code">{grant.userCode}</div>
-              <button type="button" onClick={() => openLoginPage(grant.verificationUriComplete)}>
-                打开登录页
-              </button>
-              <button type="button" onClick={() => setGrant(null)}>
-                取消
-              </button>
-            </div>
-          ) : null}
-        </div>
+        </section>
+        <p className="group-note">
+          {account.signedIn
+            ? "云端连接不需要两台设备在同一网络。"
+            : "登录后可在不同网络下使用云端连接；局域网扫码不需要账号。"}
+        </p>
+
+        {grant ? (
+          <section className="group grant">
+            <p className="group-note">在应用内登录页登录后，回到这里等待完成；也可以手动输入：</p>
+            <div className="code">{grant.userCode}</div>
+            <button type="button" className="setting action" onClick={() => openLoginPage(grant.verificationUriComplete)}>
+              打开登录页
+            </button>
+            <button type="button" className="setting action" onClick={() => setGrant(null)}>
+              取消
+            </button>
+          </section>
+        ) : null}
 
         {account.signedIn && devices.length > 0 ? (
-          <div className="card account">
-            <h2>云端电脑</h2>
-            <div className="meta">同一账号下开启了远程访问的电脑。</div>
-            {devices.map((device) => {
-              const ready =
-                !Array.isArray(device.capabilities) || device.capabilities.includes("desktop");
-              return (
-                <button
-                  key={device.id}
-                  type="button"
-                  disabled={busy !== "" || !ready}
-                  onClick={() => void connectCloud(device.id)}
-                >
-                  {device.name ?? device.id}
-                  {device.platform ? ` · ${device.platform}` : ""}
-                  {ready ? "" : "（未开启远程访问）"}
-                </button>
-              );
-            })}
-          </div>
+          <>
+            <p className="group-label">云端电脑</p>
+            <section className="group">
+              {devices.map((device) => {
+                const ready =
+                  !Array.isArray(device.capabilities) || device.capabilities.includes("desktop");
+                return (
+                  <button
+                    key={device.id}
+                    type="button"
+                    className="setting"
+                    disabled={busy !== "" || !ready}
+                    onClick={() => void connectCloud(device.id)}
+                  >
+                    <span className="setting-main">
+                      <span className="setting-title">
+                        {device.name ?? device.id}
+                        {device.platform ? ` · ${device.platform}` : ""}
+                      </span>
+                      <span className="setting-sub">
+                        {ready ? "开启了互联网远程访问" : "未开启远程访问"}
+                      </span>
+                    </span>
+                    <span className="chev" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                );
+              })}
+            </section>
+            <p className="group-note">同一账号下开启了远程访问的电脑。</p>
+          </>
         ) : null}
       </div>
     </div>

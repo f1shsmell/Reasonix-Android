@@ -157,6 +157,36 @@ export async function clearRelay(): Promise<ProxyConfig> {
   return request<ProxyConfig>("/__reasonix/relay/clear", { method: "POST" });
 }
 
+/**
+ * Whether a remembered LAN origin answers at all.
+ *
+ * A `no-cors` GET cannot read the reply, and that is the point: the question
+ * is about the network — is that computer still there? — not about the
+ * kernel's answer, which the proxy checks once the upstream is switched. The
+ * short deadline is what keeps an address left behind on another Wi-Fi from
+ * holding up the fallback to the account relay.
+ */
+export async function originAnswers(origin: string, timeoutMs = 2_500): Promise<boolean> {
+  const target = origin.trim().replace(/\/+$/, "");
+  if (!target) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(`${target}/`, {
+      method: "GET",
+      mode: "no-cors",
+      cache: "no-store",
+      credentials: "omit",
+      signal: controller.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ServerLink =
   | { kind: "lan"; origin: string; pairCode?: string }
   | { kind: "cloud"; device: string };

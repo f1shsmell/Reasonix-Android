@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RelayEventSource, RelayLink } from "./relay";
+import { RelayEventSource, RelayLink, isKernelPath } from "./relay";
 
 type Handler = (event: { data?: string; code?: number; reason?: string }) => void;
 
@@ -73,6 +73,20 @@ describe("RelayLink", () => {
     const response = await responsePromise;
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("[]");
+  });
+});
+
+describe("isKernelPath", () => {
+  it("routes the project tree and the runtime routes through the relay", () => {
+    for (const path of ["/tree", "/tree/", "/runtimes", "/rt/r1/history", "/rt/r1/events"]) {
+      expect(isKernelPath(path)).toBe(true);
+    }
+  });
+
+  it("leaves the app's own bundle and the loopback control plane alone", () => {
+    for (const path of ["/", "/assets/index.js", "/__reasonix/config", "/treeline"]) {
+      expect(isKernelPath(path)).toBe(false);
+    }
   });
 });
 
