@@ -54,6 +54,18 @@ Reasonix Studio 的能力：
 **设置**
 - 主题（跟随系统 / 浅色 / 深色）、工具批准姿势、连接记录、账号与云端电脑、版本信息。
 
+## 通知
+
+正在跑的那一轮被提问、工具批准或计划批准卡住时，手机会发一条高优先级通知：会话名 + 问题；
+点「去回答」直接回到那个会话，问题解决后通知自动消失。
+
+<p align="center">
+  <img src="docs/screenshots/ask-headsup.png" width="44%" alt="锁屏上的需要你处理通知" />
+  <img src="docs/screenshots/ask-shade.png" width="44%" alt="通知栏里的提问与运行中通知" />
+</p>
+
+<p align="center"><sub>界面示意图（无头浏览器渲染，不是实机截图）。</sub></p>
+
 ## 安装
 
 ### 从 GitHub Actions 下载
