@@ -146,10 +146,36 @@ export function loadCursor(runtimeId: string): number {
   }
 }
 
-export function saveCursor(runtimeId: string, seq: number): void {
-  try {
-    localStorage.setItem(CURSOR_KEY + runtimeId, String(seq));
-  } catch {
-    // Losing the cursor costs a replay, not correctness.
+const pendingCursors = new Map<string, number>();
+let cursorTimer: number | null = null;
+
+function flushCursors(): void {
+  if (cursorTimer !== null) {
+    window.clearTimeout(cursorTimer);
+    cursorTimer = null;
   }
+  for (const [runtimeId, seq] of pendingCursors) {
+    try {
+      localStorage.setItem(CURSOR_KEY + runtimeId, String(seq));
+    } catch {
+      // Losing the cursor costs a replay, not correctness.
+    }
+  }
+  pendingCursors.clear();
+}
+
+/**
+ * Remember a frame cursor, at most twice a second.
+ *
+ * Every SSE frame carried one synchronous localStorage write; a streaming
+ * answer could block the main thread on storage it rereads once at launch.
+ */
+export function saveCursor(runtimeId: string, seq: number): void {
+  pendingCursors.set(runtimeId, seq);
+  if (cursorTimer !== null) return;
+  cursorTimer = window.setTimeout(flushCursors, 500);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushCursors);
 }

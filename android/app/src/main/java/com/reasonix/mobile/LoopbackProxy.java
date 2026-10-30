@@ -19,6 +19,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -32,8 +33,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -71,6 +72,8 @@ public final class LoopbackProxy {
     private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
     private static final int MAX_HEADER_LINE = 8192;
     private static final int SOCKET_READ_TIMEOUT_MS = 20_000;
+    /** An idle SSE sends a comment this often so a dead WebView is noticed. */
+    private static final int SSE_HEARTBEAT_MS = 25_000;
     /** A normal API call must not wait forever; only SSE may. */
     private static final int FORWARD_READ_TIMEOUT_MS = 60_000;
 
@@ -137,9 +140,12 @@ public final class LoopbackProxy {
     private final Context context;
     private final SharedPreferences prefs;
     private final ServerSocket server;
+    // The accept loop has its own thread: a core thread parked in accept() used
+    // to leave only three workers for the WebView, and a queue meant the pool
+    // never grew past its core size. Workers are created on demand up to 32.
     private final ExecutorService pool = new ThreadPoolExecutor(
-            4, 32, 60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(64),
+            8, 32, 60L, TimeUnit.SECONDS,
+            new SynchronousQueue<>(),
             runnable -> {
                 Thread thread = new Thread(runnable, "reasonix-proxy");
                 thread.setDaemon(true);
@@ -159,7 +165,7 @@ public final class LoopbackProxy {
     }
 
     private void serve() {
-        pool.execute(() -> {
+        Thread accept = new Thread(() -> {
             while (!server.isClosed()) {
                 try {
                     Socket socket = server.accept();
@@ -179,7 +185,9 @@ public final class LoopbackProxy {
                     if (!server.isClosed()) Log.e(TAG, "accept failed", e);
                 }
             }
-        });
+        }, "reasonix-proxy-accept");
+        accept.setDaemon(true);
+        accept.start();
     }
 
     private void handle(Socket socket) {
@@ -705,10 +713,10 @@ public final class LoopbackProxy {
             conn.setRequestMethod(method);
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(10000);
-            // Only SSE is allowed to wait forever. A normal API call whose
-            // kernel accepted the TCP connection and then went quiet must
-            // fail rather than freeze the WebView's fetch.
-            conn.setReadTimeout(isEventStream(target, headers) ? 0 : FORWARD_READ_TIMEOUT_MS);
+            // SSE waits in long stretches, but not forever: a finite timeout
+            // lets the relay wake up and notice a WebView that already closed
+            // its side, instead of leaking one thread per reconnection.
+            conn.setReadTimeout(isEventStream(target, headers) ? SSE_HEARTBEAT_MS : FORWARD_READ_TIMEOUT_MS);
             conn.setUseCaches(false);
             for (Map.Entry<String, String> entry : headers.entrySet()) {
                 String key = entry.getKey();
@@ -828,8 +836,22 @@ public final class LoopbackProxy {
             out.flush();
             InputStream upstream = conn.getInputStream();
             byte[] buffer = new byte[8192];
-            int n;
-            while ((n = upstream.read(buffer)) != -1) {
+            byte[] heartbeat = ": keepalive\n\n".getBytes(StandardCharsets.UTF_8);
+            while (true) {
+                int n;
+                try {
+                    n = upstream.read(buffer);
+                } catch (SocketTimeoutException quiet) {
+                    // Nothing from the kernel for a while. A comment chunk keeps
+                    // the client's stream open and throws here once it is gone.
+                    out.write((Integer.toHexString(heartbeat.length) + "\r\n")
+                            .getBytes(StandardCharsets.ISO_8859_1));
+                    out.write(heartbeat);
+                    out.write("\r\n".getBytes(StandardCharsets.ISO_8859_1));
+                    out.flush();
+                    continue;
+                }
+                if (n == -1) break;
                 out.write((Integer.toHexString(n) + "\r\n").getBytes(StandardCharsets.ISO_8859_1));
                 out.write(buffer, 0, n);
                 out.write("\r\n".getBytes(StandardCharsets.ISO_8859_1));

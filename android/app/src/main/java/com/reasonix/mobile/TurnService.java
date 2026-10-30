@@ -123,7 +123,7 @@ public class TurnService extends Service {
             // Android 12+ can refuse a foreground start from the background.
             // The turn itself is unaffected; only the notification is lost.
             Log.w(TAG, "cannot enter the foreground", e);
-            stopSelf();
+            stopSelf(startId);
             return START_NOT_STICKY;
         }
         acquireWakeLock();
@@ -218,6 +218,10 @@ public class TurnService extends Service {
     /** Read the pane's decisions and post/clear the notification they own. */
     private void pollAsk() {
         if (stopping) return;
+        // The wake lock is acquired with a 30-minute cap so a forgotten
+        // service cannot drain the phone. A turn can outlive it; every poll
+        // is a cheap place to notice and renew.
+        renewWakeLock();
         String prefix = base;
         if (prefix.isEmpty()) return;
         HttpURLConnection connection = null;
@@ -342,6 +346,15 @@ public class TurnService extends Service {
         // A cap, not an expectation: a forgotten service must not drain the
         // battery for a turn that already ended.
         wakeLock.acquire(WAKE_LOCK_MS);
+    }
+
+    private void renewWakeLock() {
+        if (wakeLock == null || wakeLock.isHeld()) return;
+        try {
+            wakeLock.acquire(WAKE_LOCK_MS);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "cannot renew the wake lock", e);
+        }
     }
 
     private void releaseWakeLock() {

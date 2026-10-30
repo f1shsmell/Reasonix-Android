@@ -69,7 +69,9 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
-    sourcemap: true,
+    // A source map for an app the phone downloads is 5 MB in the APK for a
+    // stack trace nobody reads on the device; CI keeps the sources.
+    sourcemap: false,
   },
   test: {
     environment: "jsdom",
