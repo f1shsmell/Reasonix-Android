@@ -9,7 +9,7 @@
  * Connect screen shows.
  */
 
-import { fetchWithTimeout } from "./http";
+import { fetchWithTimeout, RequestTimeout } from "./http";
 
 export interface ProxyUser {
   handle?: string;
@@ -185,6 +185,47 @@ export async function originAnswers(origin: string, timeoutMs = 2_500): Promise<
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Whether the active upstream can actually answer for a kernel.
+ *
+ * Writing an origin or a relay into the proxy only says where requests will
+ * go; it does not say anything is there. This read is the difference between
+ * "connected" and "the settings page saved a dead address", and it is the
+ * last step of every connect and every recovery.
+ */
+export type UpstreamReach = { ok: true } | { ok: false; code: string };
+
+export async function probeUpstream(timeoutMs = 12_000): Promise<UpstreamReach> {
+  try {
+    const response = await fetchWithTimeout("/runtimes", { credentials: "same-origin" }, timeoutMs);
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, code: "device.unauthorized" };
+    }
+    if (!response.ok) return { ok: false, code: `http.${response.status}` };
+    const body: unknown = await response.json();
+    if (!Array.isArray(body)) return { ok: false, code: "runtime.shape" };
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
+    };
+  }
+}
+
+/**
+ * The first remembered LAN address that answers at all, in preference order.
+ *
+ * The probes run together: a phone away from home should not spend a second
+ * per remembered computer before letting the account relay have its turn.
+ */
+export async function firstAnswering(origins: string[], timeoutMs = 2_500): Promise<string | null> {
+  const answers = await Promise.all(
+    origins.map(async (origin) => ({ origin, ok: await originAnswers(origin, timeoutMs) })),
+  );
+  return answers.find((entry) => entry.ok)?.origin ?? null;
 }
 
 export type ServerLink =

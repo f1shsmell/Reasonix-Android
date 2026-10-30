@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   configureProxy,
+  firstAnswering,
   originAnswers,
   parseServerLink,
+  probeUpstream,
   ProxyError,
   readProxyConfig,
 } from "./server";
@@ -94,6 +96,59 @@ describe("originAnswers", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     await expect(originAnswers("   ")).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("probeUpstream", () => {
+  it("treats a readable conversation list as proof", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json([{ id: "r1" }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(probeUpstream()).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/runtimes",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+  });
+
+  it("keeps an authorization refusal apart from a dead network", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({}, 401)));
+    await expect(probeUpstream()).resolves.toEqual({ ok: false, code: "device.unauthorized" });
+  });
+
+  it("reports a body it cannot use", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ nope: true })));
+    await expect(probeUpstream()).resolves.toEqual({ ok: false, code: "runtime.shape" });
+  });
+
+  it("reports a dropped request as offline", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    await expect(probeUpstream()).resolves.toEqual({ ok: false, code: "client.offline" });
+  });
+});
+
+describe("firstAnswering", () => {
+  it("answers the first remembered address that replies", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).startsWith("http://down") ? Promise.reject(new TypeError("network")) : Promise.resolve(new Response(null)),
+      ),
+    );
+
+    await expect(firstAnswering(["http://down:1", "http://up:2"])).resolves.toBe("http://up:2");
+  });
+
+  it("answers null when none replies", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    await expect(firstAnswering(["http://a:1", "http://b:2"])).resolves.toBeNull();
+  });
+
+  it("answers null without probing an empty list", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(firstAnswering([])).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
