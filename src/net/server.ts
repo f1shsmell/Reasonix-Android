@@ -184,6 +184,67 @@ export async function clearRelay(): Promise<ProxyConfig> {
   return request<ProxyConfig>("/__reasonix/relay/clear", { method: "POST" });
 }
 
+// ---- fleet: the other computers this phone listens to -------------------
+
+/**
+ * A computer the fleet watches. The proxy holds the list; the app only
+ * mirrors it, so both sides agree on what an index names.
+ */
+export interface FleetEntry {
+  kind: "lan" | "cloud";
+  /** A LAN origin, or a cloud device id when one is stored. */
+  target: string;
+  name: string;
+  /** Cloud peers are listed but have no read route until they are active. */
+  watchable: boolean;
+}
+
+/** `null` in a browser, where the proxy does not exist. */
+export async function loadFleet(): Promise<FleetEntry[] | null> {
+  try {
+    const body = await request<{ peers?: FleetEntry[] }>("/__reasonix/fleet");
+    return Array.isArray(body.peers) ? body.peers : [];
+  } catch {
+    return null;
+  }
+}
+
+/** Replace the whole watch list. The proxy rejects more than four. */
+export async function saveFleet(peers: FleetEntry[]): Promise<void> {
+  await request("/__reasonix/fleet", {
+    method: "POST",
+    body: JSON.stringify({ peers: peers.slice(0, 4) }),
+  });
+}
+
+/**
+ * One kernel read through a watched peer's route.
+ *
+ * The full path is the caller's (`/__reasonix/fleet/<index>/...`), because the
+ * fleet reads several shapes and the proxy owns what the index means. A
+ * refusal is classified, not swallowed: 401/403 is that computer's pairing
+ * having expired, which reads differently from a computer that is not there.
+ */
+export type FleetRead =
+  | { ok: true; body: unknown }
+  | { ok: false; code: string };
+
+export async function fleetRead(path: string, timeoutMs = 8_000): Promise<FleetRead> {
+  try {
+    const response = await fetchWithTimeout(path, { credentials: "same-origin" }, timeoutMs);
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, code: "device.unauthorized" };
+    }
+    if (!response.ok) return { ok: false, code: `http.${response.status}` };
+    return { ok: true, body: await response.json() };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
+    };
+  }
+}
+
 /**
  * Whether a remembered LAN origin answers at all.
  *

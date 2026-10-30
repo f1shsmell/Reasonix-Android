@@ -100,6 +100,16 @@ function decision(value: unknown): Decision | null {
   return out;
 }
 
+/**
+ * A `/status` body as the app reads it, validated.
+ *
+ * `loadStatus` and the fleet sweep read the same shape through different
+ * routes, so the parse is the export and the loaders are callers.
+ */
+export function parseRuntimeStatus(value: unknown): RuntimeStatus | null {
+  return status(value);
+}
+
 function status(value: unknown): RuntimeStatus | null {
   if (value === null || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;

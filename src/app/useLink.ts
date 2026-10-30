@@ -46,6 +46,9 @@ function lanDoorsOf(config: ProxyConfig | null): string[] {
   ];
 }
 
+/** How a manual switch ended: the fleet row needs to know whether to open. */
+export type SwitchResult = { ok: boolean };
+
 export interface Link {
   state: LinkState;
   /** Check now (network change, app resumed): cuts a backoff wait short. */
@@ -53,7 +56,7 @@ export interface Link {
   /** The person asked: same as a kick, but also retries a failed link. */
   retry: () => void;
   /** Switch to a recorded computer and verify it. */
-  switchTo: (entry: SavedConnection) => Promise<void>;
+  switchTo: (entry: SavedConnection) => Promise<SwitchResult>;
   /** The settings screen just connected; record that, then re-read the list. */
   noteConnected: () => Promise<void>;
   /** The settings screen swapped the upstream and then could not verify it. */
@@ -304,7 +307,7 @@ export function useLink(connection: Connection): Link {
 
   const switchTo = useCallback(
     async (entry: SavedConnection) => {
-      if (active.current) return;
+      if (active.current) return { ok: false };
       active.current = true;
       clearTimer();
       backoff.current.reset();
@@ -332,24 +335,28 @@ export function useLink(connection: Connection): Link {
             }
           },
         );
-        if (!live()) return;
+        if (!live()) return { ok: false };
         if (!result.ok) {
           failed(result.error, room());
-          return;
+          return { ok: false };
         }
         await connection.refresh();
-        if (!live()) return;
+        if (!live()) return { ok: false };
         if (connection.current.reach.kind !== "ok") {
           failed(linkFailure(reachCode(connection.current.reach)), room());
-          return;
+          return { ok: false };
         }
         if (mode === "lan") {
           const cloud = latestConnection("cloud")?.target || loadRelayDevice();
           if (cloud) saveRelayDevice(cloud);
         }
         connected(entry.target, entry.name, mode);
+        return { ok: true };
       } catch (error) {
-        if (live()) failed(failureFromError(error), room());
+        if (live()) {
+          failed(failureFromError(error), room());
+        }
+        return { ok: false };
       } finally {
         active.current = false;
       }

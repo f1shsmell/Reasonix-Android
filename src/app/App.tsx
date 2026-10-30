@@ -5,6 +5,8 @@ import { App as NativeApp } from "@capacitor/app";
 import { Network } from "@capacitor/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
+import { Fleet, syncFleetPeer } from "../net/fleet";
+import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import type { ProxyConfig } from "../net/server";
@@ -33,6 +35,7 @@ const ChatScreen = lazy(() =>
 );
 
 const connection = new Connection();
+const fleetWatcher = new Fleet();
 
 type Boot = "loading" | "connect" | "ready";
 
@@ -61,6 +64,7 @@ function lanDoors(config: ProxyConfig | null): string[] {
  */
 export function App() {
   const [snapshot, setSnapshot] = useState<ConnectionSnapshot>(connection.current);
+  const [fleet, setFleet] = useState<FleetSnapshot>(fleetWatcher.current);
   const [openRuntime, setOpenRuntime] = useState<string | null>(null);
   /** The project whose conversation list is showing, by root. */
   const [project, setProject] = useState<string | null>(null);
@@ -94,6 +98,7 @@ export function App() {
   }, [link.state.phase, tree.reload]);
 
   useEffect(() => connection.subscribe(setSnapshot), [connection]);
+  useEffect(() => fleetWatcher.subscribe(setFleet), []);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -163,6 +168,43 @@ export function App() {
       cancelled = true;
     };
   }, [boot, link.kick]);
+
+  /**
+   * Re-read the watch list and watch it.
+   *
+   * The fleet exists only where the proxy does, and reads only while the app
+   * is on screen. The tick itself is harmless when no peer is watchable, so
+   * running the cadence from the first read that finds one is enough — the
+   * same call serves the boot and every connection made later in settings.
+   */
+  const syncFleet = useCallback(() => {
+    void fleetWatcher.refresh().then(() => {
+      if (fleetWatcher.current.peers.some((peer) => peer.state !== "unwatchable")) {
+        fleetWatcher.start();
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (boot !== "ready") return;
+    syncFleet();
+    return () => fleetWatcher.stop();
+  }, [boot, syncFleet]);
+
+  // A switch is the moment "the computer I am on" changes; the fleet block
+  // hides that computer's rows so a conversation never appears twice. The
+  // computer being used is also added to the watch list: once the person
+  // switches away, its blocked conversations are exactly what the fleet shows.
+  useEffect(() => {
+    if (link.state.phase !== "connected" || !link.state.target) return;
+    const kind = link.state.mode ?? "lan";
+    fleetWatcher.setActiveTarget(kind, link.state.target);
+    void syncFleetPeer(kind, link.state.target, link.state.name ?? link.state.target)
+      .then(syncFleet)
+      .catch(() => {
+        // The watch list is a mirror; a failed write must not break the link.
+      });
+  }, [link.state.phase, link.state.target, link.state.mode, link.state.name, syncFleet]);
 
   const [actionError, setActionError] = useState("");
 
@@ -271,11 +313,66 @@ export function App() {
     setShowConnect(false);
     setBoot("ready");
     void link.noteConnected();
+    // A connection made in the settings screen may have added a row to the
+    // watch list; the fleet re-reads it so its indexes and names are current.
+    syncFleet();
     void readProxyConfig().then((next) => {
       if (next === null) return;
       if (next.relayDevice) saveRelayDevice(next.relayDevice);
     });
-  }, [link.noteConnected]);
+  }, [link.noteConnected, syncFleet]);
+
+  /**
+   * A conversation on another computer: switch the connection to it, and only
+   * then open the pane.
+   *
+   * The switch is the same verified door the switch sheet uses, so a refused
+   * switch (an expired pairing, a computer that is gone) leaves the app where
+   * it was instead of half-moving. After the switch the pane list is already
+   * fresh: a pane the desktop still has is opened by navigation alone, and
+   * one that closed since the sweep is opened by binding its transcript —
+   * never a minted pane for a conversation the person only wanted to read.
+   */
+  const openFleetItem = useCallback(
+    async (item: FleetPendingItem | FleetRunningItem) => {
+      setActionError("");
+      const peer = fleetWatcher.current.peers.find((candidate) => candidate.index === item.peer);
+      if (!peer || !peer.target) {
+        setActionError("找不到这台电脑的连接记录，请在设置里重新连接。");
+        return;
+      }
+      const result = await link.switchTo({
+        kind: peer.kind,
+        target: peer.target,
+        name: peer.name,
+        usedAt: 0,
+      });
+      if (!result.ok) {
+        setActionError("没能连上这台电脑，请稍后再试。");
+        return;
+      }
+      // The verified connection may have added a row to the proxy's watch
+      // list; re-reading it keeps the indexes and names here the same ones
+      // the sweeps are addressing.
+      void fleetWatcher.refresh();
+      const stillThere = connection.current.runtimes.some((runtime) => runtime.id === item.runtimeId);
+      setChatProject(item.projectRoot);
+      setChatTitle(item.title);
+      if (stillThere) {
+        setOpenRuntime(item.runtimeId);
+        return;
+      }
+      if (item.sessionPath) {
+        const opened = await openRuntimeOn(item.projectRoot, item.sessionPath);
+        if (opened.ok) {
+          setOpenRuntime(opened.runtime.id);
+          return;
+        }
+      }
+      setActionError("这个会话已经不在那台电脑上了。");
+    },
+    [link],
+  );
 
   // Coming back from the background must re-probe: the kernel may have been
   // restarted or the phone may have changed networks while the screen was off.
@@ -468,6 +565,8 @@ export function App() {
         onNewSession={(root) => void newSessionInProject(root)}
         onRefresh={refresh}
         onSettings={() => setShowConnect(true)}
+        fleet={fleet}
+        onOpenFleet={(item) => void openFleetItem(item)}
       />
     );
   }

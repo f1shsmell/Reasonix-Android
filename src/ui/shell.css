@@ -139,6 +139,69 @@
   font-size: 14px;
 }
 
+/* The other watched computers, under the link bar. Rows only appear for a
+   computer that has something blocked or running; quiet ones stay hidden. */
+.fleet {
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+
+.fleet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px var(--pad);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+}
+
+.fleet-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fleet-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fleet-tag {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fleet-tag[data-kind="running"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.fleet-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
 .body {
   flex: 1;
   overflow-y: auto;
