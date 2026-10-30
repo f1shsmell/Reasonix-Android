@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useBackCloser } from "../app/backStack";
 import { currentModel, effortChoices, loadModels, modelShortName, switchEffort, switchModel } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
 import { loadStatus } from "../net/status";
@@ -67,6 +68,7 @@ export function ModelSheet({ base, fallback, onClose, onSwitched }: ModelSheetPr
   const [effort, setEffort] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  useBackCloser(true, onClose);
 
   useEffect(() => {
     let cancelled = false;

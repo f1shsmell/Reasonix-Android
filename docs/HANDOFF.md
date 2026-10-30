@@ -725,6 +725,27 @@ Decisions that will look optional until they are removed:
   plugin bridge; a release without `keystore.properties` fails at
   `assembleRelease` instead of producing an uninstallable APK.
 
+## Trust and input (2026-10-30)
+
+- The composer ignores Enter while `isComposing` (or keyCode 229). A pinyin
+  keyboard accepts a candidate with Enter; sending there ships half a word.
+- A `/submit` that dies in transit is **unconfirmed**, not retryable. The
+  kernel may have started the turn, so the screen says to refresh rather than
+  offering a second POST. HTTP refusals keep their own retryability.
+- Drafts are keyed like reading positions (`sessionPath`, pane id as fallback).
+  A pane opened from a cold link may not know its path on the first render; the
+  draft is migrated when it arrives, and both keys are cleared on send.
+- `src/app/backStack.ts` holds open sheets. `App`'s `backButton` closes the top
+  sheet before navigating or exiting; without it a back press under a model or
+  attachment sheet left the screen.
+- User bubbles use `--bubble-user` (#4a6be0, 4.7:1 with white) rather than the
+  accent (3.1:1). The viewport asks for `interactive-widget=resizes-content`
+  and `MainActivity` for `adjustResize`; still needs a device check.
+- Release APKs are signed by a key kept outside the repo (see RELEASING.md).
+  The workflow refuses to build without the four secrets and verifies the APK
+  with `apksigner`. The first signed release needs one uninstall for phones
+  that installed a debug-signed build.
+
 ## Review result
 
 The 2026-10-29 review found two blockers — the unauthenticated loopback proxy

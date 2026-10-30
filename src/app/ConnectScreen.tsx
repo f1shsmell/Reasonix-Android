@@ -38,6 +38,7 @@ import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink }
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
+import { useBackCloser } from "./backStack";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
@@ -127,6 +128,9 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase, lin
     setTrustAsk(null);
     resolve?.(accepted);
   }, []);
+
+  const cancelTrust = useCallback(() => settleTrust(false), [settleTrust]);
+  useBackCloser(trustAsk !== null, cancelTrust);
 
   // A connection attempt waiting on a person must not outlive the screen.
   useEffect(

@@ -199,7 +199,7 @@
 }
 
 .row.user .bubble {
-  background: var(--accent);
+  background: var(--bubble-user);
   color: #fff;
   border-bottom-right-radius: 6px;
   max-width: 86%;

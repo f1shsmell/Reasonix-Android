@@ -465,6 +465,56 @@ describe("ChatScreen composer", () => {
     );
   });
 
+  it("restores a draft by the stored session path, not the pane id", async () => {
+    localStorage.setItem("reasonix.draft./w/s.json", "按会话存的草稿");
+    stubKernel();
+
+    render(snapshot(undefined, [{ ...runtime, sessionPath: "/w/s.json" }]));
+    await flush();
+
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
+      "按会话存的草稿",
+    );
+  });
+
+  it("moves a draft taken under the pane id when the session path arrives", async () => {
+    localStorage.setItem("reasonix.draft.r1", "留下的想法");
+    stubKernel();
+    render(snapshot());
+    await flush();
+
+    render(snapshot(undefined, [{ ...runtime, sessionPath: "/w/s.json" }]));
+    await flush();
+
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
+      "留下的想法",
+    );
+    expect(localStorage.getItem("reasonix.draft./w/s.json")).toBe("留下的想法");
+    expect(localStorage.getItem("reasonix.draft.r1")).toBeNull();
+  });
+
+  it("does not send while an input method is composing", async () => {
+    const fetchMock = stubKernel();
+    render(snapshot());
+    await flush();
+    typeDraft("nihao");
+
+    act(() => {
+      container.querySelector("textarea")?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          isComposing: true,
+        }),
+      );
+    });
+    await flush();
+
+    const submitted = fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"));
+    expect(submitted).toBe(false);
+  });
+
   it("shows a retryable refusal and keeps the text in the composer", async () => {
     vi.stubGlobal(
       "fetch",
@@ -490,6 +540,32 @@ describe("ChatScreen composer", () => {
     expect(container.querySelector(".sendfail button")?.textContent).toBe("重试");
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("hello");
     expect(container.querySelector(".row.user")).toBeNull();
+  });
+
+  it("asks for a refresh when a send may have reached the kernel", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/submit")) return Promise.reject(new TypeError("Failed to fetch"));
+        if (url.endsWith("/todos")) return Promise.resolve(json([]));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    typeDraft("hello");
+
+    act(() => sendButton().click());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".sendfail")?.textContent).toContain(
+      "不确定这一轮有没有发出去",
+    );
+    expect(container.querySelector(".sendfail button")?.textContent).toBe("刷新确认");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("hello");
   });
 
   it("draws the sent message before the stream confirms it", async () => {

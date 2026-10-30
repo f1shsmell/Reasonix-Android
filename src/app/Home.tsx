@@ -27,6 +27,7 @@ import type { HomeTab } from "./swipe";
 import { useProjectDrag } from "./useProjectDrag";
 import type { ProjectDragHandlers, ProjectDragState } from "./useProjectDrag";
 import { useLongPress } from "./longPress";
+import { useBackCloser } from "./backStack";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
 import { runtimeOpenMessage, sessionTitle } from "./SessionList";
@@ -274,6 +275,7 @@ function SessionSheet({
 }) {
   const { project, session } = row;
   const pinned = session.pinned === true;
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onPointerDown={onClose}>
       <section
@@ -359,6 +361,7 @@ function SwitchSheet({
   onManage: () => void;
 }) {
   const busy = link.phase === "connecting" || link.phase === "reconnecting";
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -484,6 +487,7 @@ function NewSessionSheet({
   onClose: () => void;
   onPick: (root: string) => void;
 }) {
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section

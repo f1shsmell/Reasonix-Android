@@ -7,6 +7,7 @@
  */
 
 import { useState } from "react";
+import { useBackCloser } from "../app/backStack";
 import type { ProcessStep } from "./process";
 import { processTitle } from "./process";
 import { ToolDetail } from "./Rows";
@@ -128,6 +129,7 @@ export function ProcessSheet({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section

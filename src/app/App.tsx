@@ -17,6 +17,7 @@ import type { HomeTab } from "./swipe";
 import { parseChatLink } from "./chatLink";
 import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
+import { closeTopSheet } from "./backStack";
 import { useLink } from "./useLink";
 import { useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
@@ -315,6 +316,8 @@ export function App() {
     let cancelled = false;
     let remove: (() => void) | undefined;
     void NativeApp.addListener("backButton", () => {
+      // A sheet is the innermost thing on screen, whatever screen it covers.
+      if (closeTopSheet()) return;
       if (showConnect) {
         setShowConnect(false);
         return;

@@ -17,6 +17,7 @@ import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
 import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
+import { useBackCloser } from "../app/backStack";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification, stopTurnNotification } from "../native/turn";
 import type { WireTodo } from "../wire/todos";
@@ -108,6 +109,7 @@ function AttachSheet({
 }) {
   const planHint =
     plan === undefined ? "读不到当前模式" : plan ? "已开启，点此关闭" : "先整理步骤，不写入文件";
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -174,6 +176,7 @@ function HeadMenu({
   onReload: () => void;
   onModel: () => void;
 }) {
+  useBackCloser(true, onClose);
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -426,7 +429,12 @@ export function ChatScreen({
   // App keys this screen by runtimeId, so this initial value is that pane's
   // draft and no other pane can read it. The save effect below mirrors every
   // keystroke to the same key.
-  const [draft, setDraft] = useState(() => loadDraft(runtimeId));
+  const [draft, setDraft] = useState(() => loadDraft(readingId));
+  /**
+   * Where this pane's draft belongs. A pane id changes when the same stored
+   * transcript is opened again; the session path does not.
+   */
+  const draftKey = useRef(readingId);
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
   const [attachments, setAttachments] = useState<
@@ -468,6 +476,12 @@ export function ChatScreen({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  /** Clear both keys a pane may have used, so a stale one cannot come back. */
+  const forgetDraft = useCallback(() => {
+    clearDraft(draftKey.current);
+    if (draftKey.current !== runtimeId) clearDraft(runtimeId);
+  }, [runtimeId]);
 
   // Attaching is the screen's job, not the caller's: a screen that is mounted
   // and not subscribed shows a still frame that looks like a hang.
@@ -601,9 +615,25 @@ export function ChatScreen({
     input.style.height = `${input.scrollHeight}px`;
   }, []);
 
+  // A cold link may not know the session path on the first render. When it
+  // arrives, adopt the draft taken under the pane id instead of abandoning it
+  // at the next remount; a draft already stored under the path wins.
   useEffect(() => {
-    saveDraft(runtimeId, draft);
-  }, [draft, runtimeId]);
+    if (draftKey.current === readingId) return;
+    const previous = draftKey.current;
+    draftKey.current = readingId;
+    const stored = loadDraft(readingId);
+    if (stored !== "") {
+      setDraft(stored);
+    } else if (draftRef.current !== "") {
+      saveDraft(readingId, draftRef.current);
+      clearDraft(previous);
+    }
+  }, [readingId]);
+
+  useEffect(() => {
+    saveDraft(draftKey.current, draft);
+  }, [draft]);
 
   // A restored draft may be several lines; one row would hide most of it.
   useEffect(() => {
@@ -761,7 +791,7 @@ export function ChatScreen({
         // Only clear what was actually sent. Text typed while the request was
         // in flight is the next thought, not part of this one.
         if (isolateImageRefs(draftRef.current).trim() === outgoing) {
-          clearDraft(runtimeId);
+          forgetDraft();
           setDraft("");
         }
         setAttachments((current) => {
@@ -785,17 +815,21 @@ export function ChatScreen({
         kind: "failed",
         detail: result.code ?? "unknown",
         retryable: result.retryable === true,
+        ...(result.unconfirmed ? { unconfirmed: true } : {}),
       });
       setTranscript((current) => removeLocalUser(current, local.id));
       lastRetry.current = outgoing;
     },
-    [runtime, scrollToBottom, attachments],
+    [runtime, scrollToBottom, attachments, forgetDraft],
   );
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Enter sends, Shift+Enter breaks the line. On a phone keyboard Enter is
       // the send key people expect; the desktop convention is the fallback.
+      // A pinyin keyboard uses Enter to accept a candidate, which arrives as
+      // composing input (IME keyCode 229); sending then would ship half a word.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         if (send.kind !== "sending" && draft.trim()) void doSend(draft);
@@ -829,7 +863,7 @@ export function ChatScreen({
       // The kernel holds this message now, so the composer is free for the
       // next thought — the same rule a normal send follows.
       if (isolateImageRefs(draftRef.current).trim() === text) {
-        clearDraft(runtimeId);
+        forgetDraft();
         setDraft("");
         setAttachments((current) => {
           for (const entry of current) URL.revokeObjectURL(entry.url);
@@ -837,7 +871,7 @@ export function ChatScreen({
         });
       }
     },
-    [runtime, draft, runtimeId],
+    [runtime, draft, runtimeId, forgetDraft],
   );
 
   const handlers = useMemo<PromptHandlers>(
@@ -1033,12 +1067,30 @@ export function ChatScreen({
 
       {send.kind === "failed" ? (
         <div className="sendfail" role="alert">
-          <span>没发出去：{sendErrorText(send.detail)}</span>
-          {send.retryable && lastRetry.current ? (
+          <span>
+            {send.unconfirmed
+              ? "不确定这一轮有没有发出去。先刷新确认，别直接重发。"
+              : `没发出去：${sendErrorText(send.detail)}`}
+          </span>
+          {send.unconfirmed ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSend({ kind: "idle" });
+                reload();
+              }}
+            >
+              刷新确认
+            </button>
+          ) : send.retryable && lastRetry.current ? (
             <button type="button" onClick={() => void doSend(lastRetry.current)}>
               重试
             </button>
-          ) : null}
+          ) : (
+            <button type="button" onClick={() => setSend({ kind: "idle" })}>
+              知道了
+            </button>
+          )}
         </div>
       ) : null}
 

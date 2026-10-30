@@ -80,12 +80,13 @@ describe("submit", () => {
     expect(result.code).toBe("http.502");
   });
 
-  it("reports a dead socket as retryable rather than as a refusal", async () => {
+  it("reports a dead socket as unconfirmed, not as retryable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     const result = await submit("/rt/r1", "hello");
     expect(result.ok).toBe(false);
     expect(result.code).toBe("client.offline");
-    expect(result.retryable).toBe(true);
+    expect(result.retryable).toBe(false);
+    expect(result.unconfirmed).toBe(true);
   });
 });
 

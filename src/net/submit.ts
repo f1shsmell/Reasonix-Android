@@ -13,7 +13,7 @@ export type SendState =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "sent" }
-  | { kind: "failed"; detail: string; retryable: boolean };
+  | { kind: "failed"; detail: string; retryable: boolean; unconfirmed?: boolean };
 
 export interface SubmitResult {
   ok: boolean;
@@ -21,6 +21,12 @@ export interface SubmitResult {
   code?: string;
   /** True when trying the same input again could plausibly succeed. */
   retryable?: boolean;
+  /**
+   * The request left but no answer came back, so the kernel may have started
+   * the turn. A submit is not idempotent: this asks the person to check, not
+   * to press retry.
+   */
+  unconfirmed?: boolean;
 }
 
 /**
@@ -73,7 +79,8 @@ export async function submit(base: string, input: string): Promise<SubmitResult>
     return {
       ok: false,
       code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
-      retryable: error instanceof Error,
+      retryable: false,
+      unconfirmed: true,
     };
   }
 }

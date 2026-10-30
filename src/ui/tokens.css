@@ -9,6 +9,8 @@
   --warn: #d9a441;
   --bad: #e0575b;
   --accent: #6b8cff;
+  /* White on the accent is 3.1:1; this darker blue clears AA at 4.7:1. */
+  --bubble-user: #4a6be0;
   --radius: 12px;
   --tap: 44px;
   --pad: 16px;
