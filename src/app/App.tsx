@@ -103,7 +103,7 @@ export function App() {
   const [showConnect, setShowConnect] = useState(false);
   const [boot, setBoot] = useState<Boot>(() => (Capacitor.isNativePlatform() ? "loading" : "ready"));
   const tree = useTree();
-  const pending = useNeedsYou(tree.projects, tree.revision);
+  const pending = useNeedsYou(snapshot.runtimes, tree.projects, tree.revision);
   const link = useLink(connection);
 
   // Coming back from a failed or retried link is the moment the lists are

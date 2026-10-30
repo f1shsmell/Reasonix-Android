@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Attention, decisionKey, runningKey } from "./attention";
 import { loadStatus } from "../net/status";
 import type { Decision } from "../net/status";
+import type { RuntimeView } from "../wire/runtime";
 import type { TreeProject } from "../wire/tree";
 import { sessionTitle } from "./SessionList";
 
@@ -69,25 +70,50 @@ export interface NeedsYouState {
   markSeen: (item: PendingItem) => void;
 }
 
-/** Every conversation a pane is driving, with the labels its row needs. */
-export function paneCandidates(projects: TreeProject[]): Candidate[] {
-  const out: Candidate[] = [];
+/**
+ * Every open pane, with the labels its row needs.
+ *
+ * `/runtimes` is the authoritative list: a pane can be blocked even when its
+ * project or session is beyond the tree's limited read. The tree only supplies
+ * a nicer title and project name when it happens to know the pane.
+ */
+export function paneCandidates(runtimes: RuntimeView[], projects: TreeProject[]): Candidate[] {
+  const labels = new Map<string, { projectName: string; title: string }>();
   for (const project of projects) {
     for (const session of project.sessions) {
       if (!session.runtimeId) continue;
-      out.push({
-        base: `/rt/${session.runtimeId}`,
-        runtimeId: session.runtimeId,
+      labels.set(session.runtimeId, {
         projectName: project.name,
-        projectRoot: project.root,
         title: sessionTitle(session),
       });
     }
   }
+  const out: Candidate[] = [];
+  for (const runtime of runtimes) {
+    const label = labels.get(runtime.id);
+    out.push({
+      base: runtime.base || `/rt/${runtime.id}`,
+      runtimeId: runtime.id,
+      projectName: label?.projectName ?? (runtime.name || runtime.root),
+      projectRoot: runtime.root,
+      title: label?.title ?? runtimeTitle(runtime),
+    });
+  }
   return out;
 }
 
-export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYouState {
+/** The transcript's file name, or the project name before a path exists. */
+function runtimeTitle(runtime: RuntimeView): string {
+  const path = (runtime.sessionPath ?? "").trim();
+  const base = path.split(/[\\/]/).pop() ?? "";
+  return base || runtime.name;
+}
+
+export function useNeedsYou(
+  runtimes: RuntimeView[],
+  projects: TreeProject[],
+  revision: number,
+): NeedsYouState {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [running, setRunning] = useState<RunningItem[]>([]);
   const [status, setStatus] = useState<"loading" | "loaded">("loading");
@@ -101,7 +127,7 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
   useEffect(() => {
-    const candidates = paneCandidates(projects);
+    const candidates = paneCandidates(runtimes, projects);
     const at = ++request.current;
     if (candidates.length === 0) {
       // Nothing is open, so nothing can be blocked. Mark it loaded rather than
@@ -154,10 +180,10 @@ export function useNeedsYou(projects: TreeProject[], revision: number): NeedsYou
       );
       setStatus("loaded");
     });
-    // `projects` is the array identity from useTree, which only changes on a
-    // successful read; `revision` is what makes a re-read visible here.
+    // `runtimes` is the connection's pane snapshot; `revision` is what makes a
+    // tree reload visible to the labels. Both can change without the other.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision, tick]);
+  }, [runtimes, revision, tick]);
 
   // Home is the screen a person leaves open while work happens. Without a
   // clock the block only refreshed when the tree changed, which can be hours.
