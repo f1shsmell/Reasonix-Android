@@ -380,6 +380,28 @@ describe("App", () => {
     expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r2");
   });
 
+  it("switches to the computer a peer notification names", async () => {
+    rememberConnection("lan", "http://192.168.7.7:56789", "studio");
+    appMock.launchUrl =
+      "reasonix://chat?runtime=r9&root=%2Fwork%2Fapp&peer=http%3A%2F%2F192.168.7.7%3A56789&peerName=studio";
+    await renderApp();
+    await settle();
+
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.7.7:56789");
+    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("refuses a peer notification for a computer it has never saved", async () => {
+    appMock.launchUrl =
+      "reasonix://chat?runtime=r9&peer=http%3A%2F%2F10.0.0.9%3A1&peerName=elsewhere";
+    await renderApp();
+    await settle();
+
+    expect(configureProxy).not.toHaveBeenCalledWith("http://10.0.0.9:1");
+    expect(container.querySelector('[data-testid="chat"]')).toBeNull();
+    expect(text()).toContain("不在连接列表里");
+  });
+
   it("opens a stored conversation straight from the recent list", async () => {
     await renderApp();
 

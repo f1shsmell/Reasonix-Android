@@ -5,7 +5,7 @@ import { App as NativeApp } from "@capacitor/app";
 import { Network } from "@capacitor/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
-import { Fleet, syncFleetPeer } from "../net/fleet";
+import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
@@ -236,6 +236,8 @@ export function App() {
   }, [pending.items.length, pending.running.length, link.state.mode]);
 
   const [actionError, setActionError] = useState("");
+  /** A peer notification waits for the boot link to settle before switching. */
+  const [pendingLink, setPendingLink] = useState<string | null>(null);
 
   const reloadTree = tree.reload;
   const refresh = useCallback(() => {
@@ -324,18 +326,73 @@ export function App() {
    * desktop, and the chat reads its history on mount. The refresh is for the
    * snapshot's runtimes, which may predate the notification by a few minutes.
    */
-  const openChatLink = useCallback((raw: string) => {
-    const link = parseChatLink(raw);
-    if (!link) return;
-    setShowConnect(false);
-    if (link.root) {
-      setProject(link.root);
-      setChatProject(link.root);
+  const openChatLink = useCallback(async (raw: string) => {
+    const parsed = parseChatLink(raw);
+    if (!parsed) return;
+    const settling =
+      boot === "loading" ||
+      link.state.phase === "connecting" ||
+      link.state.phase === "reconnecting" ||
+      (boot === "ready" && link.state.phase === "idle");
+    if (parsed.peer && settling) {
+      setPendingLink(raw);
+      return;
     }
-    setChatTitle(link.title ?? null);
-    setOpenRuntime(link.runtimeId);
+    setShowConnect(false);
+    if (parsed.peer) {
+      // A notification for another watched computer must switch before it
+      // opens a runtime id that only means something on that kernel. The
+      // target must be one this phone already knows; a link cannot repoint
+      // the proxy at an arbitrary origin.
+      const key = originKey("lan", parsed.peer);
+      const saved = loadConnections();
+      const known =
+        saved.some((row) => row.kind === "lan" && originKey("lan", row.target) === key) ||
+        fleetWatcher.current.peers.some(
+          (peer) => peer.kind === "lan" && originKey("lan", peer.target) === key,
+        );
+      if (!known) {
+        setActionError("这条通知指向的电脑不在连接列表里。");
+        return;
+      }
+      const here =
+        Boolean(link.state.target) && originKey("lan", link.state.target ?? "") === key;
+      if (!here) {
+        const entry = saved.find(
+          (row) => row.kind === "lan" && originKey("lan", row.target) === key,
+        );
+        const result = await link.switchTo({
+          kind: "lan",
+          target: parsed.peer,
+          name: entry?.name ?? parsed.peerName ?? parsed.peer,
+          usedAt: 0,
+        });
+        if (!result.ok) {
+          setActionError("没能切到那台电脑，稍后再试。");
+          return;
+        }
+      }
+    }
+    if (parsed.root) {
+      setProject(parsed.root);
+      setChatProject(parsed.root);
+    }
+    setChatTitle(parsed.title ?? null);
+    setOpenRuntime(parsed.runtimeId);
     void connection.refresh();
-  }, []);
+  }, [boot, link]);
+
+  useEffect(() => {
+    if (pendingLink === null) return;
+    const settling =
+      boot === "loading" ||
+      link.state.phase === "connecting" ||
+      link.state.phase === "reconnecting" ||
+      (boot === "ready" && link.state.phase === "idle");
+    if (settling) return;
+    setPendingLink(null);
+    void openChatLink(pendingLink);
+  }, [pendingLink, boot, link.state.phase, openChatLink]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;

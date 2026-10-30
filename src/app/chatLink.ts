@@ -10,6 +10,9 @@ export interface ChatLink {
   runtimeId: string;
   root?: string;
   title?: string;
+  /** A LAN target when the conversation lives on another watched computer. */
+  peer?: string;
+  peerName?: string;
 }
 
 export function parseChatLink(raw: string): ChatLink | null {
@@ -20,10 +23,14 @@ export function parseChatLink(raw: string): ChatLink | null {
     if (!runtimeId) return null;
     const root = (url.searchParams.get("root") ?? "").trim();
     const title = (url.searchParams.get("title") ?? "").trim();
+    const peer = (url.searchParams.get("peer") ?? "").trim();
+    const peerName = (url.searchParams.get("peerName") ?? "").trim();
     return {
       runtimeId,
       ...(root ? { root } : {}),
       ...(title ? { title } : {}),
+      ...(peer ? { peer } : {}),
+      ...(peerName ? { peerName } : {}),
     };
   } catch {
     return null;

@@ -14,6 +14,8 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -78,6 +80,11 @@ public class TurnService extends Service {
     /** One pane the phone is watching. */
     private static final class Watch {
         final String runtime;
+        /** Notification identity; peers are prefixed so two kernels cannot collide. */
+        final String key;
+        /** The LAN target of the peer whose pane this is; empty on this computer. */
+        final String peer;
+        final String peerName;
         volatile String base;
         volatile String root;
         volatile String title;
@@ -85,11 +92,15 @@ public class TurnService extends Service {
         volatile boolean waiting;
         volatile String askSignature = "";
 
-        Watch(String runtime, String base, String root, String title) {
+        Watch(String runtime, String key, String base, String root, String title,
+              String peer, String peerName) {
             this.runtime = runtime;
+            this.key = key;
             this.base = base;
             this.root = root;
             this.title = title;
+            this.peer = peer;
+            this.peerName = peerName;
         }
 
         void update(String nextBase, String nextRoot, String nextTitle) {
@@ -113,6 +124,8 @@ public class TurnService extends Service {
     private int idlePolls = 0;
     /** Last time any proxy read answered; a watcher that cannot read must end. */
     private volatile long lastAnswerAt = System.currentTimeMillis();
+    /** Peers are read every third pass; they are background, not the chat. */
+    private int peerTick = 0;
 
     @Override
     public void onCreate() {
@@ -137,7 +150,7 @@ public class TurnService extends Service {
             String root = extra(intent, EXTRA_ROOT);
             Watch watch = watches.get(runtime);
             if (watch == null) {
-                watches.put(runtime, new Watch(runtime, nextBase, root, title));
+                watches.put(runtime, new Watch(runtime, runtime, nextBase, root, title, "", ""));
             } else {
                 watch.update(nextBase, root, title);
             }
@@ -270,7 +283,7 @@ public class TurnService extends Service {
                         seen.add(row.id);
                         Watch watch = watches.get(row.id);
                         if (watch == null) {
-                            watches.put(row.id, new Watch(row.id, row.base, row.root, row.title));
+                            watches.put(row.id, new Watch(row.id, row.id, row.base, row.root, row.title, "", ""));
                             watch = watches.get(row.id);
                         } else {
                             watch.update(row.base, row.root, row.title);
@@ -292,6 +305,7 @@ public class TurnService extends Service {
         if (!listed) {
             for (Watch watch : new ArrayList<>(watches.values())) answered |= pollStatus(watch);
         }
+        if (++peerTick % 3 == 0) answered |= pollPeers();
         if (listed || answered) lastAnswerAt = System.currentTimeMillis();
         notePoll(listed);
         if (System.currentTimeMillis() - lastAnswerAt > QUIET_STOP_MS) {
@@ -315,6 +329,109 @@ public class TurnService extends Service {
             idlePolls = 0;
         }
         refreshRunning();
+    }
+
+    /**
+     * Every third pass: the other watchable LAN computers.
+     *
+     * The active computer is in the fleet list too; it is skipped by comparing
+     * its target with the proxy's own origin, because /runtimes already
+     * watches that one directly.
+     */
+    private boolean pollPeers() {
+        if (stopping) return false;
+        boolean answered = false;
+        String activeTarget = "";
+        HttpURLConnection config = null;
+        try {
+            config = open("/__reasonix/config");
+            if (config.getResponseCode() == 200) {
+                String body;
+                try (InputStream input = config.getInputStream()) {
+                    body = readText(input);
+                }
+                activeTarget = new JSONObject(body).optString("origin", "").trim();
+                answered = true;
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "peer config skipped", e);
+        } finally {
+            if (config != null) config.disconnect();
+        }
+        List<FleetPeers.Peer> peers = null;
+        HttpURLConnection list = null;
+        try {
+            list = open("/__reasonix/fleet");
+            if (list.getResponseCode() == 200) {
+                String body;
+                try (InputStream input = list.getInputStream()) {
+                    body = readText(input);
+                }
+                peers = FleetPeers.parse(body);
+                if (peers != null) answered = true;
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "peer list skipped", e);
+        } finally {
+            if (list != null) list.disconnect();
+        }
+        if (peers == null) return answered;
+        Set<String> live = new HashSet<>();
+        for (FleetPeers.Peer peer : peers) {
+            if (!activeTarget.isEmpty() && peer.target.equalsIgnoreCase(activeTarget)) continue;
+            live.add(peer.target);
+            answered |= pollPeer(peer);
+        }
+        // A peer that left the list, or became the active computer, must not
+        // keep an ask or a stale running state.
+        for (Watch watch : new ArrayList<>(watches.values())) {
+            if (watch.peer.isEmpty() || live.contains(watch.peer)) continue;
+            watches.remove(watch.key);
+            finishWatch(watch);
+        }
+        return answered;
+    }
+
+    /** One peer's runtimes, then the status of each. */
+    private boolean pollPeer(FleetPeers.Peer peer) {
+        boolean answered = false;
+        HttpURLConnection connection = null;
+        try {
+            connection = open("/__reasonix/fleet/" + peer.index + "/runtimes");
+            if (connection.getResponseCode() != 200) return false;
+            String body;
+            try (InputStream input = connection.getInputStream()) {
+                body = readText(input);
+            }
+            List<RuntimeList.Row> rows = RuntimeList.parse(body);
+            if (rows == null) return false;
+            answered = true;
+            Set<String> keys = new HashSet<>();
+            String prefix = "/__reasonix/fleet/" + peer.index;
+            for (RuntimeList.Row row : rows) {
+                String key = "p:" + peer.target + ":" + row.id;
+                keys.add(key);
+                String base = prefix + (row.base.startsWith("/") ? row.base : "/" + row.base);
+                Watch watch = watches.get(key);
+                if (watch == null) {
+                    watches.put(key, new Watch(row.id, key, base, row.root, row.title, peer.target, peer.name));
+                    watch = watches.get(key);
+                } else {
+                    watch.update(base, row.root, row.title);
+                }
+                answered |= pollStatus(watch);
+            }
+            for (Watch watch : new ArrayList<>(watches.values())) {
+                if (!watch.peer.equals(peer.target) || keys.contains(watch.key)) continue;
+                watches.remove(watch.key);
+                finishWatch(watch);
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "peer poll skipped", e);
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        return answered;
     }
 
     /** One pane's status: asks and completion live here. */
@@ -400,7 +517,7 @@ public class TurnService extends Service {
         if (status.signature.equals(watch.askSignature)) return;
         if (!manager.areNotificationsEnabled()) return;
         watch.askSignature = status.signature;
-        manager.notify(askId(watch.runtime), buildAsk(watch, status.text));
+        manager.notify(askId(watch.key), buildAsk(watch, status.text));
     }
 
     private Notification buildAsk(Watch watch, String text) {
@@ -409,6 +526,7 @@ public class TurnService extends Service {
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(heading)
                 .setContentText(text)
+                .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
@@ -416,8 +534,8 @@ public class TurnService extends Service {
                 // that something is waiting until the phone is unlocked.
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicAsk())
-                .setContentIntent(openChat(watch, askRequest(watch.runtime)))
-                .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(watch, askRequest(watch.runtime)));
+                .setContentIntent(openChat(watch, askRequest(watch.key)))
+                .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(watch, askRequest(watch.key)));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
@@ -445,7 +563,7 @@ public class TurnService extends Service {
 
     private void cancelAsk(Watch watch) {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager != null) manager.cancel(askId(watch.runtime));
+        if (manager != null) manager.cancel(askId(watch.key));
         watch.askSignature = "";
     }
 
@@ -580,13 +698,13 @@ public class TurnService extends Service {
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle(heading)
                 .setContentText("这一轮已完成")
-                .setSubText("Reasonix")
+                .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
                 .setAutoCancel(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicDone())
-                .setContentIntent(openChat(watch, doneRequest(watch.runtime)))
+                .setContentIntent(openChat(watch, doneRequest(watch.key)))
                 .build();
-        manager.notify(doneId(watch.runtime), notification);
+        manager.notify(doneId(watch.key), notification);
     }
 
     /** Open the conversation that was blocked; fall back to the app. */
@@ -598,6 +716,9 @@ public class TurnService extends Service {
             String link = "reasonix://chat?runtime=" + Uri.encode(watch.runtime)
                     + "&root=" + Uri.encode(watch.root)
                     + "&title=" + Uri.encode(watch.title);
+            if (!watch.peer.isEmpty()) {
+                link += "&peer=" + Uri.encode(watch.peer) + "&peerName=" + Uri.encode(watch.peerName);
+            }
             intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link), this, MainActivity.class);
         } else {
             intent = new Intent(this, MainActivity.class);
