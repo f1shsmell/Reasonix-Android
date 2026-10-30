@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SWIPE_MIN_PX, insideHorizontalScroller, swipeTo } from "./swipe";
+import { SWIPE_MIN_PX, insideHorizontalScroller, swipeDirection, swipeTo } from "./swipe";
 
 /**
  * The swipe rule is a pure function because the failure mode is subtle: a
@@ -9,6 +9,10 @@ import { SWIPE_MIN_PX, insideHorizontalScroller, swipeTo } from "./swipe";
 
 function drag(from: "recent" | "projects", dx: number, dy = 0) {
   return swipeTo({ startX: 200, startY: 400, endX: 200 + dx, endY: 400 + dy, tab: from });
+}
+
+function direction(dx: number, dy = 0) {
+  return swipeDirection({ startX: 200, startY: 400, endX: 200 + dx, endY: 400 + dy });
 }
 
 describe("swipeTo", () => {
@@ -41,6 +45,18 @@ describe("swipeTo", () => {
 
   it("requires the distance in either direction equally", () => {
     expect(drag("projects", SWIPE_MIN_PX)).toBe("recent");
+  });
+});
+
+describe("swipeDirection", () => {
+  it("returns one step in the direction the content should move", () => {
+    expect(direction(-120)).toBe(1);
+    expect(direction(120)).toBe(-1);
+  });
+
+  it("has no opinion about short or diagonal drags", () => {
+    expect(direction(SWIPE_MIN_PX - 1)).toBe(0);
+    expect(direction(-120, 100)).toBe(0);
   });
 });
 

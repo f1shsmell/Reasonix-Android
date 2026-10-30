@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { TouchEvent as ReactTouchEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
 import { Network } from "@capacitor/network";
@@ -69,6 +70,8 @@ import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
 import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
+import { Segmented } from "./Segmented";
+import { swipeDirection } from "./swipe";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
@@ -102,6 +105,15 @@ function signInFailureText(failure: unknown): string {
   }
   return failure instanceof Error ? `登录服务不可用：${failure.message}` : "登录服务不可用";
 }
+
+/** The three settings panes, in swipe order. */
+const PANE_OPTIONS = [
+  { value: "connect", label: "电脑" },
+  { value: "machine", label: "机器" },
+  { value: "prefs", label: "偏好" },
+] as const;
+
+type Pane = (typeof PANE_OPTIONS)[number]["value"];
 
 /** A refusal from the identity service while signing in or approving. */
 function accountFailureText(failure: unknown): string {
@@ -148,7 +160,9 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** Which half of settings is showing: the computer, or this phone. */
-  const [pane, setPane] = useState<"connect" | "machine" | "prefs">("connect");
+  const [pane, setPane] = useState<Pane>("connect");
+  /** The direction the pane arrived from, so the slide reads as movement. */
+  const [paneDir, setPaneDir] = useState<"none" | "forward" | "back">("none");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -162,6 +176,57 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   const trustResolve = useRef<((accepted: boolean) => void) | null>(null);
   /** The scroll container; switching panes starts at the top, not mid-page. */
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** Where a touch began, for the sideways swipe between panes. */
+  const paneTouch = useRef<{ x: number; y: number; owned: boolean } | null>(null);
+
+  const choosePane = useCallback(
+    (next: Pane) => {
+      if (next === pane) return;
+      const from = PANE_OPTIONS.findIndex((option) => option.value === pane);
+      const to = PANE_OPTIONS.findIndex((option) => option.value === next);
+      // Reset before the new pane paints, so the slide starts at its top.
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      setPaneDir(to > from ? "forward" : "back");
+      setPane(next);
+    },
+    [pane],
+  );
+
+  /**
+   * A sideways drag between settings panes.
+   *
+   * The drag is judged on release, after the vertical scroll has had its
+   * chance, so a list flick never changes pane. A touch that began in a text
+   * field or on a sheet belongs to that control, not to the page.
+   */
+  const onPaneTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const start = event.touches[0];
+    if (!start) return;
+    const target = event.target as Element | null;
+    const owned =
+      target !== null && typeof target.closest === "function"
+        ? target.closest("input, textarea, select, .sheet-backdrop") !== null
+        : false;
+    paneTouch.current = { x: start.clientX, y: start.clientY, owned };
+  };
+
+  const onPaneTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const start = paneTouch.current;
+    paneTouch.current = null;
+    if (!start || start.owned) return;
+    const end = event.changedTouches[0];
+    if (!end) return;
+    const direction = swipeDirection({
+      startX: start.x,
+      startY: start.y,
+      endX: end.clientX,
+      endY: end.clientY,
+    });
+    if (direction === 0) return;
+    const index = PANE_OPTIONS.findIndex((option) => option.value === pane);
+    const next = PANE_OPTIONS[index + direction];
+    if (next) choosePane(next.value);
+  };
 
   const confirmTrust = useCallback(
     (prompt: TrustPrompt) =>
@@ -182,10 +247,6 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
 
   const cancelTrust = useCallback(() => settleTrust(false), [settleTrust]);
   useBackCloser(trustAsk !== null, cancelTrust);
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [pane]);
 
   // A connection attempt waiting on a person must not outlive the screen.
   useEffect(
@@ -727,7 +788,12 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         : "局域网";
 
   return (
-    <div className="connect" ref={scrollRef}>
+    <div
+      className="connect"
+      ref={scrollRef}
+      onTouchStart={onPaneTouchStart}
+      onTouchEnd={onPaneTouchEnd}
+    >
       <div className="settings-bar">
         <header className="settings-head">
           {onClose ? (
@@ -737,7 +803,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           ) : (
             <span className="bar-spacer" />
           )}
-          <h1>设置</h1>
+          <div className="settings-title">
+            <h1>设置</h1>
+            <span>连接、机器与偏好</span>
+          </div>
           {onClose ? (
             <button type="button" className="linkbtn" onClick={onClose}>
               完成
@@ -747,35 +816,16 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           )}
         </header>
 
-        <div className="segmented settings-tabs" role="group" aria-label="设置页面">
-          <button
-            type="button"
-            className={pane === "connect" ? "on" : ""}
-            aria-pressed={pane === "connect"}
-            onClick={() => setPane("connect")}
-          >
-            电脑
-          </button>
-          <button
-            type="button"
-            className={pane === "machine" ? "on" : ""}
-            aria-pressed={pane === "machine"}
-            onClick={() => setPane("machine")}
-          >
-            机器
-          </button>
-          <button
-            type="button"
-            className={pane === "prefs" ? "on" : ""}
-            aria-pressed={pane === "prefs"}
-            onClick={() => setPane("prefs")}
-          >
-            偏好
-          </button>
-        </div>
+        <Segmented
+          className="settings-tabs"
+          ariaLabel="设置页面"
+          value={pane}
+          options={PANE_OPTIONS}
+          onChange={choosePane}
+        />
       </div>
 
-      <div className="connect-body">
+      <div className="connect-body" data-dir={paneDir} key={pane}>
         {/* The computer this phone is pointed at and what the link is doing:
             the one fact every control below is judged against, so it leads. */}
         {pane === "connect" ? (
@@ -961,35 +1011,21 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         <section className="group">
           <div className="setting">
             <span className="setting-title">主题</span>
-            <div className="segmented" role="group" aria-label="主题">
-              {THEME_CHOICES.map((choice) => (
-                <button
-                  key={choice.value}
-                  type="button"
-                  className={theme === choice.value ? "on" : ""}
-                  aria-pressed={theme === choice.value}
-                  onClick={() => pickTheme(choice.value)}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              ariaLabel="主题"
+              value={theme}
+              options={THEME_CHOICES}
+              onChange={pickTheme}
+            />
           </div>
           <div className="setting">
             <span className="setting-title">会话</span>
-            <div className="segmented" role="group" aria-label="会话详略">
-              {FOLD_CHOICES.map((choice) => (
-                <button
-                  key={choice.value}
-                  type="button"
-                  className={fold === choice.value ? "on" : ""}
-                  aria-pressed={fold === choice.value}
-                  onClick={() => pickFold(choice.value)}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              ariaLabel="会话详略"
+              value={fold}
+              options={FOLD_CHOICES}
+              onChange={pickFold}
+            />
           </div>
         </section>
         <p className="group-note">

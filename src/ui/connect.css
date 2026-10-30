@@ -16,8 +16,11 @@
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: env(safe-area-inset-top) var(--pad) calc(24px + env(safe-area-inset-bottom));
-  background: var(--bg);
+  background: transparent;
+  /* A vertical scroll keeps the page, a horizontal drag is the pane switch. */
+  touch-action: pan-y pinch-zoom;
 }
 
 /* ---- title bar ---- */
@@ -29,23 +32,41 @@
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 4px 0 8px;
-  background: var(--bg);
+  margin: 0 calc(-1 * var(--pad));
+  padding: 4px var(--pad) 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
 
 .settings-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 2px 0 6px;
 }
 
-.settings-head h1 {
+.settings-title {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-title h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 27px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.settings-title span {
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.02em;
 }
 
 .settings-head .linkbtn {
@@ -69,6 +90,13 @@
 
 .settings-tabs {
   margin-bottom: 0;
+  min-height: 40px;
+  background: color-mix(in srgb, var(--bg-raised) 62%, transparent);
+}
+
+.settings-tabs button {
+  min-height: 34px;
+  font-size: 14px;
 }
 
 .machine-bar {
@@ -83,14 +111,30 @@
 .machine-bar i {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent-fill), var(--ok));
+  transition: width var(--dur-3) var(--ease-out);
 }
 
 .connect-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-top: 8px;
   padding-bottom: 12px;
+}
+
+.connect-body > .group-label:first-child {
+  margin-top: 2px;
+}
+
+/* Switching panes is a horizontal move: the next pane arrives from the side
+   the finger would have carried it. */
+.connect-body[data-dir="forward"] {
+  animation: rx-view-forward var(--dur-3) var(--ease-out) both;
+}
+
+.connect-body[data-dir="back"] {
+  animation: rx-view-back var(--dur-3) var(--ease-out) both;
 }
 
 /* ---- the link hero ---- */
@@ -106,15 +150,16 @@
   align-items: center;
   gap: 2px;
   padding: 22px 18px 18px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: calc(var(--radius) + 6px);
   background:
     radial-gradient(
       120% 90% at 50% -12%,
-      color-mix(in srgb, var(--hero-tone) 13%, transparent),
+      color-mix(in srgb, var(--hero-tone) 15%, transparent),
       transparent 70%
     ),
     var(--bg-raised);
+  box-shadow: var(--shadow-1);
   overflow: hidden;
   text-align: center;
 }
@@ -300,17 +345,18 @@
 /* ---- groups ---- */
 
 .group-label {
-  margin: 14px 4px 0;
+  margin: 16px 4px 2px;
   color: var(--fg-dim);
   font-size: 12px;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .group-note {
   margin: 0 4px;
   color: var(--fg-dim);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 /* A disclosure whose marker the flex layout removed. It looked like a plain
@@ -347,13 +393,15 @@ details[open] > .group-note summary::after,
 .group {
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
   overflow: hidden;
 }
 
 .group > * + * {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
 }
 
 /* ---- rows ---- */
@@ -363,8 +411,8 @@ details[open] > .group-note summary::after,
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 48px;
-  padding: 10px 14px;
+  min-height: 52px;
+  padding: 11px 14px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -372,12 +420,17 @@ details[open] > .group-note summary::after,
   font: inherit;
   font-size: 16px;
   text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 /* A row that is a button still reads as a row, not as a button: no border,
    no radius, and the pressed state is the whole card dimming. */
 button.setting {
   cursor: pointer;
+}
+
+button.setting:active:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 button.setting:disabled {
@@ -441,7 +494,7 @@ button.setting:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: 52px;
   padding: 10px 4px 10px 14px;
   border: 0;
   border-radius: 0;
@@ -450,6 +503,11 @@ button.setting:disabled {
   font: inherit;
   font-size: 16px;
   text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.saved-row .saved-main:active:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 .saved-row .saved-main:disabled {
@@ -463,11 +521,11 @@ button.setting:disabled {
 .saved-row .saved-forget {
   flex: none;
   align-self: stretch;
-  min-height: 48px;
+  min-height: 52px;
   min-width: 44px;
   padding: 0 12px;
   border: 0;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--line-soft);
   border-radius: 0;
   background: transparent;
   color: var(--fg-dim);
@@ -497,6 +555,7 @@ button.setting:disabled {
   font: inherit;
   font-size: 16px;
   text-align: right;
+  caret-color: var(--accent);
 }
 
 .setting input::placeholder {
@@ -505,6 +564,10 @@ button.setting:disabled {
 
 .setting input:focus {
   outline: none;
+}
+
+.setting:focus-within {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 /* A labelled row holding an input: the label keeps its own width so two rows
@@ -533,13 +596,15 @@ label.setting .setting-title {
 }
 
 .grant .code {
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 26px;
   letter-spacing: 0.18em;
   text-align: center;
   padding: 14px 8px;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  user-select: all;
 }
 
 /* The action rows inside the grant card are their own separators. */
@@ -592,6 +657,7 @@ label.setting .setting-title {
   flex: 1;
   min-width: 0;
   padding: 2px;
+  --seg-pad: 2px;
 }
 
 .setting .segmented button {

@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { Segmented } from "../app/Segmented";
 import { currentModel, effortChoices, loadModels, modelShortName, switchEffort, switchModel } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
 import { loadStatus } from "../net/status";
@@ -151,23 +152,16 @@ export function ModelSheet({ base, fallback, onClose, onSwitched }: ModelSheetPr
         {choices.length > 0 ? (
           <>
             <p className="sheet-label">思考强度</p>
-            <div className="segmented" role="group" aria-label="思考强度">
-              {choices.map((choice) => {
-                const selected = choice === "auto" ? effort === "" : effort === choice;
-                return (
-                  <button
-                    key={choice}
-                    type="button"
-                    className={selected ? "on" : ""}
-                    aria-pressed={selected}
-                    disabled={busy !== ""}
-                    onClick={() => void pickEffort(choice)}
-                  >
-                    {busy === `effort:${choice}` ? "…" : choice}
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented
+              ariaLabel="思考强度"
+              value={choices.includes(effort) ? effort : "auto"}
+              options={choices.map((choice) => ({
+                value: choice,
+                label: busy === `effort:${choice}` ? "…" : choice,
+                disabled: busy !== "",
+              }))}
+              onChange={(next) => void pickEffort(next)}
+            />
             <p className="meta sheet-note">
               只影响下一个回合；auto 让模型自己决定。
             </p>

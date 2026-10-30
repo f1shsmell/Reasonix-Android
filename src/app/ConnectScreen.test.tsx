@@ -227,7 +227,68 @@ function typeInto(selector: string, value: string): Promise<void> {
   });
 }
 
+/** Drive a touch drag through the DOM, the way a finger would. */
+function swipeOn(node: Element, from: [number, number], to: [number, number]): void {
+  act(() => {
+    const start = new Event("touchstart", { bubbles: true });
+    Object.assign(start, { touches: [{ clientX: from[0], clientY: from[1] }] });
+    node.dispatchEvent(start);
+    const end = new Event("touchend", { bubbles: true });
+    Object.assign(end, { changedTouches: [{ clientX: to[0], clientY: to[1] }] });
+    node.dispatchEvent(end);
+  });
+}
+
+/** The pane named by the selected settings tab. */
+function activePane(): string {
+  return container.querySelector(".settings-tabs button.on")?.textContent?.trim() ?? "";
+}
+
 describe("ConnectScreen", () => {
+  describe("settings panes", () => {
+    it("moves to the next pane on a left swipe and back on a right swipe", async () => {
+      await renderScreen();
+      const root = container.querySelector(".connect") as Element;
+      expect(activePane()).toBe("电脑");
+
+      swipeOn(root, [300, 300], [120, 310]);
+      expect(activePane()).toBe("机器");
+
+      swipeOn(root, [120, 300], [300, 310]);
+      expect(activePane()).toBe("电脑");
+    });
+
+    it("does not change pane on a vertical drag", async () => {
+      await renderScreen();
+      const root = container.querySelector(".connect") as Element;
+
+      swipeOn(root, [300, 300], [120, 520]);
+
+      expect(activePane()).toBe("电脑");
+    });
+
+    it("leaves a drag that began in a text field to the field", async () => {
+      await renderScreen();
+      const field = container.querySelector(".manual-group input") as Element;
+
+      swipeOn(field, [300, 300], [120, 310]);
+
+      expect(activePane()).toBe("电脑");
+    });
+
+    it("stops at the first and last pane instead of wrapping", async () => {
+      await renderScreen();
+      const root = container.querySelector(".connect") as Element;
+
+      swipeOn(root, [120, 300], [300, 310]);
+      expect(activePane()).toBe("电脑");
+
+      await press("偏好");
+      swipeOn(root, [300, 300], [120, 310]);
+      expect(activePane()).toBe("偏好");
+    });
+  });
+
   it("fills the remembered origin and connects without a code", async () => {
     await renderScreen();
 
