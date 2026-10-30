@@ -1,0 +1,37 @@
+name: Restore release keystore
+description: Decode the signing keystore and write Android's keystore.properties.
+
+inputs:
+  keystore_base64:
+    description: Base64 of the release keystore
+    required: true
+  store_password:
+    required: true
+  key_alias:
+    required: true
+  key_password:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write the keystore and its properties
+      shell: bash
+      env:
+        KEYSTORE_BASE64: ${{ inputs.keystore_base64 }}
+        STORE_PASSWORD: ${{ inputs.store_password }}
+        KEY_ALIAS: ${{ inputs.key_alias }}
+        KEY_PASSWORD: ${{ inputs.key_password }}
+      run: |
+        if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+          echo "::error::release signing secrets are not configured; see RELEASING.md"
+          exit 1
+        fi
+        printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+        cat > android/keystore.properties <<EOF
+        storeFile=$RUNNER_TEMP/release.jks
+        storePassword=$STORE_PASSWORD
+        keyAlias=$KEY_ALIAS
+        keyPassword=$KEY_PASSWORD
+        EOF
+        chmod 600 "$RUNNER_TEMP/release.jks" android/keystore.properties

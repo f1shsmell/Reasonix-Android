@@ -102,25 +102,12 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
-      - name: Restore the release keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
-            echo "::error::release signing secrets are not configured; see RELEASING.md"
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          cat > android/keystore.properties <<EOF
-          storeFile=$RUNNER_TEMP/release.jks
-          storePassword=$STORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-          chmod 600 "$RUNNER_TEMP/release.jks" android/keystore.properties
+      - uses: ./.github/actions/restore-keystore
+        with:
+          keystore_base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          store_password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key_alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key_password: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - name: Build the signed release APK
         working-directory: android
         run: |

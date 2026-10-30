@@ -1,0 +1,52 @@
+name: sign-check
+
+# Verifies the signing path without publishing: secrets, R8 and apksigner run
+# exactly as the release does, but no tag is required and no asset is touched.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-apk:
+    name: Signed release APK (no publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npm run build
+      - run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
+      - uses: ./.github/actions/restore-keystore
+        with:
+          keystore_base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          store_password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key_alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key_password: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Build the signed release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleRelease --console=plain
+      - name: Verify the signature
+        working-directory: android
+        run: |
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$apksigner"
+          "$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reasonix-signed-check
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
