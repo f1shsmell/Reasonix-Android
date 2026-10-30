@@ -92,12 +92,20 @@ describe("submit", () => {
 describe("cancel", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("posts to the runtime's cancel route", async () => {
+  it("posts a JSON body to the runtime's cancel route", async () => {
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchSpy);
     const result = await cancel("/rt/r1");
     expect(result.ok).toBe(true);
-    expect(fetchSpy).toHaveBeenCalledWith("/rt/r1/cancel", expect.anything());
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/rt/r1/cancel",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        credentials: "same-origin",
+      }),
+    );
   });
 
   it("reports an offline cancel as retryable", async () => {

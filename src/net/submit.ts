@@ -81,9 +81,14 @@ export async function submit(base: string, input: string): Promise<SubmitResult>
 /** Ask the kernel to stop the running turn. */
 export async function cancel(base: string): Promise<SubmitResult> {
   try {
+    // The kernel's CSRF guard refuses every POST without a JSON content type,
+    // even the cancel route whose handler ignores the body. An empty object is
+    // the cheapest body that satisfies it.
     const response = await fetchWithTimeout(`${base}/cancel`, {
       method: "POST",
+      headers: { "content-type": "application/json" },
       credentials: "same-origin",
+      body: "{}",
     }, 8_000);
     if (response.ok) return { ok: true };
     const body = await refusal(response);
