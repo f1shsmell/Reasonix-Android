@@ -264,6 +264,35 @@ groups it now carries:
   hand-written string would drift the first time someone bumps the version,
   and the row exists to answer "which build is this?".
 
+## Cloud device identity
+
+The account grant names the Host's X25519 public key, so the relay's TLS
+endpoint and the account service are both outside the identity check: either
+could hand the phone a different key and the ciphertext would still open.
+`src/net/deviceTrust.ts` closes that: the first cloud connection shows the
+SHA-256 of the decoded key (first 16 bytes, grouped by four) and asks; the
+accepted pin goes to `localStorage["reasonix.devices.v1"]`. Every later open,
+including `RelayLink.reconnect`, recomputes and compares without asking.
+
+- A changed or unreadable key **never** reaches the confirm callback. A tap
+  cannot approve a substitution. Two deliberate resets exist: the × on a saved
+  cloud row drops the pin with the row, and the settings error for
+  `trust_changed` carries a "重新确认身份" action that forgets the pin and
+  starts a fresh prompt. The second exists because a pin can outlive the row —
+  first trust accepted, then verification failed, so nothing was saved — and
+  the row's × would then be unreachable.
+- An automatic recovery passes no `confirm`. If the pin is gone (storage
+  cleared, device never confirmed), the link ends with `device.trust_required`
+  and the person connects once from settings, rather than a prompt appearing
+  over a chat nobody asked from.
+- `RelayError` kinds `trust_required / trust_changed / trust_unreadable /
+  trust_cancelled` are mapped in `failureFromError` and `linkFailure`; all are
+  non-retryable. The socket is not opened before the check.
+- Not verified: the desktop Studio UI does not necessarily display the same
+  fingerprint, so comparing by eye is not yet a supported step. What the pin
+  does guarantee is continuity — the second key must equal the first this
+  phone approved.
+
 ## Structured asks (surface)
 
 A question may carry a `surface` instead of `options`. Such a question has no

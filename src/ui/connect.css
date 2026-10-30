@@ -380,3 +380,50 @@ label.setting .setting-title {
 .approval.on small {
   color: var(--accent);
 }
+
+/* ---- first trust ---- */
+
+/* The first cloud connection asks who the computer is. The name and the
+   fingerprint lead the sheet; the warning that a changed key is refused later
+   explains what the decision buys. */
+.trust-sheet .group-note {
+  margin: 0 0 10px;
+}
+
+.trust-device {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.trust-fingerprint {
+  margin: 0 0 6px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  text-align: center;
+  word-break: break-all;
+  user-select: all;
+}
+
+.trust-sheet .trust-cancel {
+  color: var(--fg-dim);
+}
+
+/* The one recovery a changed key has: an explicit reset, not a prompt that
+   appears in place of the refusal. */
+.notice .notice-action {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}

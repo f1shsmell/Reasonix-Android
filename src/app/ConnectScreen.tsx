@@ -8,7 +8,7 @@
  * browser, with the session token kept by the proxy.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
 import { Network } from "@capacitor/network";
@@ -38,6 +38,8 @@ import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink }
 import { linkFailure } from "../net/link";
 import type { LinkError } from "../net/link";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
+import { forgetDevice } from "../net/deviceTrust";
+import type { TrustPrompt } from "../net/deviceTrust";
 import { clearRelayDevice } from "../net/relayStore";
 import {
   forgetCloudConnections,
@@ -87,6 +89,37 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
   const [approvalError, setApprovalError] = useState("");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
+  /** The first cloud connection to a device waits here for the person. */
+  const [trustAsk, setTrustAsk] = useState<TrustPrompt | null>(null);
+  /** The device whose pin no longer matches; the error offers to start over. */
+  const [retrust, setRetrust] = useState<string | null>(null);
+  const trustResolve = useRef<((accepted: boolean) => void) | null>(null);
+
+  const confirmTrust = useCallback(
+    (prompt: TrustPrompt) =>
+      new Promise<boolean>((resolve) => {
+        trustResolve.current?.(false);
+        trustResolve.current = resolve;
+        setTrustAsk(prompt);
+      }),
+    [],
+  );
+
+  const settleTrust = useCallback((accepted: boolean) => {
+    const resolve = trustResolve.current;
+    trustResolve.current = null;
+    setTrustAsk(null);
+    resolve?.(accepted);
+  }, []);
+
+  // A connection attempt waiting on a person must not outlive the screen.
+  useEffect(
+    () => () => {
+      trustResolve.current?.(false);
+      trustResolve.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -235,9 +268,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
       }
       setBusy("正在连接云端");
       setError("");
+      setRetrust(null);
       let link: Awaited<ReturnType<typeof connectRelay>> | null = null;
       try {
-        link = await connectRelay(deviceId);
+        link = await connectRelay(deviceId, { confirm: confirmTrust });
         const next = await markRelay(deviceId);
         setConfig(next);
         setAccount(next.account);
@@ -261,6 +295,15 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
         if (link !== null) clearRelayRouting();
         if (failure instanceof RelayError && failure.kind === "reauth") {
           setError("登录已过期，请重新登录 Reasonix 账号。");
+        } else if (failure instanceof RelayError && failure.kind === "trust_cancelled") {
+          // The sheet was closed on purpose; an error banner would read as a
+          // fault rather than as the choice the person just made.
+          setError("");
+        } else if (failure instanceof RelayError && failure.kind === "trust_changed") {
+          setError(failure.message);
+          setRetrust(deviceId);
+        } else if (failure instanceof RelayError && failure.kind.startsWith("trust_")) {
+          setError(failure.message);
         } else {
           setError(failure instanceof Error ? `云端连接没建立：${failure.message}` : "云端连接没建立");
         }
@@ -268,7 +311,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
         setBusy("");
       }
     },
-    [devices, onConnected, onFailed],
+    [confirmTrust, devices, onConnected, onFailed],
   );
 
   const applyLink = useCallback(
@@ -593,7 +636,12 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
                       type="button"
                       className="saved-forget"
                       aria-label={`移除 ${label}`}
-                      onClick={() => setSaved(forgetConnection(entry.kind, entry.target))}
+                      onClick={() => {
+                        // Removing a cloud computer is also how a reinstall
+                        // becomes approvable: its old identity goes with it.
+                        if (entry.kind === "cloud") forgetDevice(entry.target);
+                        setSaved(forgetConnection(entry.kind, entry.target));
+                      }}
                     >
                       ×
                     </button>
@@ -602,7 +650,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
               })}
             </section>
             <p className="group-note">
-              回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换。
+              回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换；× 会移除记录，云端电脑同时忘记已确认的身份。
             </p>
           </>
         ) : null}
@@ -677,7 +725,24 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
           <p className="group-note">{busy}…</p>
         ) : null}
 
-        {error ? <div className="notice error">{error}</div> : null}
+        {error ? (
+          <div className="notice error">
+            {error}
+            {retrust ? (
+              <button
+                type="button"
+                className="notice-action"
+                onClick={() => {
+                  forgetDevice(retrust);
+                  setRetrust(null);
+                  void connectCloud(retrust);
+                }}
+              >
+                这台电脑重装过，重新确认它的身份
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <details className="group-note">
           <summary>局域网还是连不上？</summary>
@@ -829,6 +894,43 @@ export function ConnectScreen({ onConnected, onFailed, onClose, runtimeBase }: C
           </>
         ) : null}
       </div>
+
+      {trustAsk ? (
+        <div className="sheet-backdrop" role="presentation" onClick={() => settleTrust(false)}>
+          <div
+            className="sheet trust-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="trust-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sheet-head">
+              <h2 id="trust-title">确认这台电脑</h2>
+            </div>
+            <p className="trust-device">
+              {devices.find((device) => device.id === trustAsk.id)?.name ?? trustAsk.id}
+            </p>
+            <p className="group-note">
+              第一次用云端连接这台电脑。记住它的身份后，钥匙一旦变化，手机会拒绝连接，而不是悄悄改用新身份。
+            </p>
+            <div className="trust-fingerprint" aria-label="电脑身份指纹">
+              {trustAsk.fingerprint}
+            </div>
+            <ul className="sheet-actions">
+              <li>
+                <button type="button" onClick={() => settleTrust(true)}>
+                  信任并连接
+                </button>
+              </li>
+              <li>
+                <button type="button" className="trust-cancel" onClick={() => settleTrust(false)}>
+                  取消
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

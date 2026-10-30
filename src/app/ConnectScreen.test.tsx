@@ -14,8 +14,9 @@ import {
   signOutAccount,
 } from "../net/server";
 import type { ProxyConfig, RemoteDevice } from "../net/server";
-import { connectRelay, clearRelayRouting } from "../net/relay";
+import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
+import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
 import { loadStatus } from "../net/status";
 import { rememberConnection } from "../net/savedConnections";
 import type { LinkError } from "../net/link";
@@ -219,7 +220,10 @@ describe("ConnectScreen", () => {
 
     await pressRow("DESKTOP", "windows");
 
-    expect(connectRelay).toHaveBeenCalledWith("dev1");
+    expect(connectRelay).toHaveBeenCalledWith(
+      "dev1",
+      expect.objectContaining({ confirm: expect.any(Function) }),
+    );
     expect(markRelay).toHaveBeenCalledWith("dev1");
     expect(onConnected).toHaveBeenCalledTimes(1);
   });
@@ -425,6 +429,21 @@ describe("ConnectScreen saved connections", () => {
     expect(container.textContent).toContain("192.168.5.2:56789");
   });
 
+  it("forgets a removed cloud computer's identity along with the row", async () => {
+    const key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+    const print = await deviceFingerprint(key);
+    pinDevice({ id: "dev1", publicKey: key, fingerprint: print?.full ?? "" });
+    rememberConnection("cloud", "dev1", "工作室的电脑");
+    await renderScreen();
+
+    act(() => {
+      (container.querySelector('[aria-label="移除 工作室的电脑"]') as HTMLButtonElement).click();
+    });
+
+    expect(trustedDevice("dev1")).toBeNull();
+    expect(container.textContent).not.toContain("工作室的电脑");
+  });
+
   it("asks for an account before using a cloud row", async () => {
     rememberConnection("cloud", "dev1", "工作室的电脑");
     await renderScreen();
@@ -444,6 +463,119 @@ describe("ConnectScreen saved connections", () => {
     await renderScreen();
 
     expect(container.textContent).toContain("楼下的台式机");
+  });
+});
+
+describe("ConnectScreen first trust", () => {
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function signedInWithDevice(): void {
+    vi.mocked(readProxyConfig).mockResolvedValue(
+      config({ account: { signedIn: true, user: { label: "me" } } }),
+    );
+    vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
+  }
+
+  /** A relay that really waits for the person, the way `checkDeviceTrust` does. */
+  function awaitingTrust(): void {
+    vi.mocked(connectRelay).mockImplementation(async (id, options) => {
+      const accepted = await options?.confirm?.({ id, fingerprint: "a1b2 c3d4 e5f6 7890" });
+      if (!accepted) throw new RelayError("trust_cancelled", "已取消确认这台电脑的身份。");
+      return { close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>;
+    });
+  }
+
+  it("shows the fingerprint before the first cloud connection", async () => {
+    signedInWithDevice();
+    awaitingTrust();
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+
+    expect(container.querySelector(".trust-sheet")?.textContent).toContain("a1b2 c3d4 e5f6 7890");
+    expect(container.querySelector(".trust-sheet")?.textContent).toContain("DESKTOP");
+
+    await press("信任并连接");
+    await settle();
+
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".trust-sheet")).toBeNull();
+  });
+
+  it("leaves the relay alone when the person declines", async () => {
+    signedInWithDevice();
+    awaitingTrust();
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+    await press("取消");
+    await settle();
+
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(clearRelayRouting).not.toHaveBeenCalled();
+    expect(container.querySelector(".trust-sheet")).toBeNull();
+    expect(container.querySelector(".notice.error")).toBeNull();
+  });
+
+  it("says why a changed fingerprint was refused", async () => {
+    signedInWithDevice();
+    vi.mocked(connectRelay).mockRejectedValue(
+      new RelayError("trust_changed", "这台电脑的身份指纹和上次不同，连接已拒绝。"),
+    );
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+    await settle();
+
+    expect(container.textContent).toContain("身份指纹和上次不同");
+    expect(onConnected).not.toHaveBeenCalled();
+  });
+
+  it("offers an explicit reset when the fingerprint changed", async () => {
+    signedInWithDevice();
+    let calls = 0;
+    vi.mocked(connectRelay).mockImplementation(async (id, options) => {
+      calls += 1;
+      if (calls === 1) throw new RelayError("trust_changed", "这台电脑的身份指纹和上次不同，连接已拒绝。");
+      const accepted = await options?.confirm?.({ id, fingerprint: "ffff 0000 1111 2222" });
+      if (!accepted) throw new RelayError("trust_cancelled", "已取消确认这台电脑的身份。");
+      return { close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>;
+    });
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+    await settle();
+
+    expect(container.textContent).toContain("身份指纹和上次不同");
+
+    await press("这台电脑重装过，重新确认它的身份");
+    expect(container.querySelector(".trust-sheet")?.textContent).toContain("ffff 0000 1111 2222");
+
+    await press("信任并连接");
+    await settle();
+
+    expect(connectRelay).toHaveBeenCalledTimes(2);
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves a pending prompt when the screen goes away", async () => {
+    signedInWithDevice();
+    awaitingTrust();
+    await renderScreen();
+
+    await pressRow("DESKTOP", "windows");
+    expect(container.querySelector(".trust-sheet")).not.toBeNull();
+
+    act(() => root?.unmount());
+    root = null;
+    await settle();
+
+    expect(onConnected).not.toHaveBeenCalled();
   });
 });
 

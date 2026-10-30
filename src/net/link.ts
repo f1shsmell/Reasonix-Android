@@ -130,6 +130,24 @@ export function linkFailure(code: string, detail?: string): LinkError {
       return { code, message: "Reasonix 账号已退出，请重新登录。", retryable: false, ...withDetail };
     case "device_not_found":
       return { code, message: "这台电脑已从账号里移除。", retryable: false, ...withDetail };
+    case "device.trust_required":
+      return {
+        code,
+        message: "这台电脑还没有在手机上确认身份，请在设置里手动连接一次。",
+        retryable: false,
+        ...withDetail,
+      };
+    case "device.trust_changed":
+      return {
+        code,
+        message: "这台电脑的身份指纹变了，连接已拒绝。确认是重装后，先在设置里移除这台电脑。",
+        retryable: false,
+        ...withDetail,
+      };
+    case "device.trust_unreadable":
+      return { code, message: "这台电脑的身份公钥无法识别，连接已拒绝。", retryable: false, ...withDetail };
+    case "device.trust_cancelled":
+      return { code, message: "已取消确认这台电脑的身份。", retryable: false, ...withDetail };
     case "client.timeout":
       return { code, message: "电脑没有及时回应，稍后重试。", retryable: true, ...withDetail };
     case "no.doors":

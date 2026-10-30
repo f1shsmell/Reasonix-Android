@@ -76,6 +76,14 @@ export function failureFromError(error: unknown): LinkError {
         return linkFailure("account.signed_out", error.message);
       case "ended":
         return linkFailure("device_not_found", error.message);
+      case "trust_required":
+        return linkFailure("device.trust_required", error.message);
+      case "trust_changed":
+        return linkFailure("device.trust_changed", error.message);
+      case "trust_unreadable":
+        return linkFailure("device.trust_unreadable", error.message);
+      case "trust_cancelled":
+        return linkFailure("device.trust_cancelled", error.message);
       default:
         return linkFailure("client.offline", error.message);
     }

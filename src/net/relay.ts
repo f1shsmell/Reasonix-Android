@@ -14,6 +14,8 @@
 
 import { Capacitor } from "@capacitor/core";
 import { NativeWebSocket } from "../native/socket";
+import { checkDeviceTrust } from "./deviceTrust";
+import type { ConfirmTrust, TrustResult } from "./deviceTrust";
 import { fetchWithTimeout } from "./http";
 
 const ACCOUNT_GRANT = "/__reasonix/account/grant";
@@ -21,7 +23,14 @@ const HOSTED_RELAY = "wss://remote.reasonix.io";
 const INFO_PREFIX = "reasonix-remote-v1|";
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 
-export type RelayKind = "reauth" | "ended" | "transient";
+export type RelayKind =
+  | "reauth"
+  | "ended"
+  | "transient"
+  | "trust_required"
+  | "trust_changed"
+  | "trust_unreadable"
+  | "trust_cancelled";
 
 export class RelayError extends Error {
   constructor(
@@ -161,6 +170,22 @@ async function requestGrant(deviceId: string): Promise<RelayGrant> {
     device: body.device,
     relay: typeof body.relay === "string" ? body.relay : HOSTED_RELAY,
   };
+}
+
+function trustError(result: Extract<TrustResult, { ok: false }>): RelayError {
+  switch (result.code) {
+    case "changed":
+      return new RelayError(
+        "trust_changed",
+        "这台电脑的身份指纹和上次不同，连接已拒绝。",
+      );
+    case "unreadable":
+      return new RelayError("trust_unreadable", "这台电脑的身份公钥无法识别，连接已拒绝。");
+    case "cancelled":
+      return new RelayError("trust_cancelled", "已取消确认这台电脑的身份。");
+    default:
+      return new RelayError("trust_required", "这台电脑还没有在手机上确认身份，请在设置里手动连接一次。");
+  }
 }
 
 function relayUrl(named: string): string {
@@ -311,12 +336,17 @@ function nextMessage(socket: SocketLike, timeout = HANDSHAKE_TIMEOUT_MS): Promis
   });
 }
 
-async function openConnection(deviceId: string): Promise<Connection> {
+async function openConnection(deviceId: string, confirm?: ConfirmTrust): Promise<Connection> {
   const grant = await requestGrant(deviceId);
   if (grant.device.id !== deviceId || grant.device.revokedAt || !grant.device.capabilities.includes("desktop")) {
     throw new RelayError("ended", "这台电脑没有开启远程桌面，或已被移除。");
   }
-  const socket = createSocket(`${relayUrl(grant.relay)}/v1/sessions/connect`, [
+  const relay = relayUrl(grant.relay);
+  // The grant names the key; no socket opens before this phone has agreed
+  // that the key is the one it spoke to last.
+  const trust = await checkDeviceTrust(grant.device, confirm);
+  if (!trust.ok) throw trustError(trust);
+  const socket = createSocket(`${relay}/v1/sessions/connect`, [
     "reasonix.remote.v1",
     `reasonix.auth.${grant.ticket}`,
   ]);
@@ -744,9 +774,18 @@ function install(): void {
   } as unknown as typeof EventSource;
 }
 
-/** Open the relay and route kernel requests through it. */
-export async function connectRelay(deviceId: string): Promise<RelayLink> {
-  const first = await openConnection(deviceId);
+/**
+ * Open the relay and route kernel requests through it.
+ *
+ * `confirm` is only for a person who is present; an automatic recovery passes
+ * none, so a device whose pin was lost ends the link instead of asking a
+ * question nobody is looking at.
+ */
+export async function connectRelay(
+  deviceId: string,
+  options: { confirm?: ConfirmTrust } = {},
+): Promise<RelayLink> {
+  const first = await openConnection(deviceId, options.confirm);
   const link = new RelayLink(deviceId, first);
   const previous = activeLink;
   install();
@@ -758,10 +797,13 @@ export async function connectRelay(deviceId: string): Promise<RelayLink> {
 }
 
 /** Reuse a live link to the same device, or replace it. */
-export async function ensureRelay(deviceId: string): Promise<RelayLink> {
+export async function ensureRelay(
+  deviceId: string,
+  options: { confirm?: ConfirmTrust } = {},
+): Promise<RelayLink> {
   const current = activeLink;
   if (current !== null && !current.isEnded && current.device === deviceId) return current;
-  return connectRelay(deviceId);
+  return connectRelay(deviceId, options);
 }
 
 export function relayAlive(): boolean {

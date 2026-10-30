@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RelayEventSource, RelayLink, isKernelPath } from "./relay";
+import { deviceFingerprint, pinDevice } from "./deviceTrust";
+import { RelayError, RelayEventSource, RelayLink, connectRelay, isKernelPath } from "./relay";
 
 type Handler = (event: { data?: string; code?: number; reason?: string }) => void;
 
@@ -73,6 +74,68 @@ describe("RelayLink", () => {
     const response = await responsePromise;
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("[]");
+  });
+});
+
+describe("connectRelay trust", () => {
+  const KEY_A = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+  const KEY_B = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
+
+  function grant(publicKey: string): Response {
+    return new Response(
+      JSON.stringify({
+        grant: { ticket: "ticket" },
+        device: { id: "dev1", publicKey, capabilities: ["desktop"], revokedAt: null },
+        relay: "wss://remote.reasonix.io",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  afterEach(() => localStorage.clear());
+
+  it("refuses a changed key before any socket is opened", async () => {
+    const print = await deviceFingerprint(KEY_A);
+    pinDevice({ id: "dev1", publicKey: KEY_A, fingerprint: print?.full ?? "" });
+    const socket = vi.fn();
+    vi.stubGlobal("WebSocket", socket);
+    vi.stubGlobal("fetch", vi.fn(async () => grant(KEY_B)));
+
+    const failure = await connectRelay("dev1").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RelayError);
+    expect((failure as RelayError).kind).toBe("trust_changed");
+    expect(socket).not.toHaveBeenCalled();
+  });
+
+  it("asks for a decision rather than trusting an unpinned key on its own", async () => {
+    const socket = vi.fn();
+    vi.stubGlobal("WebSocket", socket);
+    vi.stubGlobal("fetch", vi.fn(async () => grant(KEY_A)));
+
+    const failure = await connectRelay("dev1").catch((error: unknown) => error);
+
+    expect((failure as RelayError).kind).toBe("trust_required");
+    expect(socket).not.toHaveBeenCalled();
+  });
+
+  it("opens the socket once the person approves the key", async () => {
+    const attempted = new Error("socket attempted");
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor() {
+          throw attempted;
+        }
+      },
+    );
+    vi.stubGlobal("fetch", vi.fn(async () => grant(KEY_A)));
+    const confirm = vi.fn(async () => true);
+
+    await expect(connectRelay("dev1", { confirm })).rejects.toBe(attempted);
+
+    expect(confirm).toHaveBeenCalledWith({ id: "dev1", fingerprint: expect.any(String) });
+    expect(localStorage.getItem("reasonix.devices.v1")).toContain("dev1");
   });
 });
 
