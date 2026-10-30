@@ -430,6 +430,32 @@ describe("App", () => {
     ).toBe(true);
   });
 
+  it("starts the watcher when only another computer has work", async () => {
+    vi.mocked(loadFleet).mockResolvedValue([
+      { kind: "lan", target: "http://192.168.7.7:56789", name: "studio", watchable: true },
+    ]);
+    vi.mocked(fleetRead).mockImplementation(async (path: string) => {
+      if (path === "/__reasonix/fleet/0/runtimes") {
+        return {
+          ok: true as const,
+          body: [{ id: "r2", base: "/rt/r2", root: "/work/app", name: "app", sessionPath: "/work/app/b.jsonl" }],
+        };
+      }
+      if (path === "/__reasonix/fleet/0/rt/r2/status") {
+        return {
+          ok: true as const,
+          body: { decisions: [{ id: "d1", kind: "ask", questions: [{ prompt: "继续?" }] }], running: false },
+        };
+      }
+      return { ok: false as const, code: "http.404" };
+    });
+
+    await renderApp();
+    await settle();
+
+    expect(startTurnNotification).toHaveBeenCalledWith({ mode: "lan" });
+  });
+
   it("opens another computer's blocked conversation by switching to it", async () => {
     vi.mocked(loadFleet).mockResolvedValue([
       { kind: "lan", target: "http://192.168.7.7:56789", name: "studio", watchable: true },

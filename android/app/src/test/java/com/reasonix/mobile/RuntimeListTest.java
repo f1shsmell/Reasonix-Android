@@ -1,6 +1,7 @@
 package com.reasonix.mobile;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -13,14 +14,17 @@ public class RuntimeListTest {
     public void readsThePanesAStatusIsAddressedTo() {
         List<RuntimeList.Row> rows = RuntimeList.parse(
                 "[{\"id\":\"r1\",\"base\":\"/rt/r1\",\"root\":\"C:\\\\work\","
-                        + "\"name\":\"app\",\"sessionPath\":\"C:\\\\work\\\\.reasonix\\\\one.jsonl\"},"
+                        + "\"name\":\"app\",\"sessionPath\":\"C:\\\\work\\\\.reasonix\\\\one.jsonl\","
+                        + "\"readOnly\":true},"
                         + "{\"id\":\"r2\",\"base\":\"/rt/r2\",\"root\":\"/work/docs\",\"name\":\"docs\"}]");
 
         assertEquals(2, rows.size());
         assertEquals("r1", rows.get(0).id);
         assertEquals("/rt/r1", rows.get(0).base);
         assertEquals("one.jsonl", rows.get(0).title);
+        assertTrue(rows.get(0).readOnly);
         assertEquals("docs", rows.get(1).title);
+        assertFalse(rows.get(1).readOnly);
     }
 
     @Test

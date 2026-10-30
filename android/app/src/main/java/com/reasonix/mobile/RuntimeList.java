@@ -22,12 +22,15 @@ final class RuntimeList {
         final String base;
         final String root;
         final String title;
+        /** Another process holds the write lease; the phone cannot answer it. */
+        final boolean readOnly;
 
-        Row(String id, String base, String root, String title) {
+        Row(String id, String base, String root, String title, boolean readOnly) {
             this.id = id;
             this.base = base;
             this.root = root;
             this.title = title;
+            this.readOnly = readOnly;
         }
     }
 
@@ -47,7 +50,8 @@ final class RuntimeList {
                         id,
                         base,
                         row.optString("root", ""),
-                        titleOf(row.optString("sessionPath", ""), row.optString("name", ""))));
+                        titleOf(row.optString("sessionPath", ""), row.optString("name", "")),
+                        row.optBoolean("readOnly", false)));
             }
         } catch (Exception ignored) {
             // A body this build cannot read is not a list of panes.
