@@ -370,6 +370,23 @@ only after `/runtimes` answers through it. The proxy's own origin and candidates
 are part of the same list, so an install that predates the records still gains
 them on first boot.
 
+The link itself is a state machine (`src/net/link.ts`, `src/app/useLink.ts`):
+`connecting` reports which of 探测地址 → 切换上游 → 读取会话 is running,
+`connected` only after `probeUpstream` answers `/runtimes`, and a failed attempt
+either schedules a retry with 1–30 s full-jitter backoff (eight attempts) or
+fails with a typed error. Authorization failures are not retried; network ones
+are. A network change, the app returning to the foreground, and the Home retry
+button are all `kick()`s: they cut a backoff wait short, and never start a
+second machine. A manual switch from the saved list bumps a generation token so
+a stale attempt cannot overwrite its result. ConnectScreen performs the same
+`/runtimes` check before it calls `onConnected`, so saving an address is no
+longer mistaken for connecting to a computer.
+
+Home carries the link as a row under the title bar: dot + computer name + state
+(`已连接` / `正在重连（第 n 次）` / `连接失败`). Tapping it opens 切换连接 with the
+saved computers, the current marker, and the two actions that belong there —
+重试连接 and 管理连接 (the settings screen).
+
 The LAN listener picks a free port unless `[serve].share_port` is set; its QR
 code carries `http://<ip>:<port>/#pair=<code>`. `/pair` does not exist on 8791
 (the Studio's main port). A code is valid for 5 minutes and once; the proxy
