@@ -313,6 +313,26 @@ before the machine starts, `link` is idle and the hero shows the setup line.
 The step list is drawn only when the machine is working, not for a manual
 attempt — one `POST` is not three stages.
 
+## The machine panel and checkpoints
+
+- `MachinePanel` is the settings page's **机器** tab: `/usage?days=30`,
+  `/context`, `/tools`, `/permissions`, `/studio/versions`, all read-only.
+  Each read is independent (`src/net/machine.ts` turns a failed one into a
+  missing section), so a kernel without one route still shows the rest. The
+  panel never writes: usage, boundary and version are the desktop's decisions,
+  and a phone that could flip them would change every session on that machine.
+- The base is the first runtime's `/rt/{id}` (App passes it). The desktop's
+  port uses the same path for the running project; a kernel that mounts these
+  at the root would need a fallback, which is not implemented.
+- `/usage`, `/permissions`, `/sandbox` and `/studio` were added to
+  `relay.ts` `KERNEL_PATHS`, so a paired cloud client sees the panel too.
+- Checkpoints live in the chat's `…` menu. `CheckpointsSheet` reads
+  `/checkpoints`, then `POST /rewind/prepare` (`{turn, scope:"both"}`), shows
+  the plan's coverage and gaps, and only `POST /rewind/commit` (`{planId}`)
+  changes anything. `requiresConfirmation` is shown, not auto-accepted.
+  Only edit-tool writes are snapshotted; shell side effects are not covered,
+  and the sheet says so.
+
 ## Settings, home and the latest row
 
 - `ConnectScreen` has two panes, **电脑** and **偏好**. The first holds the
@@ -766,6 +786,28 @@ Decisions that will look optional until they are removed:
   The workflow refuses to build without the four secrets and verifies the APK
   with `apksigner`. The first signed release needs one uninstall for phones
   that installed a debug-signed build.
+
+## Performance pass (2026-10-31)
+
+- The loopback proxy's accept loop has its own thread and the worker pool is
+  `SynchronousQueue`-backed (8 core, 32 max). With the accept call on a pool
+  thread, a core of four left three workers and the queue meant the pool never
+  grew; two SSE streams could starve every other request.
+- SSE upstream reads use a 25 s timeout instead of zero. A timeout writes a
+  `: keepalive` chunk to the WebView; when the client is gone that write throws
+  and the thread ends. Previously a closed WebView was not noticed until the
+  kernel happened to send a frame, leaking one thread per reconnection.
+- The turn service renews the 30-minute wake lock on every poll, so a long turn
+  keeps the CPU after the first cap; `stopSelf(startId)` no longer stops a
+  newer start when a foreground attempt is refused.
+- `vite` no longer emits source maps into the APK (5 MB of maps), and
+  `ChatScreen` is a lazy chunk: the entry bundle is 699 kB instead of 1.01 MB,
+  with Markdown/highlight in a 329 kB chunk loaded on first chat.
+- Relay event polling waits 3 s while idle instead of 1.5 s; every poll is a
+  relay round trip. Cursor writes are throttled to 500 ms with a `pagehide`
+  flush instead of one synchronous localStorage write per SSE frame.
+- Not done: history pagination and virtualisation. A very long transcript is
+  still read and rendered whole.
 
 ## Review result
 

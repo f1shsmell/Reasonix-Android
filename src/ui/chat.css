@@ -1110,6 +1110,58 @@
   opacity: 0.5;
 }
 
+.checkpoints-sheet .checkpoint-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.checkpoint-list small {
+  color: var(--fg-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.rewind-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.rewind-plan strong {
+  font-size: 15px;
+}
+
+.rewind-plan p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rewind-plan .rewind-gap {
+  color: var(--warn);
+}
+
+.rewind-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.rewind-actions .chip {
+  flex: 1;
+}
+
 /* What the kernel said about the last message sent into a running turn. A
    strip above the composer, because it answers "did my interruption land?" and
    that question is asked while looking at the composer. */

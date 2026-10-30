@@ -691,7 +691,8 @@ export class RelayEventSource {
         }
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, active ? 200 : 1500));
+      // A quiet feed is not free: this is a relay round trip from the phone.
+      await new Promise((resolve) => setTimeout(resolve, active ? 200 : 3_000));
     }
   }
 }
@@ -721,6 +722,10 @@ const KERNEL_PATHS = [
   "/changes",
   "/sessions",
   "/balance",
+  "/usage",
+  "/permissions",
+  "/sandbox",
+  "/studio",
   "/new",
   "/submit",
   "/cancel",

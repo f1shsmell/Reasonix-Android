@@ -39,6 +39,7 @@ import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
+import { CheckpointsSheet } from "./CheckpointsSheet";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -178,6 +179,7 @@ function HeadMenu({
   onReload,
   onModel,
   onApproval,
+  onCheckpoints,
 }: {
   model: string;
   approval: string;
@@ -185,6 +187,7 @@ function HeadMenu({
   onReload: () => void;
   onModel: () => void;
   onApproval: () => void;
+  onCheckpoints: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -219,6 +222,12 @@ function HeadMenu({
             <button type="button" onClick={onApproval}>
               <span>工具批准</span>
               <small>{approvalLabel(approval) || "读不到当前模式"}</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onCheckpoints}>
+              <span>检查点</span>
+              <small>回到之前的一轮</small>
             </button>
           </li>
         </ul>
@@ -536,6 +545,7 @@ export function ChatScreen({
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
   const [approvalSheet, setApprovalSheet] = useState(false);
+  const [checkpointsSheet, setCheckpointsSheet] = useState(false);
   /** This conversation's tool posture, as `/status` reports it. */
   const [approval, setApproval] = useState("");
   /** What the kernel said about the last message sent into a running turn. */
@@ -1373,6 +1383,10 @@ export function ChatScreen({
             setHeadMenu(false);
             setApprovalSheet(true);
           }}
+          onCheckpoints={() => {
+            setHeadMenu(false);
+            setCheckpointsSheet(true);
+          }}
         />
       ) : null}
 
@@ -1385,6 +1399,14 @@ export function ChatScreen({
             setApproval(mode);
             setApprovalSheet(false);
           }}
+        />
+      ) : null}
+
+      {checkpointsSheet && runtime ? (
+        <CheckpointsSheet
+          base={runtime.base}
+          onClose={() => setCheckpointsSheet(false)}
+          onRewound={() => reload()}
         />
       ) : null}
 

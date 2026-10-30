@@ -38,6 +38,7 @@ import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink }
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
+import { MachinePanel } from "./MachinePanel";
 import { useBackCloser } from "./backStack";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
@@ -72,9 +73,11 @@ export interface ConnectScreenProps {
   onClose?: () => void;
   /** The app's link machine, for the hero at the top of the page. */
   link?: LinkState;
+  /** A runtime base for the machine panel's per-session reads. */
+  machineBase?: string | undefined;
 }
 
-export function ConnectScreen({ onConnected, onFailed, onClose, link }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBase }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -86,7 +89,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link }: ConnectS
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** Which half of settings is showing: the computer, or this phone. */
-  const [pane, setPane] = useState<"connect" | "prefs">("connect");
+  const [pane, setPane] = useState<"connect" | "machine" | "prefs">("connect");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -635,6 +638,14 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link }: ConnectS
         </button>
         <button
           type="button"
+          className={pane === "machine" ? "on" : ""}
+          aria-pressed={pane === "machine"}
+          onClick={() => setPane("machine")}
+        >
+          机器
+        </button>
+        <button
+          type="button"
           className={pane === "prefs" ? "on" : ""}
           aria-pressed={pane === "prefs"}
           onClick={() => setPane("prefs")}
@@ -649,6 +660,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link }: ConnectS
         {pane === "connect" ? (
           <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
         ) : null}
+
+        {pane === "machine" ? <MachinePanel base={machineBase} /> : null}
 
         {/* Places this phone has already connected to. The current one is
             marked; the rest are one tap away, with a way to forget a computer

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
@@ -11,7 +11,6 @@ import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
 import { loadConnections } from "../net/savedConnections";
-import { ChatScreen } from "../chat/ChatScreen";
 import { Home } from "./Home";
 import type { HomeTab } from "./swipe";
 import { parseChatLink } from "./chatLink";
@@ -26,6 +25,12 @@ import "../ui/tokens.css";
 import "../ui/shell.css";
 import "../ui/chat.css";
 import "../ui/connect.css";
+
+// The chat carries Markdown and syntax highlighting; a phone that only reads
+// the list should not pay for them at launch.
+const ChatScreen = lazy(() =>
+  import("../chat/ChatScreen").then((module) => ({ default: module.ChatScreen })),
+);
 
 const connection = new Connection();
 
@@ -386,7 +391,12 @@ export function App() {
     );
   } else if (boot === "connect") {
     screen = (
-      <ConnectScreen onConnected={onConnected} onFailed={link.noteFailed} link={link.state} />
+      <ConnectScreen
+        onConnected={onConnected}
+        onFailed={link.noteFailed}
+        link={link.state}
+        machineBase={snapshot.runtimes[0]?.base}
+      />
     );
   } else if (showConnect) {
     // The kernel keeps the approval posture on the hub and persists it, so any
@@ -397,6 +407,7 @@ export function App() {
         onFailed={link.noteFailed}
         onClose={() => setShowConnect(false)}
         link={link.state}
+        machineBase={snapshot.runtimes[0]?.base}
       />
     );
   } else if (openRuntime) {
@@ -463,7 +474,15 @@ export function App() {
 
   return (
     <>
-      {screen}
+      <Suspense
+        fallback={
+          <div className="centered">
+            <div>正在打开会话…</div>
+          </div>
+        }
+      >
+        {screen}
+      </Suspense>
       {actionError ? (
         <div className="sendfail" role="alert">
           <span>{actionError}</span>
