@@ -90,10 +90,12 @@ public class TurnService extends Service {
         volatile String title;
         volatile boolean running;
         volatile boolean waiting;
+        /** Another process holds the lease; this phone cannot answer its asks. */
+        volatile boolean readOnly;
         volatile String askSignature = "";
 
         Watch(String runtime, String key, String base, String root, String title,
-              String peer, String peerName) {
+              String peer, String peerName, boolean readOnly) {
             this.runtime = runtime;
             this.key = key;
             this.base = base;
@@ -101,6 +103,7 @@ public class TurnService extends Service {
             this.title = title;
             this.peer = peer;
             this.peerName = peerName;
+            this.readOnly = readOnly;
         }
 
         void update(String nextBase, String nextRoot, String nextTitle) {
@@ -119,13 +122,17 @@ public class TurnService extends Service {
     private volatile int pollFailures = 0;
     private volatile boolean stopping = false;
     private ScheduledExecutorService watcher;
+    private ScheduledExecutorService peerWatcher;
     private final Map<String, Watch> watches = new ConcurrentHashMap<>();
+    /** A failed read this pass means the pane is not proven idle. */
+    private volatile boolean activeStatusFailed = false;
+    /** True while a peer sweep is running or the last one failed. */
+    private volatile boolean peerStatusFailed = true;
+    private volatile boolean peerSweeping = false;
     /** Consecutive discovery passes with nothing running or waiting. */
     private int idlePolls = 0;
     /** Last time any proxy read answered; a watcher that cannot read must end. */
     private volatile long lastAnswerAt = System.currentTimeMillis();
-    /** Peers are read every third pass; they are background, not the chat. */
-    private int peerTick = 0;
 
     @Override
     public void onCreate() {
@@ -150,7 +157,7 @@ public class TurnService extends Service {
             String root = extra(intent, EXTRA_ROOT);
             Watch watch = watches.get(runtime);
             if (watch == null) {
-                watches.put(runtime, new Watch(runtime, runtime, nextBase, root, title, "", ""));
+                watches.put(runtime, new Watch(runtime, runtime, nextBase, root, title, "", "", false));
             } else {
                 watch.update(nextBase, root, title);
             }
@@ -237,22 +244,37 @@ public class TurnService extends Service {
     }
 
     private synchronized void startWatching() {
-        if (watcher != null) return;
-        watcher = Executors.newSingleThreadScheduledExecutor();
-        watcher.scheduleWithFixedDelay(() -> {
-            try {
-                pollAll();
-            } catch (Exception e) {
-                // A poll that failed is not an answer; keep the last state.
-                Log.w(TAG, "watch poll failed", e);
-            }
-        }, 500, WATCH_POLL_MS, TimeUnit.MILLISECONDS);
+        if (watcher == null) {
+            watcher = Executors.newSingleThreadScheduledExecutor();
+            watcher.scheduleWithFixedDelay(() -> {
+                try {
+                    pollAll();
+                } catch (Exception e) {
+                    // A poll that failed is not an answer; keep the last state.
+                    Log.w(TAG, "watch poll failed", e);
+                }
+            }, 500, WATCH_POLL_MS, TimeUnit.MILLISECONDS);
+        }
+        if (peerWatcher == null) {
+            peerWatcher = Executors.newSingleThreadScheduledExecutor();
+            peerWatcher.scheduleWithFixedDelay(() -> {
+                try {
+                    pollPeers();
+                } catch (Exception e) {
+                    peerSweeping = false;
+                    Log.w(TAG, "peer poll failed", e);
+                }
+            }, 3000, 15_000, TimeUnit.MILLISECONDS);
+        }
     }
 
     private synchronized void stopWatching() {
         ScheduledExecutorService current = watcher;
         watcher = null;
         if (current != null) current.shutdownNow();
+        ScheduledExecutorService peers = peerWatcher;
+        peerWatcher = null;
+        if (peers != null) peers.shutdownNow();
     }
 
     /**
@@ -266,6 +288,7 @@ public class TurnService extends Service {
     private void pollAll() {
         if (stopping) return;
         renewWakeLock();
+        activeStatusFailed = false;
         boolean listed = false;
         boolean answered = false;
         HttpURLConnection connection = null;
@@ -284,12 +307,13 @@ public class TurnService extends Service {
                         seen.add(row.id);
                         Watch watch = watches.get(row.id);
                         if (watch == null) {
-                            watches.put(row.id, new Watch(row.id, row.id, row.base, row.root, row.title, "", ""));
+                            watches.put(row.id, new Watch(row.id, row.id, row.base, row.root, row.title, "", "", row.readOnly));
                             watch = watches.get(row.id);
                         } else {
                             watch.update(row.base, row.root, row.title);
                         }
-                        pollStatus(watch);
+                        watch.readOnly = row.readOnly;
+                        pollStatus(watch, false);
                     }
                     for (String id : new ArrayList<>(watches.keySet())) {
                         if (seen.contains(id)) continue;
@@ -304,9 +328,8 @@ public class TurnService extends Service {
             if (connection != null) connection.disconnect();
         }
         if (!listed) {
-            for (Watch watch : new ArrayList<>(watches.values())) answered |= pollStatus(watch);
+            for (Watch watch : new ArrayList<>(watches.values())) answered |= pollStatus(watch, false);
         }
-        if (++peerTick % 3 == 0) answered |= pollPeers();
         if (listed || answered) lastAnswerAt = System.currentTimeMillis();
         notePoll(listed);
         if (System.currentTimeMillis() - lastAnswerAt > QUIET_STOP_MS) {
@@ -321,7 +344,7 @@ public class TurnService extends Service {
                 break;
             }
         }
-        if (listed && !active) {
+        if (listed && !active && !activeStatusFailed && !peerStatusFailed && !peerSweeping) {
             if (++idlePolls >= 2) {
                 stopSelf();
                 return;
@@ -333,14 +356,18 @@ public class TurnService extends Service {
     }
 
     /**
-     * Every third pass: the other watchable LAN computers.
+     * The other watchable LAN computers, on their own slower cadence.
      *
      * The active computer is in the fleet list too; it is skipped by comparing
      * its target with the proxy's own origin, because /runtimes already
-     * watches that one directly.
+     * watches that one directly. A peer read must not delay the active poll,
+     * so this runs on its own thread.
      */
     private boolean pollPeers() {
         if (stopping) return false;
+        // Hold the idle stop for the whole sweep; only a clean pass releases it.
+        peerSweeping = true;
+        peerStatusFailed = false;
         boolean answered = false;
         String activeTarget = "";
         HttpURLConnection config = null;
@@ -355,6 +382,7 @@ public class TurnService extends Service {
                 answered = true;
             }
         } catch (Exception e) {
+            peerStatusFailed = true;
             Log.d(TAG, "peer config skipped", e);
         } finally {
             if (config != null) config.disconnect();
@@ -376,12 +404,18 @@ public class TurnService extends Service {
         } finally {
             if (list != null) list.disconnect();
         }
-        if (peers == null) return answered;
+        if (peers == null) {
+            peerStatusFailed = true;
+            peerSweeping = false;
+            return answered;
+        }
         Set<String> live = new HashSet<>();
         for (FleetPeers.Peer peer : peers) {
             if (!activeTarget.isEmpty() && peer.target.equalsIgnoreCase(activeTarget)) continue;
             live.add(peer.target);
-            answered |= pollPeer(peer);
+            boolean read = pollPeer(peer);
+            answered |= read;
+            if (!read) peerStatusFailed = true;
         }
         // A peer that left the list, or became the active computer, must not
         // keep an ask or a stale running state.
@@ -390,6 +424,8 @@ public class TurnService extends Service {
             watches.remove(watch.key);
             finishWatch(watch);
         }
+        if (answered) lastAnswerAt = System.currentTimeMillis();
+        peerSweeping = false;
         return answered;
     }
 
@@ -415,12 +451,13 @@ public class TurnService extends Service {
                 String base = prefix + (row.base.startsWith("/") ? row.base : "/" + row.base);
                 Watch watch = watches.get(key);
                 if (watch == null) {
-                    watches.put(key, new Watch(row.id, key, base, row.root, row.title, peer.target, peer.name));
+                    watches.put(key, new Watch(row.id, key, base, row.root, row.title, peer.target, peer.name, row.readOnly));
                     watch = watches.get(key);
                 } else {
                     watch.update(base, row.root, row.title);
                 }
-                answered |= pollStatus(watch);
+                watch.readOnly = row.readOnly;
+                answered |= pollStatus(watch, true);
             }
             for (Watch watch : new ArrayList<>(watches.values())) {
                 if (!watch.peer.equals(peer.target) || keys.contains(watch.key)) continue;
@@ -436,14 +473,20 @@ public class TurnService extends Service {
     }
 
     /** One pane's status: asks and completion live here. */
-    private boolean pollStatus(Watch watch) {
+    private boolean pollStatus(Watch watch, boolean peer) {
         if (stopping) return false;
         String prefix = watch.base;
-        if (prefix.isEmpty()) return false;
+        if (prefix.isEmpty()) {
+            markStatusFailed(peer);
+            return false;
+        }
         HttpURLConnection connection = null;
         try {
             connection = open(prefix + "/status");
-            if (connection.getResponseCode() != 200) return false;
+            if (connection.getResponseCode() != 200) {
+                markStatusFailed(peer);
+                return false;
+            }
             String body;
             try (InputStream input = connection.getInputStream()) {
                 body = readText(input);
@@ -451,7 +494,7 @@ public class TurnService extends Service {
             AskStatus status = AskStatus.parse(body);
             boolean wasRunning = watch.running;
             watch.running = status.running;
-            watch.waiting = !status.empty();
+            watch.waiting = !status.empty() && !watch.readOnly;
             syncAsk(watch, status);
             if (wasRunning && !status.running && !MainActivity.visible) {
                 notifyFinished(watch);
@@ -460,10 +503,16 @@ public class TurnService extends Service {
         } catch (Exception e) {
             // The next tick tries again; a dead pane must not kill the rest.
             Log.d(TAG, "status poll skipped", e);
+            markStatusFailed(peer);
             return false;
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    private void markStatusFailed(boolean peer) {
+        if (peer) peerStatusFailed = true;
+        else activeStatusFailed = true;
     }
 
     private HttpURLConnection open(String path) throws IOException {
@@ -537,7 +586,7 @@ public class TurnService extends Service {
         if (stopping) return;
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
-        if (status.empty()) {
+        if (watch.readOnly || status.empty()) {
             if (!watch.askSignature.isEmpty()) cancelAsk(watch);
             return;
         }

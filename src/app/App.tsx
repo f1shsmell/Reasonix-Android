@@ -225,15 +225,29 @@ export function App() {
   }, [link.state.phase, link.state.target, link.state.mode, link.state.name, syncFleet]);
 
   // The native watcher discovers every open pane itself; a running or
-  // blocked pane in the sweep is the trigger that makes sure it exists.
-  // Only the LAN proxy is reachable from native code; relay fetches live in
-  // the WebView, so a cloud link has no background status to poll yet.
+  // blocked pane on this computer *or another watched one* is the trigger
+  // that makes sure it exists. Only the LAN proxy is reachable from native
+  // code; relay fetches live in the WebView, so a cloud link has no
+  // background status to poll yet.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     if (link.state.mode !== "lan") return;
-    if (pending.items.length === 0 && pending.running.length === 0) return;
+    if (
+      pending.items.length === 0 &&
+      pending.running.length === 0 &&
+      fleet.pending.length === 0 &&
+      fleet.running.length === 0
+    ) {
+      return;
+    }
     startTurnNotification({ mode: "lan" });
-  }, [pending.items.length, pending.running.length, link.state.mode]);
+  }, [
+    pending.items.length,
+    pending.running.length,
+    fleet.pending.length,
+    fleet.running.length,
+    link.state.mode,
+  ]);
 
   const [actionError, setActionError] = useState("");
   /** A peer notification waits for the boot link to settle before switching. */
