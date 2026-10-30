@@ -17,6 +17,8 @@ import {
 } from "../net/server";
 import { connectRelay, ensureRelay } from "../net/relay";
 import { openRuntime } from "../net/workspaces";
+import { submit } from "../net/submit";
+import { startTurnNotification } from "../native/turn";
 import { loadTree } from "../net/tree";
 import { rememberConnection } from "../net/savedConnections";
 
@@ -115,6 +117,14 @@ vi.mock("../net/server", () => ({
 }));
 vi.mock("../net/tree", () => ({ loadTree: vi.fn(), DEFAULT_TREE_LIMIT: 60 }));
 vi.mock("../net/workspaces", () => ({ openRuntime: vi.fn() }));
+vi.mock("../net/submit", () => ({ submit: vi.fn() }));
+vi.mock("../native/turn", () => ({
+  startTurnNotification: vi.fn(),
+  stopTurnNotification: vi.fn(),
+  loadBackgroundStatus: vi.fn(async () => null),
+  openBatterySettings: vi.fn(),
+  openNotificationSettings: vi.fn(),
+}));
 vi.mock("./ConnectScreen", () => ({
   ConnectScreen: ({ onConnected, onClose }: { onConnected: () => void; onClose?: () => void }) => (
     <div data-testid="connect">
@@ -216,6 +226,9 @@ beforeEach(() => {
     ok: true,
     runtime: { id: "r9", base: "/rt/r9", root: "/work/app", name: "app" },
   });
+  vi.mocked(submit).mockReset();
+  vi.mocked(submit).mockResolvedValue({ ok: true });
+  vi.mocked(startTurnNotification).mockClear();
 });
 
 afterEach(() => {
@@ -240,6 +253,12 @@ async function renderApp(): Promise<void> {
     root?.render(<App />);
   });
   await settle();
+}
+
+function typeIntoArea(input: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function text(): string {
@@ -505,6 +524,32 @@ describe("App", () => {
 
     expect(openRuntime).toHaveBeenCalledWith("/work/app", undefined);
     expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
+  });
+
+  it("dispatches a task from home and watches it in the background", async () => {
+    await renderApp();
+
+    act(() => {
+      (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
+    });
+    const sheet = container.querySelector(".dispatch-sheet");
+    expect(sheet).toBeTruthy();
+    const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+    act(() => typeIntoArea(prompt, "修复登录白屏\n顺便跑测试"));
+    act(() => click("派发"));
+    await settle();
+
+    expect(openRuntime).toHaveBeenCalledWith("/work/app");
+    expect(submit).toHaveBeenCalledWith("/rt/r9", "修复登录白屏\n顺便跑测试");
+    expect(startTurnNotification).toHaveBeenCalledWith({
+      title: "修复登录白屏",
+      base: "/rt/r9",
+      root: "/work/app",
+      runtimeId: "r9",
+      mode: "lan",
+    });
+    expect(container.querySelector(".dispatch-sheet")).toBeNull();
+    expect(container.querySelector('[data-testid="chat"]')).toBeNull();
   });
 
   it("starts a new conversation from the home plus after choosing a project", async () => {

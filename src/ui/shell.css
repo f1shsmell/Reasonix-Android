@@ -729,3 +729,89 @@ pre.frame {
 .sheet-actions button[aria-pressed="true"] {
   color: var(--accent);
 }
+
+/* ---- dispatch ---- */
+
+.dispatch-sheet .group-note {
+  margin: 0 0 8px;
+}
+
+.dispatch-sheet .group-label {
+  margin: 8px 0 6px;
+}
+
+.dispatch-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dispatch-project {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dispatch-project.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dispatch-prompt {
+  display: block;
+  width: 100%;
+  min-height: 104px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.dispatch-prompt:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dispatch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dispatch-actions .linkbtn {
+  min-height: var(--tap);
+}
+
+.dispatch-send {
+  min-height: var(--tap);
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+}
+
+.dispatch-send:disabled {
+  opacity: 0.45;
+}

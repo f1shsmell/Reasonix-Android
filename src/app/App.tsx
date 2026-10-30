@@ -9,6 +9,9 @@ import { Fleet, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
+import { submit } from "../net/submit";
+import type { SubmitResult } from "../net/submit";
+import { startTurnNotification } from "../native/turn";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
@@ -45,6 +48,21 @@ function lanDoors(config: ProxyConfig | null): string[] {
     .filter((row) => row.kind === "lan")
     .map((row) => row.target);
   return [...new Set([config?.origin ?? "", ...(config?.candidates ?? []), ...saved].filter(Boolean))];
+}
+
+/** Why a dispatched turn did not start, as a sentence. */
+function dispatchFailure(result: SubmitResult): string {
+  if (result.unconfirmed) {
+    return "请求已经发出但没有回执，去列表确认任务是否已经开始。";
+  }
+  switch (result.code) {
+    case "client.offline":
+      return "连不上电脑，任务没有派出去。";
+    case "client.timeout":
+      return "电脑没有及时回应，任务可能已经开始，先去列表确认。";
+    default:
+      return `没派出去：${result.code ?? "unknown"}`;
+  }
 }
 
 /**
@@ -251,6 +269,35 @@ export function App() {
       reloadTree();
     },
     [openedRuntime, reloadTree],
+  );
+
+  /**
+   * Send a task and leave it running. The pane is created and submitted
+   * without opening the chat; the native turn service watches it so the
+   * answer or completion still reaches the phone.
+   */
+  const dispatchTask = useCallback(
+    async (root: string, prompt: string) => {
+      if (link.state.phase !== "connected") {
+        return { ok: false, message: "先连接电脑再派任务。" };
+      }
+      const opened = await openRuntimeOn(root);
+      if (!opened.ok) return { ok: false, message: runtimeOpenMessage(opened.code) };
+      const sent = await submit(opened.runtime.base, prompt);
+      if (!sent.ok) return { ok: false, message: dispatchFailure(sent) };
+      const firstLine = prompt.split(/\r?\n/, 1)[0]?.trim() ?? "";
+      startTurnNotification({
+        title: firstLine.slice(0, 60) || "派发的任务",
+        base: opened.runtime.base,
+        root,
+        runtimeId: opened.runtime.id,
+        ...(link.state.mode ? { mode: link.state.mode } : {}),
+      });
+      setActionError("");
+      reloadTree();
+      return { ok: true };
+    },
+    [link.state.mode, link.state.phase, reloadTree],
   );
 
   /** Leaving a conversation returns to its project, not to the project list. */
@@ -568,6 +615,7 @@ export function App() {
         // same call the list uses, minus the POST that opened it.
         onOpenRuntime={(id, root, title) => void openedRuntime(id, root, title)}
         onNewSession={(root) => void newSessionInProject(root)}
+        onDispatch={dispatchTask}
         onRefresh={refresh}
         onSettings={() => setShowConnect(true)}
         fleet={fleet}

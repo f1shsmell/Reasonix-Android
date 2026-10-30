@@ -63,6 +63,8 @@ export interface HomeProps {
   onOpenRuntime: (runtimeId: string, root: string, title: string) => void;
   /** Start a fresh conversation in a project the kernel already knows. */
   onNewSession: (root: string) => void;
+  /** Send a task and leave it running; the app answers whether it started. */
+  onDispatch?: (root: string, prompt: string) => Promise<{ ok: boolean; message?: string }>;
   onRefresh: () => void;
   /** Open the connection/account screen (sign-in, LAN switch, cloud devices). */
   onSettings?: () => void;
@@ -688,6 +690,112 @@ function NewSessionSheet({
   );
 }
 
+/**
+ * Send a task and walk away: the project is chosen, the prompt is one field,
+ * and the app starts a fresh pane without opening the chat. The native turn
+ * service keeps watching that pane so a question or completion still reaches
+ * the phone.
+ */
+function DispatchSheet({
+  projects,
+  computerName,
+  onClose,
+  onDispatch,
+}: {
+  projects: TreeProject[];
+  computerName?: string | undefined;
+  onClose: () => void;
+  onDispatch: (root: string, prompt: string) => Promise<{ ok: boolean; message?: string }>;
+}) {
+  useBackCloser(true, onClose);
+  const usable = projects.filter((project) => project.missing !== true);
+  const [root, setRoot] = useState(usable[0]?.root ?? "");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const send = async () => {
+    const prompt = text.trim();
+    if (!root || !prompt || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await onDispatch(root, prompt);
+      if (result.ok) {
+        onClose();
+        return;
+      }
+      setError(result.message ?? "没派出去，稍后再试。");
+    } catch {
+      setError("没派出去，稍后再试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+      <section
+        className="sheet dispatch-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="派任务"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>派任务</h2>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <p className="group-note">
+          在 {computerName ?? "这台电脑"} 后台运行；需要你处理或完成时会通知。
+        </p>
+
+        <p className="group-label">项目</p>
+        <div className="dispatch-projects" role="listbox" aria-label="项目">
+          {usable.map((project) => (
+            <button
+              key={project.root}
+              type="button"
+              role="option"
+              aria-selected={project.root === root}
+              className={`dispatch-project${project.root === root ? " on" : ""}`}
+              onClick={() => setRoot(project.root)}
+            >
+              {project.name}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          className="dispatch-prompt"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="要它做什么？例如：修复登录后白屏，跑完测试"
+          rows={4}
+          autoFocus
+        />
+        {error ? <div className="notice error">{error}</div> : null}
+
+        <div className="dispatch-actions">
+          <button type="button" className="linkbtn" onClick={onClose} disabled={busy}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="dispatch-send"
+            onClick={() => void send()}
+            disabled={busy || !root || text.trim() === ""}
+          >
+            {busy ? "正在派发…" : "派发"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function Home({
   snapshot,
   tree,
@@ -701,6 +809,7 @@ export function Home({
   onOpenSession,
   onOpenRuntime,
   onNewSession,
+  onDispatch,
   onRefresh,
   onSettings,
   fleet,
@@ -709,6 +818,7 @@ export function Home({
   const [query, setQuery] = useState("");
   const [sheet, setSheet] = useState(false);
   const [switchSheet, setSwitchSheet] = useState(false);
+  const [dispatchSheet, setDispatchSheet] = useState(false);
   /** Read when the sheet opens, so a settings change is reflected next time. */
   const [saved, setSaved] = useState<SavedConnection[]>([]);
   const [busy, setBusy] = useState("");
@@ -851,6 +961,17 @@ export function Home({
           <span className="bar-spacer" />
         )}
         <h1>Reasonix</h1>
+        {onDispatch ? (
+          <button
+            type="button"
+            className="iconbtn"
+            onClick={() => setDispatchSheet(true)}
+            aria-label="派任务"
+            disabled={link.phase !== "connected" || tree.projects.length === 0}
+          >
+            ➤
+          </button>
+        ) : null}
         <button
           type="button"
           className="iconbtn"
@@ -1005,6 +1126,15 @@ export function Home({
             setSheet(false);
             onNewSession(root);
           }}
+        />
+      ) : null}
+
+      {dispatchSheet && onDispatch ? (
+        <DispatchSheet
+          projects={tree.projects}
+          computerName={link.name}
+          onClose={() => setDispatchSheet(false)}
+          onDispatch={onDispatch}
         />
       ) : null}
 

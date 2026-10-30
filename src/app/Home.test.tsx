@@ -128,6 +128,12 @@ function typeInto(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function typeIntoArea(input: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 /** jsdom has no PointerEvent; React only reads the fields the row uses. */
 function pointer(node: Element, type: string, x: number, y: number): void {
   act(() => {
@@ -331,6 +337,53 @@ describe("Home", () => {
   it("reports a project's newest conversation as its activity", () => {
     const at = Date.now() - 60_000;
     expect(projectActivity(project())).toBe(at);
+  });
+
+  describe("Dispatch", () => {
+    it("sends a task without opening the chat", async () => {
+      const onDispatch = vi.fn(async () => ({ ok: true as const }));
+      render({ onDispatch });
+
+      act(() => {
+        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
+      });
+      const sheet = container.querySelector(".dispatch-sheet");
+      expect(sheet?.textContent).toContain("派任务");
+      expect(sheet?.textContent).toContain("app");
+
+      const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+      act(() => typeIntoArea(prompt, "修复登录白屏"));
+      act(() => {
+        (Array.from(sheet?.querySelectorAll("button") ?? []).find(
+          (candidate) => candidate.textContent?.trim() === "派发",
+        ) as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(onDispatch).toHaveBeenCalledWith("/work/app", "修复登录白屏");
+      expect(container.querySelector(".dispatch-sheet")).toBeNull();
+    });
+
+    it("keeps the sheet and the reason when the task cannot start", async () => {
+      const onDispatch = vi.fn(async () => ({ ok: false, message: "连不上电脑。" }));
+      render({ onDispatch });
+
+      act(() => {
+        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
+      });
+      const sheet = container.querySelector(".dispatch-sheet");
+      const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+      act(() => typeIntoArea(prompt, "跑一下测试"));
+      act(() => {
+        (Array.from(sheet?.querySelectorAll("button") ?? []).find(
+          (candidate) => candidate.textContent?.trim() === "派发",
+        ) as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(container.querySelector(".dispatch-sheet")).toBeTruthy();
+      expect(container.querySelector(".dispatch-sheet")?.textContent).toContain("连不上电脑。");
+    });
   });
 
   describe("Needs You", () => {
