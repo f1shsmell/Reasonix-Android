@@ -3,17 +3,23 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import { Browser } from "@capacitor/browser";
 import { ConnectScreen } from "./ConnectScreen";
 import {
+  approveDevice,
   clearRelay,
   configureProxy,
   listRemoteDevices,
   markRelay,
   probeUpstream,
   readProxyConfig,
+  signInAccount,
   signOutAccount,
+  startAccount,
+  ProxyError,
 } from "../net/server";
-import type { ProxyConfig, RemoteDevice } from "../net/server";
+import type { DeviceGrant, ProxyConfig, RemoteDevice } from "../net/server";
+import { RequestTimeout } from "../net/http";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
@@ -38,7 +44,7 @@ vi.mock("@capacitor/app", () => ({
 vi.mock("@capacitor/network", () => ({
   Network: { addListener: vi.fn(async () => ({ remove: vi.fn() })) },
 }));
-vi.mock("@capacitor/browser", () => ({ Browser: { open: vi.fn() } }));
+vi.mock("@capacitor/browser", () => ({ Browser: { open: vi.fn(async () => {}) } }));
 vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn() } }));
 vi.mock("@capacitor/barcode-scanner", () => ({
   CapacitorBarcodeScanner: { scanBarcode: vi.fn() },
@@ -46,7 +52,7 @@ vi.mock("@capacitor/barcode-scanner", () => ({
   CapacitorBarcodeScannerScanOrientation: { ADAPTIVE: "ADAPTIVE" },
   CapacitorBarcodeScannerTypeHint: { ALL: "ALL" },
 }));
-vi.mock("../native/login", () => ({ NativeLogin: { open: vi.fn() } }));
+vi.mock("../native/login", () => ({ NativeLogin: { open: vi.fn(async () => {}) } }));
 vi.mock("../native/pair", () => ({ NativePair: { pair: vi.fn() } }));
 vi.mock("../native/turn", () => ({
   loadBackgroundStatus: vi.fn(async () => null),
@@ -73,6 +79,8 @@ vi.mock("../net/server", () => ({
   markRelay: vi.fn(),
   clearRelay: vi.fn(),
   signOutAccount: vi.fn(),
+  signInAccount: vi.fn(),
+  approveDevice: vi.fn(),
   startAccount: vi.fn(),
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
@@ -106,6 +114,18 @@ function device(overrides: Partial<RemoteDevice> = {}): RemoteDevice {
   return { id: "dev1", name: "DESKTOP", platform: "windows", capabilities: ["desktop"], ...overrides };
 }
 
+function grant(overrides: Partial<DeviceGrant> = {}): DeviceGrant {
+  return {
+    deviceCode: "device-code",
+    userCode: "ABCD-EFGH",
+    verificationUri: "https://reasonix.io/device",
+    verificationUriComplete: "https://reasonix.io/device?code=ABCD-EFGH",
+    interval: 5,
+    expiresIn: 600,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -119,6 +139,8 @@ beforeEach(() => {
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
   vi.mocked(clearRelay).mockResolvedValue(config());
   vi.mocked(signOutAccount).mockResolvedValue({ signedIn: false });
+  vi.mocked(signInAccount).mockResolvedValue({ signedIn: true });
+  vi.mocked(approveDevice).mockResolvedValue(undefined);
   vi.mocked(markRelay).mockResolvedValue(config({ mode: "relay", relayDevice: "dev1" }));
   vi.mocked(connectRelay).mockResolvedValue({
     close: vi.fn(),
@@ -188,6 +210,17 @@ function pressRow(...parts: string[]): Promise<void> {
   return act(async () => {
     row(...parts).click();
     await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** Type into a controlled input the way React sees a real keystroke. */
+function typeInto(selector: string, value: string): Promise<void> {
+  return act(async () => {
+    const input = container.querySelector(selector) as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
     await Promise.resolve();
   });
 }
@@ -421,6 +454,88 @@ describe("ConnectScreen saved connections", () => {
     await renderScreen();
 
     expect(container.textContent).toContain("楼下的台式机");
+  });
+});
+
+describe("ConnectScreen account sign-in", () => {
+  it("shows the code request beside the account button while it waits", async () => {
+    let finish: (value: DeviceGrant) => void = () => {};
+    vi.mocked(startAccount).mockImplementation(
+      () =>
+        new Promise<DeviceGrant>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderScreen();
+
+    await press("登录 Reasonix 账号");
+
+    expect(button("正在获取登录码…").disabled).toBe(true);
+    expect(container.querySelector(".account-busy")?.textContent).toContain("最多等 25 秒");
+
+    await act(async () => {
+      finish(grant());
+      await Promise.resolve();
+    });
+
+    // The fast path opens a form, not the slow sign-in page.
+    expect(container.querySelector('input[type="email"]')).not.toBeNull();
+    expect(button("登录并批准").disabled).toBe(true);
+    expect(Browser.open).not.toHaveBeenCalled();
+    expect(container.querySelector(".account-busy")).toBeNull();
+  });
+
+  it("signs in with the account form and approves the code", async () => {
+    vi.mocked(startAccount).mockResolvedValue(grant());
+    await renderScreen();
+
+    await press("登录 Reasonix 账号");
+    await typeInto('input[type="email"]', "me@example.com");
+    await typeInto('input[type="password"]', "secret123");
+    await press("登录并批准");
+
+    expect(signInAccount).toHaveBeenCalledWith("me@example.com", "secret123");
+    expect(approveDevice).toHaveBeenCalledWith("ABCD-EFGH");
+    expect(container.textContent).toContain("已批准，正在完成登录");
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  it("keeps the form after a wrong password", async () => {
+    vi.mocked(startAccount).mockResolvedValue(grant());
+    vi.mocked(signInAccount).mockRejectedValue(new ProxyError(401, "invalid_credentials"));
+    await renderScreen();
+
+    await press("登录 Reasonix 账号");
+    await typeInto('input[type="email"]', "me@example.com");
+    await typeInto('input[type="password"]', "wrongpass");
+    await press("登录并批准");
+
+    expect(approveDevice).not.toHaveBeenCalled();
+    expect(container.querySelector(".account-notice")?.textContent).toContain("邮箱或密码不正确");
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+  });
+
+  it("explains a timeout next to the login button, not above the fold", async () => {
+    vi.mocked(startAccount).mockRejectedValue(new RequestTimeout(25_000));
+    await renderScreen();
+
+    await press("登录 Reasonix 账号");
+
+    const notice = container.querySelector(".account-notice");
+    expect(notice?.textContent).toContain("id.reasonix.io");
+    expect(notice?.textContent).toContain("换 Wi‑Fi/流量");
+    expect(notice?.textContent).toContain("蒲公英");
+  });
+
+  it("names the service when the phone cannot reach it", async () => {
+    vi.mocked(startAccount).mockRejectedValue(new ProxyError(502, "proxy.upstream_unreachable"));
+    await renderScreen();
+
+    await press("登录 Reasonix 账号");
+
+    expect(container.querySelector(".account-notice")?.textContent).toContain(
+      "手机连不上登录服务",
+    );
   });
 });
 
