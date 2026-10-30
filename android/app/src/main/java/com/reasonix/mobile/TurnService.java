@@ -15,31 +15,33 @@ import android.os.PowerManager;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Keeps a running agent turn alive while the phone is in a pocket, and tells
- * the person when that turn stops on a question.
+ * Keeps the phone informed while agent turns run in a pocket.
  *
- * A WebView alone is cached and frozen as soon as the screen locks. A
- * foreground service raises the process priority and a partial wake lock keeps
- * the CPU available, so the stream can still deliver the turn that the person
- * is waiting for. It is not a second transport: if the process is killed the
- * turn continues on the desktop and is recovered from the cursor on the next
- * launch.
+ * The service discovers every open pane on the active computer from
+ * `GET /runtimes` and polls each pane's `/status`. A decision blocks a turn,
+ * so it earns a per-session heads-up; a turn that stops after running earns a
+ * completion; the ongoing notification summarizes the rest. The desktop still
+ * owns the turns: this is a watcher, not a transport.
  *
- * While it runs it polls the pane's `/status` through the loopback proxy. A
- * decision (an ask, a tool approval, a plan or a recovery choice) is exactly
- * the state where the turn cannot finish, so that is when a heads-up
- * notification is owed. The phone only watches the pane it is running; a turn
- * on the desktop with no pane open here has no service to watch it, and that
- * limit is stated rather than hidden.
+ * A phone cannot see a pane the desktop never opened, and a cloud computer is
+ * out of reach until relay links can coexist. Both limits are stated rather
+ * than hidden.
  */
 public class TurnService extends Service {
     static final String ACTION_START = "com.reasonix.mobile.TURN_START";
@@ -55,40 +57,62 @@ public class TurnService extends Service {
     private static final String CHANNEL_ASK = "turn_ask";
     private static final int RUNNING_ID = 4101;
     /**
-     * Ask and done notifications are per runtime. A fixed id made a second
-     * session overwrite the first, and a shared PendingIntent request code made
-     * its deep link open whichever chat was built last. Four non-overlapping
-     * bands of a million keep the chance of two sessions colliding negligible.
+     * Ask and done notifications are per runtime. Four non-overlapping bands
+     * of a million keep two sessions from sharing an identity or a deep link.
      */
     static final int DONE_BASE = 0x01000000;
     static final int ASK_BASE = 0x02000000;
-    static final int REQUEST_RUNNING = 7101;
     static final int REQUEST_DONE_BASE = 0x03000000;
     static final int REQUEST_ASK_BASE = 0x04000000;
     static final int SESSION_BUCKETS = 1 << 20;
     private static final int OFFLINE_AFTER = 3;
     private static final long WAKE_LOCK_MS = 30 * 60 * 1000L;
-    private static final long ASK_POLL_MS = 3000L;
+    private static final long WATCH_POLL_MS = 5000L;
+    /** Ten minutes without one answer means the computer is gone, not slow. */
+    private static final long QUIET_STOP_MS = 10 * 60 * 1000L;
     private static final int MAX_BODY = 512 * 1024;
 
-    /** Set by the plugin before stopService so onDestroy can notify. */
+    /** Set by the plugin before stopService; kept for the plugin's contract. */
     static volatile boolean completed;
+
+    /** One pane the phone is watching. */
+    private static final class Watch {
+        final String runtime;
+        volatile String base;
+        volatile String root;
+        volatile String title;
+        volatile boolean running;
+        volatile boolean waiting;
+        volatile String askSignature = "";
+
+        Watch(String runtime, String base, String root, String title) {
+            this.runtime = runtime;
+            this.base = base;
+            this.root = root;
+            this.title = title;
+        }
+
+        void update(String nextBase, String nextRoot, String nextTitle) {
+            if (!nextBase.isEmpty()) base = nextBase;
+            if (!nextRoot.isEmpty()) root = nextRoot;
+            // A chat already knows the session's title; discovery only has the
+            // transcript file name, so it fills gaps instead of replacing it.
+            if (title == null || title.isEmpty()) title = nextTitle;
+        }
+    }
 
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
-    private volatile String title = "";
-    private volatile String base = "";
-    private volatile String root = "";
-    private volatile String runtime = "";
-    /** "lan" or "cloud"; names the path in the ongoing notification. */
+    /** "lan" or "cloud"; names the link in the ongoing summary. */
     private volatile String mode = "";
     private volatile int pollFailures = 0;
     private volatile boolean stopping = false;
     private ScheduledExecutorService watcher;
-    /** The decisions the current notification was built from. */
-    private String askedSignature = "";
-    /** The runtime that notification belongs to; a new pane cancels just it. */
-    private String askedRuntime = "";
+    private final Map<String, Watch> watches = new ConcurrentHashMap<>();
+    /** Consecutive discovery passes with nothing running or waiting. */
+    private int idlePolls = 0;
+    /** Last time any proxy read answered; a watcher that cannot read must end. */
+    private volatile long lastAnswerAt = System.currentTimeMillis();
 
     @Override
     public void onCreate() {
@@ -98,20 +122,26 @@ public class TurnService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // A previous stop may have left the flag set; a new turn starts clean.
         completed = false;
         stopping = false;
-        title = extra(intent, EXTRA_TITLE);
+        lastAnswerAt = System.currentTimeMillis();
+        String nextMode = extra(intent, EXTRA_MODE);
+        if (!nextMode.isEmpty()) mode = nextMode;
+        // A start from the open chat seeds one pane; discovery adds the rest
+        // and replaces this row with the kernel's own labels when it answers.
         String nextBase = extra(intent, EXTRA_BASE);
-        if (!nextBase.equals(base)) {
-            // Another pane: the old pane's ask is no longer the one on screen.
-            cancelAsk();
-            pollFailures = 0;
+        if (!nextBase.isEmpty()) {
+            String runtime = extra(intent, EXTRA_RUNTIME);
+            if (runtime.isEmpty()) runtime = nextBase;
+            String title = extra(intent, EXTRA_TITLE);
+            String root = extra(intent, EXTRA_ROOT);
+            Watch watch = watches.get(runtime);
+            if (watch == null) {
+                watches.put(runtime, new Watch(runtime, nextBase, root, title));
+            } else {
+                watch.update(nextBase, root, title);
+            }
         }
-        base = nextBase;
-        mode = extra(intent, EXTRA_MODE);
-        root = extra(intent, EXTRA_ROOT);
-        runtime = extra(intent, EXTRA_RUNTIME);
         try {
             Notification notification = buildRunning();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -134,15 +164,13 @@ public class TurnService extends Service {
 
     @Override
     public void onDestroy() {
-        // A poll already in flight must not re-post the notification after
-        // stopForeground has removed it.
+        // A poll already in flight must not re-post notifications after
+        // stopForeground has removed them.
         stopping = true;
         stopWatching();
-        cancelAsk();
+        cancelAsks();
         releaseWakeLock();
         releaseWifiLock();
-        boolean announce = completed && !MainActivity.visible;
-        completed = false;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
@@ -152,7 +180,6 @@ public class TurnService extends Service {
         } catch (RuntimeException ignored) {
             // already gone
         }
-        if (announce) notifyFinished();
         super.onDestroy();
     }
 
@@ -195,80 +222,152 @@ public class TurnService extends Service {
         return REQUEST_DONE_BASE + sessionBucket(runtime);
     }
 
-    private void startWatching() {
-        if (base.isEmpty()) return;
+    private synchronized void startWatching() {
         if (watcher != null) return;
         watcher = Executors.newSingleThreadScheduledExecutor();
         watcher.scheduleWithFixedDelay(() -> {
             try {
-                pollAsk();
+                pollAll();
             } catch (Exception e) {
                 // A poll that failed is not an answer; keep the last state.
-                Log.w(TAG, "ask poll failed", e);
+                Log.w(TAG, "watch poll failed", e);
             }
-        }, 500, ASK_POLL_MS, TimeUnit.MILLISECONDS);
+        }, 500, WATCH_POLL_MS, TimeUnit.MILLISECONDS);
     }
 
-    private void stopWatching() {
+    private synchronized void stopWatching() {
         ScheduledExecutorService current = watcher;
         watcher = null;
         if (current != null) current.shutdownNow();
     }
 
-    /** Read the pane's decisions and post/clear the notification they own. */
-    private void pollAsk() {
+    /**
+     * Discover the panes on the active computer and read each one.
+     *
+     * `/runtimes` is authoritative when it answers: a pane that disappeared is
+     * finished (and its ask cleared). When it cannot answer, the panes already
+     * known are still polled, so an open chat's notification survives a list
+     * read failure.
+     */
+    private void pollAll() {
         if (stopping) return;
-        // The wake lock is acquired with a 30-minute cap so a forgotten
-        // service cannot drain the phone. A turn can outlive it; every poll
-        // is a cheap place to notice and renew.
         renewWakeLock();
-        String prefix = base;
-        if (prefix.isEmpty()) return;
-        HttpURLConnection connection = null;
+        boolean listed = false;
         boolean answered = false;
+        HttpURLConnection connection = null;
         try {
-            URI uri = URI.create("http://127.0.0.1:" + LoopbackProxy.PORT + prefix + "/status");
-            connection = (HttpURLConnection) uri.toURL().openConnection();
-            connection.setConnectTimeout(3000);
-            connection.setReadTimeout(3000);
-            connection.setRequestProperty("Cookie", LoopbackProxy.authCookie(this));
+            connection = open("/runtimes");
             if (connection.getResponseCode() == 200) {
                 String body;
                 try (InputStream input = connection.getInputStream()) {
                     body = readText(input);
                 }
-                syncAsk(AskStatus.parse(body));
-                answered = true;
+                List<RuntimeList.Row> rows = RuntimeList.parse(body);
+                if (rows != null) {
+                    listed = true;
+                    Set<String> seen = new HashSet<>();
+                    for (RuntimeList.Row row : rows) {
+                        seen.add(row.id);
+                        Watch watch = watches.get(row.id);
+                        if (watch == null) {
+                            watches.put(row.id, new Watch(row.id, row.base, row.root, row.title));
+                            watch = watches.get(row.id);
+                        } else {
+                            watch.update(row.base, row.root, row.title);
+                        }
+                        pollStatus(watch);
+                    }
+                    for (String id : new ArrayList<>(watches.keySet())) {
+                        if (seen.contains(id)) continue;
+                        Watch gone = watches.remove(id);
+                        if (gone != null) finishWatch(gone);
+                    }
+                }
             }
         } catch (Exception e) {
-            // The next tick tries again; a dead upstream must not kill the service.
-            Log.d(TAG, "ask poll skipped", e);
+            Log.d(TAG, "runtime list skipped", e);
         } finally {
             if (connection != null) connection.disconnect();
-            notePoll(answered);
+        }
+        if (!listed) {
+            for (Watch watch : new ArrayList<>(watches.values())) answered |= pollStatus(watch);
+        }
+        if (listed || answered) lastAnswerAt = System.currentTimeMillis();
+        notePoll(listed);
+        if (System.currentTimeMillis() - lastAnswerAt > QUIET_STOP_MS) {
+            stopSelf();
+            return;
+        }
+
+        boolean active = false;
+        for (Watch watch : watches.values()) {
+            if (watch.running || watch.waiting) {
+                active = true;
+                break;
+            }
+        }
+        if (listed && !active) {
+            if (++idlePolls >= 2) {
+                stopSelf();
+                return;
+            }
+        } else {
+            idlePolls = 0;
+        }
+        refreshRunning();
+    }
+
+    /** One pane's status: asks and completion live here. */
+    private boolean pollStatus(Watch watch) {
+        if (stopping) return false;
+        String prefix = watch.base;
+        if (prefix.isEmpty()) return false;
+        HttpURLConnection connection = null;
+        try {
+            connection = open(prefix + "/status");
+            if (connection.getResponseCode() != 200) return false;
+            String body;
+            try (InputStream input = connection.getInputStream()) {
+                body = readText(input);
+            }
+            AskStatus status = AskStatus.parse(body);
+            boolean wasRunning = watch.running;
+            watch.running = status.running;
+            watch.waiting = !status.empty();
+            syncAsk(watch, status);
+            if (wasRunning && !status.running && !MainActivity.visible) {
+                notifyFinished(watch);
+            }
+            return true;
+        } catch (Exception e) {
+            // The next tick tries again; a dead pane must not kill the rest.
+            Log.d(TAG, "status poll skipped", e);
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
         }
     }
 
-    /**
-     * Put the link's own health in the ongoing notification.
-     *
-     * One failed poll is noise — a phone rekeys Wi-Fi all the time. Only a
-     * sustained run of failures changes the text, and one answer clears it, so
-     * the notification never claims a connection it does not have.
-     */
+    private HttpURLConnection open(String path) throws IOException {
+        URI uri = URI.create("http://127.0.0.1:" + LoopbackProxy.PORT + path);
+        HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
+        connection.setConnectTimeout(3000);
+        connection.setReadTimeout(3000);
+        connection.setRequestProperty("Cookie", LoopbackProxy.authCookie(this));
+        return connection;
+    }
+
     private void notePoll(boolean answered) {
         if (stopping) return;
-        boolean wasOffline = pollFailures >= OFFLINE_AFTER;
         if (answered) {
             pollFailures = 0;
         } else if (pollFailures < OFFLINE_AFTER) {
             pollFailures += 1;
         }
-        boolean offline = pollFailures >= OFFLINE_AFTER;
-        if (wasOffline != offline) refreshRunning();
     }
 
     private void refreshRunning() {
+        if (stopping) return;
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
         try {
@@ -290,31 +389,22 @@ public class TurnService extends Service {
         return out.toString(StandardCharsets.UTF_8.name());
     }
 
-    private void syncAsk(AskStatus status) {
+    private void syncAsk(Watch watch, AskStatus status) {
         if (stopping) return;
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
         if (status.empty()) {
-            if (!askedSignature.isEmpty()) {
-                manager.cancel(askId(askedRuntime));
-                askedSignature = "";
-                askedRuntime = "";
-            }
+            if (!watch.askSignature.isEmpty()) cancelAsk(watch);
             return;
         }
-        if (status.signature.equals(askedSignature) && runtime.equals(askedRuntime)) return;
+        if (status.signature.equals(watch.askSignature)) return;
         if (!manager.areNotificationsEnabled()) return;
-        // This service watches one pane; an ask from the previous one is stale.
-        if (!askedSignature.isEmpty() && !runtime.equals(askedRuntime)) {
-            manager.cancel(askId(askedRuntime));
-        }
-        askedSignature = status.signature;
-        askedRuntime = runtime;
-        manager.notify(askId(runtime), buildAsk(status.text));
+        watch.askSignature = status.signature;
+        manager.notify(askId(watch.runtime), buildAsk(watch, status.text));
     }
 
-    private Notification buildAsk(String text) {
-        String heading = title.isEmpty() ? "需要你处理" : title;
+    private Notification buildAsk(Watch watch, String text) {
+        String heading = watch.title.isEmpty() ? "需要你处理" : watch.title;
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ASK)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(heading)
@@ -326,8 +416,8 @@ public class TurnService extends Service {
                 // that something is waiting until the phone is unlocked.
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicAsk())
-                .setContentIntent(openChat(askRequest(runtime)))
-                .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(askRequest(runtime)));
+                .setContentIntent(openChat(watch, askRequest(watch.runtime)))
+                .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(watch, askRequest(watch.runtime)));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
@@ -353,11 +443,20 @@ public class TurnService extends Service {
                 .build();
     }
 
-    private void cancelAsk() {
+    private void cancelAsk(Watch watch) {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager != null) manager.cancel(askId(askedRuntime));
-        askedSignature = "";
-        askedRuntime = "";
+        if (manager != null) manager.cancel(askId(watch.runtime));
+        watch.askSignature = "";
+    }
+
+    private void cancelAsks() {
+        for (Watch watch : new ArrayList<>(watches.values())) cancelAsk(watch);
+    }
+
+    /** A pane that left the list: finish its ask and announce its last turn. */
+    private void finishWatch(Watch watch) {
+        if (watch.running && !MainActivity.visible) notifyFinished(watch);
+        cancelAsk(watch);
     }
 
     private void acquireWakeLock() {
@@ -441,32 +540,42 @@ public class TurnService extends Service {
     }
 
     private Notification buildRunning() {
-        String heading = title == null || title.isEmpty() ? "Reasonix" : title;
+        int running = 0;
+        int waiting = 0;
+        for (Watch watch : watches.values()) {
+            if (watch.running) running++;
+            if (watch.waiting) waiting++;
+        }
         String text;
         if (pollFailures >= OFFLINE_AFTER) {
             text = "连接中断，正在重试…";
-        } else if ("cloud".equals(mode)) {
-            text = "云端连接 · 正在处理…";
-        } else if ("lan".equals(mode)) {
-            text = "局域网 · 正在处理…";
         } else {
-            text = "正在处理…";
+            String where = "cloud".equals(mode) ? "云端 · " : "lan".equals(mode) ? "局域网 · " : "";
+            if (waiting > 0) {
+                text = where + (running > 0
+                        ? running + " 个运行中 · " + waiting + " 个待处理"
+                        : waiting + " 个待处理");
+            } else if (running > 0) {
+                text = where + running + " 个会话运行中";
+            } else {
+                text = watches.isEmpty() ? "正在准备…" : "没有正在运行的会话";
+            }
         }
-        Notification.Builder builder = new Notification.Builder(this, CHANNEL_RUNNING)
+        return new Notification.Builder(this, CHANNEL_RUNNING)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle(heading)
+                .setContentTitle("Reasonix")
                 .setContentText(text)
                 .setSubText("Reasonix")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setContentIntent(openChat(REQUEST_RUNNING));
-        return builder.build();
+                .setContentIntent(openApp())
+                .build();
     }
 
-    private void notifyFinished() {
+    private void notifyFinished(Watch watch) {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null || !manager.areNotificationsEnabled()) return;
-        String heading = title == null || title.isEmpty() ? "Reasonix" : title;
+        String heading = watch.title == null || watch.title.isEmpty() ? "Reasonix" : watch.title;
         Notification notification = new Notification.Builder(this, CHANNEL_DONE)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle(heading)
@@ -475,30 +584,26 @@ public class TurnService extends Service {
                 .setAutoCancel(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicDone())
-                .setContentIntent(openChat(doneRequest(runtime)))
+                .setContentIntent(openChat(watch, doneRequest(watch.runtime)))
                 .build();
-        manager.notify(doneId(runtime), notification);
+        manager.notify(doneId(watch.runtime), notification);
     }
 
     /** Open the conversation that was blocked; fall back to the app. */
-    private PendingIntent openChat(int requestCode) {
+    private PendingIntent openChat(Watch watch, int requestCode) {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getActivity(this, requestCode, openChatIfPossible(), flags);
-    }
-
-    private Intent openChatIfPossible() {
         Intent intent;
-        if (!runtime.isEmpty()) {
-            String link = "reasonix://chat?runtime=" + Uri.encode(runtime)
-                    + "&root=" + Uri.encode(root)
-                    + "&title=" + Uri.encode(title);
+        if (!watch.runtime.isEmpty()) {
+            String link = "reasonix://chat?runtime=" + Uri.encode(watch.runtime)
+                    + "&root=" + Uri.encode(watch.root)
+                    + "&title=" + Uri.encode(watch.title);
             intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link), this, MainActivity.class);
         } else {
             intent = new Intent(this, MainActivity.class);
         }
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        return intent;
+        return PendingIntent.getActivity(this, requestCode, intent, flags);
     }
 
     private PendingIntent openApp() {

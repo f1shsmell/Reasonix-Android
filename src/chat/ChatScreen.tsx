@@ -25,7 +25,7 @@ import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
 import { loadTodos, todoRevision } from "../net/todos";
-import { startTurnNotification, stopTurnNotification } from "../native/turn";
+import { startTurnNotification } from "../native/turn";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
@@ -613,36 +613,21 @@ export function ChatScreen({
   }, [runtime?.base, setTranscript]);
 
   // A running turn is exactly the window where the phone may be locked. The
-  // native service keeps the process alive and tells the person when it ends.
-  const turnFinished =
-    transcript.ended !== undefined && !transcript.ended.cancelled && !transcript.ended.error;
+  // The native watcher discovers every open pane; a turn starting here is
+  // what makes sure it exists. Leaving the chat does not stop it — another
+  // pane may still be running, and the service ends itself when none are.
   useEffect(() => {
-    if (transcript.running && runtime) {
-      const heading = title ?? runtime.name;
-      startTurnNotification({
-        ...(heading ? { title: heading } : {}),
-        base: runtime.base,
-        root: runtime.root,
-        runtimeId,
-        ...(mode ? { mode } : {}),
-      });
-    } else {
-      stopTurnNotification(turnFinished);
-    }
-  }, [
-    transcript.running,
-    turnFinished,
-    title,
-    runtime?.name,
-    runtime?.base,
-    runtime?.root,
-    runtimeId,
-    mode,
-  ]);
-
-  // Leaving the screen means this client is no longer watching the turn; a
-  // notification left behind would be a promise nobody keeps.
-  useEffect(() => () => stopTurnNotification(false), []);
+    if (!transcript.running || !runtime) return;
+    if (mode === "cloud") return;
+    const heading = title ?? runtime.name;
+    startTurnNotification({
+      ...(heading ? { title: heading } : {}),
+      base: runtime.base,
+      root: runtime.root,
+      runtimeId,
+      ...(mode ? { mode } : {}),
+    });
+  }, [transcript.running, title, runtime?.name, runtime?.base, runtime?.root, runtimeId, mode]);
 
   const scrollToBottom = useCallback((smooth: boolean) => {
     const list = listRef.current;

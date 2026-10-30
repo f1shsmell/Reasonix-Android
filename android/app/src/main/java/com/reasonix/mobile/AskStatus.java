@@ -11,18 +11,21 @@ import org.json.JSONObject;
  * unit-tested without a Service.
  */
 final class AskStatus {
-    static final AskStatus EMPTY = new AskStatus("", "", 0);
+    static final AskStatus EMPTY = new AskStatus("", "", 0, false);
 
     /** Changes when the set of decisions or their questions changes. */
     final String signature;
     /** One line for the notification body. */
     final String text;
     final int count;
+    /** The turn is still working; a change to false completes a notification. */
+    final boolean running;
 
-    private AskStatus(String signature, String text, int count) {
+    private AskStatus(String signature, String text, int count, boolean running) {
         this.signature = signature;
         this.text = text;
         this.count = count;
+        this.running = running;
     }
 
     boolean empty() {
@@ -32,8 +35,12 @@ final class AskStatus {
     static AskStatus parse(String json) {
         if (json == null || json.isEmpty()) return EMPTY;
         try {
-            JSONArray decisions = new JSONObject(json).optJSONArray("decisions");
-            if (decisions == null || decisions.length() == 0) return EMPTY;
+            JSONObject body = new JSONObject(json);
+            boolean running = body.optBoolean("running", false);
+            JSONArray decisions = body.optJSONArray("decisions");
+            // A working turn with nothing blocked is not a notification, but
+            // its running state is what lets the watcher notice completion.
+            if (decisions == null || decisions.length() == 0) return new AskStatus("", "", 0, running);
             StringBuilder signature = new StringBuilder();
             String first = "";
             int count = 0;
@@ -49,10 +56,10 @@ final class AskStatus {
                 }
                 signature.append(id).append('|').append(kind).append('|').append(question).append(';');
             }
-            if (count == 0) return EMPTY;
+            if (count == 0) return new AskStatus("", "", 0, running);
             String text = first.isEmpty() ? "有新的问题等你处理" : first;
             if (count > 1) text += "（还有 " + (count - 1) + " 个）";
-            return new AskStatus(signature.toString(), text, count);
+            return new AskStatus(signature.toString(), text, count, running);
         } catch (Exception ignored) {
             // A status this build cannot read is not a decision; never alert on it.
             return EMPTY;

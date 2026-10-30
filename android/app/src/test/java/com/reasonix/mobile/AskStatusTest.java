@@ -52,6 +52,13 @@ public class AskStatusTest {
     }
 
     @Test
+    public void carriesWhetherTheTurnIsStillRunning() {
+        assertTrue(AskStatus.parse("{\"decisions\":[],\"running\":true}").running);
+        assertFalse(AskStatus.parse("{\"decisions\":[]}").running);
+        assertFalse(AskStatus.parse("not json").running);
+    }
+
+    @Test
     public void signatureChangesWhenTheQuestionChanges() {
         AskStatus first = AskStatus.parse(
                 "{\"decisions\":[{\"id\":\"d1\",\"kind\":\"ask\",\"questions\":[{\"prompt\":\"甲\"}]}]}");
