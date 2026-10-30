@@ -105,7 +105,10 @@ export async function refreshProxy(): Promise<ProxyConfig | null> {
 }
 
 export async function startAccount(): Promise<DeviceGrant> {
-  return request<DeviceGrant>("/__reasonix/account/start", { method: "POST" });
+  // The proxy's own connect deadline is 15 s. Giving the request a longer
+  // deadline lets a stalled IPv6 route fall through to IPv4, and lets the
+  // proxy's refusal arrive with a code instead of a bare client timeout.
+  return request<DeviceGrant>("/__reasonix/account/start", { method: "POST" }, 25_000);
 }
 
 export async function pollAccount(deviceCode: string): Promise<PollResult> {
@@ -117,6 +120,30 @@ export async function pollAccount(deviceCode: string): Promise<PollResult> {
 
 export async function signOutAccount(): Promise<ProxyAccount> {
   return request<ProxyAccount>("/__reasonix/account/logout", { method: "POST" });
+}
+
+/**
+ * Sign in with the account's own email and password.
+ *
+ * This is the fast path: the proxy talks to the identity service directly and
+ * keeps the session cookie, so the account can be approved without loading the
+ * sign-in page. The page remains the way to register, verify and reset.
+ */
+export async function signInAccount(email: string, password: string): Promise<ProxyAccount> {
+  return request<ProxyAccount>(
+    "/__reasonix/account/signin",
+    { method: "POST", body: JSON.stringify({ email, password }) },
+    25_000,
+  );
+}
+
+/** Approve the pending device code with the account session the proxy holds. */
+export async function approveDevice(userCode: string): Promise<void> {
+  await request(
+    "/__reasonix/account/approve",
+    { method: "POST", body: JSON.stringify({ userCode }) },
+    25_000,
+  );
 }
 
 export interface RemoteDevice {

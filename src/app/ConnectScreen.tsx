@@ -31,8 +31,11 @@ import {
   probeUpstream,
   readProxyConfig,
   refreshProxy,
+  signInAccount,
   signOutAccount,
   startAccount,
+  approveDevice,
+  ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
 import { linkFailure } from "../net/link";
@@ -52,6 +55,7 @@ import {
   rememberConnection,
 } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
+import { RequestTimeout } from "../net/http";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
 import {
@@ -77,6 +81,52 @@ export interface ConnectScreenProps {
   machineBase?: string | undefined;
 }
 
+/**
+ * Why a device code could not be fetched.
+ *
+ * A timeout is the common one on phones: the proxy's connect timeout matches
+ * the old request deadline, so a stalled IPv6 route looked exactly like an
+ * unanswered tap. The sentence names the service so the next step (another
+ * network) is obvious instead of another retry on the same one.
+ */
+function signInFailureText(failure: unknown): string {
+  if (failure instanceof RequestTimeout) {
+    return "登录服务没有响应。手机可能连不上 id.reasonix.io：换 Wi‑Fi/流量，或先关掉 VPN、组网（如蒲公英）再试。";
+  }
+  if (failure instanceof ProxyError) {
+    if (failure.code === "proxy.upstream_unreachable") {
+      return "手机连不上登录服务 id.reasonix.io。检查网络，或先关掉 VPN、组网后再试。";
+    }
+    return `登录服务不可用：${failure.code}`;
+  }
+  return failure instanceof Error ? `登录服务不可用：${failure.message}` : "登录服务不可用";
+}
+
+/** A refusal from the identity service while signing in or approving. */
+function accountFailureText(failure: unknown): string {
+  // An unreachable service has its own sentence; a reply from it does not.
+  if (failure instanceof ProxyError && failure.code !== "proxy.upstream_unreachable") {
+    switch (failure.code) {
+      case "invalid_credentials":
+        return "邮箱或密码不正确。";
+      case "account_unavailable":
+        return "这个账号当前不可用，请在网页里查看账号状态。";
+      case "account.signin_required":
+        return "登录状态没有建立，请在网页中重新登录。";
+      case "invalid_user_code":
+        return "登录码已失效，请取消后重新点登录。";
+      case "account.missing_credentials":
+        return "先填邮箱和密码。";
+      default:
+        break;
+    }
+    if (failure.status === 429) return "尝试太频繁，等一分钟再试。";
+    if (failure.status === 403) return "登录服务拒绝了这次请求，可能被网络或代理拦截。";
+    if (failure.status >= 500) return "登录服务暂时不可用，稍后再试。";
+  }
+  return signInFailureText(failure);
+}
+
 export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBase }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
@@ -86,6 +136,14 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   const [grant, setGrant] = useState<DeviceGrant | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  /** Sign-in stays in its own notice: the shared one sits above the fold. */
+  const [signInError, setSignInError] = useState("");
+  /** The native sign-in form: the fast path that skips the slow web page. */
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [accountBusy, setAccountBusy] = useState("");
+  /** The device code is approved; the poll behind this screen is finishing. */
+  const [approved, setApproved] = useState(false);
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** Which half of settings is showing: the computer, or this phone. */
@@ -453,26 +511,70 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   }, []);
 
   const openLoginPage = useCallback((url: string) => {
+    const failed = (failure: unknown) => {
+      setSignInError(
+        failure instanceof Error
+          ? `打不开登录页：${failure.message}`
+          : "打不开登录页，请重试。",
+      );
+    };
     if (Capacitor.isNativePlatform()) {
-      void NativeLogin.open({ url }).catch(() => Browser.open({ url }));
+      void NativeLogin.open({ url }).catch(() => Browser.open({ url }).catch(failed));
     } else {
-      void Browser.open({ url });
+      void Browser.open({ url }).catch(failed);
     }
   }, []);
 
   const signIn = useCallback(async () => {
     setBusy("正在获取登录码");
     setError("");
+    setSignInError("");
+    setApproved(false);
     try {
       const next = await startAccount();
       setGrant(next);
-      openLoginPage(next.verificationUriComplete);
     } catch (failure) {
-      setError(failure instanceof Error ? `登录服务不可用：${failure.message}` : "登录服务不可用");
+      setSignInError(signInFailureText(failure));
     } finally {
       setBusy("");
     }
-  }, [openLoginPage]);
+  }, []);
+
+  /**
+   * Sign in without the web page.
+   *
+   * The password goes to the loopback proxy, which sends it once to the
+   * identity service; the form then approves the code the app just asked for.
+   * The web page is kept for registration, verification and password resets.
+   */
+  const nativeSignIn = useCallback(async () => {
+    if (!grant) return;
+    const mail = email.trim();
+    if (!mail || password === "") {
+      setSignInError("先填邮箱和密码。");
+      return;
+    }
+    setAccountBusy("正在登录");
+    setSignInError("");
+    try {
+      await signInAccount(mail, password);
+      setAccountBusy("正在批准");
+      await approveDevice(grant.userCode);
+      setPassword("");
+      setApproved(true);
+    } catch (failure) {
+      setSignInError(accountFailureText(failure));
+    } finally {
+      setAccountBusy("");
+    }
+  }, [email, grant, password]);
+
+  const cancelGrant = useCallback(() => {
+    setGrant(null);
+    setApproved(false);
+    setPassword("");
+    setSignInError("");
+  }, []);
 
   useEffect(() => {
     if (grant === null) return;
@@ -484,7 +586,8 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
       if (cancelled) return;
       if (Date.now() >= deadline) {
         setGrant(null);
-        setError("登录码已过期，请重新登录。");
+        setApproved(false);
+        setSignInError("登录码已过期，请重新登录。");
         return;
       }
       try {
@@ -492,12 +595,16 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         if (cancelled) return;
         if (result.status === "complete") {
           setGrant(null);
+          setApproved(false);
+          setPassword("");
+          setSignInError("");
           setAccount({ signedIn: true, ...(result.user ? { user: result.user } : {}) });
           return;
         }
         if (result.status === "ended" || result.status === "error") {
           setGrant(null);
-          setError(result.status === "ended" ? "登录已取消或过期。" : "登录失败，请重试。");
+          setApproved(false);
+          setSignInError(result.status === "ended" ? "登录已取消或过期。" : "登录失败，请重试。");
           return;
         }
         timer = window.setTimeout(() => void tick(), Math.max(1, grant.interval) * 1000);
@@ -531,6 +638,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   }, [account.signedIn]);
 
   const signOut = useCallback(async () => {
+    setSignInError("");
     try {
       setAccount(await signOutAccount());
       setDevices([]);
@@ -938,10 +1046,18 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
             </>
           ) : (
             <button type="button" className="setting action" onClick={() => void signIn()} disabled={busy !== ""}>
-              登录 Reasonix 账号
+              {busy === "正在获取登录码" ? "正在获取登录码…" : "登录 Reasonix 账号"}
             </button>
           )}
         </section>
+        {busy === "正在获取登录码" ? (
+          <p className="group-note account-busy">正在向登录服务申请登录码，最多等 25 秒…</p>
+        ) : null}
+        {signInError ? (
+          <div className="notice error account-notice" role="alert">
+            {signInError}
+          </div>
+        ) : null}
         <p className="group-note">
           {account.signedIn
             ? "云端连接不需要两台设备在同一网络。"
@@ -950,12 +1066,64 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
 
         {grant ? (
           <section className="group grant">
-            <p className="group-note">在应用内登录页登录后，回到这里等待完成；也可以手动输入：</p>
+            <p className="group-note">
+              {approved
+                ? "已批准，正在完成登录…"
+                : "用 Reasonix 账号登录，登录后会自动批准这次设备登录。"}
+            </p>
             <div className="code">{grant.userCode}</div>
-            <button type="button" className="setting action" onClick={() => openLoginPage(grant.verificationUriComplete)}>
-              打开登录页
+            {approved ? null : (
+              <>
+                <label className="setting">
+                  <span className="setting-title">邮箱</span>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@example.com"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoComplete="username"
+                    disabled={accountBusy !== ""}
+                  />
+                </label>
+                <label className="setting">
+                  <span className="setting-title">密码</span>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="账号密码"
+                    autoComplete="current-password"
+                    disabled={accountBusy !== ""}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="setting action"
+                  onClick={() => void nativeSignIn()}
+                  disabled={accountBusy !== "" || !email.trim() || password === ""}
+                >
+                  {accountBusy || "登录并批准"}
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              className="setting action"
+              onClick={() => openLoginPage(grant.verificationUriComplete)}
+              disabled={accountBusy !== "" || approved}
+            >
+              在网页中登录（注册 / 找回密码）
             </button>
-            <button type="button" className="setting action" onClick={() => setGrant(null)}>
+            <button
+              type="button"
+              className="setting action"
+              onClick={cancelGrant}
+              disabled={accountBusy !== ""}
+            >
               取消
             </button>
           </section>

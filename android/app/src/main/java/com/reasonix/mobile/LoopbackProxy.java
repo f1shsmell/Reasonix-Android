@@ -309,7 +309,14 @@ public final class LoopbackProxy {
                 case "/__reasonix/account/poll":
                     writeJson(socket, 200, accountPoll(body).toString());
                     return;
+                case "/__reasonix/account/signin":
+                    accountSignIn(socket, body);
+                    return;
+                case "/__reasonix/account/approve":
+                    accountApprove(socket, body);
+                    return;
                 case "/__reasonix/account/logout":
+                    accountLogout();
                     prefs.edit().remove(KEY_ACCOUNT_TOKEN).remove(KEY_ACCOUNT_USER).apply();
                     writeJson(socket, 200, accountJson().toString());
                     return;
@@ -334,6 +341,8 @@ public final class LoopbackProxy {
             case "/__reasonix/account/grant":
             case "/__reasonix/account/start":
             case "/__reasonix/account/poll":
+            case "/__reasonix/account/signin":
+            case "/__reasonix/account/approve":
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
             case "/__reasonix/relay/clear":
@@ -647,6 +656,173 @@ public final class LoopbackProxy {
             if (user != null) out.put("user", user);
         }
         return out;
+    }
+
+    /**
+     * Sign in with the account's email and password, keeping the web session
+     * cookie the account grant needs.
+     *
+     * The password is used once and never stored: the request goes straight to
+     * the identity service over HTTPS, and the only thing kept is the response
+     * cookie, in the same jar the in-app login page would use.
+     */
+    private void accountSignIn(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String email = request.optString("email", "").trim();
+        String password = request.optString("password", "");
+        if (email.isEmpty() || password.isEmpty()) {
+            writeJson(socket, 400, new JSONObject().put("code", "account.missing_credentials").toString());
+            return;
+        }
+        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/login").toURL().openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(20000);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Origin", "https://reasonix.io");
+        conn.setRequestProperty("Referer", "https://reasonix.io/login/");
+        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("Accept", "application/json");
+        byte[] payload = new JSONObject().put("email", email).put("password", password)
+                .toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(payload.length);
+        try (OutputStream out = conn.getOutputStream()) {
+            out.write(payload);
+        }
+        String text = readText(conn);
+        int status = conn.getResponseCode();
+        if (status >= 200 && status < 300) persistAccountCookies(conn);
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            writeJson(socket, status, serviceFailure(text, "account.signin_failed").toString());
+            return;
+        }
+        JSONObject result = new JSONObject().put("signedIn", true);
+        JSONObject user = new JSONObject(text).optJSONObject("user");
+        if (user != null) result.put("user", user);
+        writeJson(socket, 200, result.toString());
+    }
+
+    /**
+     * Approve the pending device code with the web session cookie.
+     *
+     * The cookie is the one either sign-in path left in the WebView jar; the
+     * device code itself is only a short-lived grant, so both must match.
+     */
+    private void accountApprove(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String userCode = request.optString("userCode", "").trim();
+        if (userCode.isEmpty()) {
+            writeJson(socket, 400, new JSONObject().put("code", "account.missing_user_code").toString());
+            return;
+        }
+        String cookie = webCookie();
+        if (cookie.isEmpty()) {
+            writeJson(socket, 401, new JSONObject().put("code", "account.signin_required").toString());
+            return;
+        }
+        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/device/approve").toURL().openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(20000);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Origin", "https://reasonix.io");
+        conn.setRequestProperty("Referer", "https://reasonix.io/device/");
+        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("Cookie", cookie);
+        byte[] payload = new JSONObject().put("userCode", userCode).toString().getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(payload.length);
+        try (OutputStream out = conn.getOutputStream()) {
+            out.write(payload);
+        }
+        String text = readText(conn);
+        int status = conn.getResponseCode();
+        conn.disconnect();
+        if (status < 200 || status >= 300) {
+            writeJson(socket, status, serviceFailure(text, "account.approve_failed").toString());
+            return;
+        }
+        writeJson(socket, 200, text.isEmpty() ? "{\"ok\":true}" : text);
+    }
+
+    /**
+     * End the account's server-side sessions before the local state goes.
+     *
+     * Best effort and short: signing out must not hang on a bad network. The
+     * web session cookie is expired locally as well, or the next sign-in page
+     * would still believe the previous person is here.
+     */
+    private void accountLogout() {
+        String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
+        String cookie = webCookie();
+        if (!token.isEmpty() || !cookie.isEmpty()) {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/logout").toURL().openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(3000);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Origin", "https://reasonix.io");
+                conn.setRequestProperty("User-Agent", USER_AGENT);
+                if (!cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+                if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
+                byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+                conn.setFixedLengthStreamingMode(payload.length);
+                try (OutputStream out = conn.getOutputStream()) {
+                    out.write(payload);
+                }
+                readText(conn);
+                persistAccountCookies(conn);
+                conn.disconnect();
+            } catch (IOException e) {
+                Log.w(TAG, "cannot end the account session", e);
+            }
+        }
+        try {
+            android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
+            jar.setCookie("https://id.reasonix.io/",
+                    "rxid=; Max-Age=0; Path=/; Domain=.reasonix.io; Secure; SameSite=Lax");
+            jar.flush();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "cannot expire the account cookie", e);
+        }
+    }
+
+    /** Keep the identity service's Set-Cookie in the WebView's jar. */
+    private void persistAccountCookies(HttpURLConnection conn) {
+        try {
+            android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
+            for (Map.Entry<String, List<String>> entry : conn.getHeaderFields().entrySet()) {
+                if (entry.getKey() == null || !"set-cookie".equalsIgnoreCase(entry.getKey())) continue;
+                for (String value : entry.getValue()) jar.setCookie("https://id.reasonix.io/", value);
+            }
+            jar.flush();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "cannot keep the account cookie", e);
+        }
+    }
+
+    /** The service's own error code and sentence, when it sent one. */
+    private static JSONObject serviceFailure(String text, String fallback) {
+        try {
+            JSONObject error = new JSONObject(text).optJSONObject("error");
+            if (error != null) {
+                return new JSONObject()
+                        .put("code", error.optString("code", fallback))
+                        .put("message", error.optString("message", ""));
+            }
+        } catch (JSONException ignored) {
+            // A CDN page, not the service's JSON; the fallback names the call.
+        }
+        try {
+            return new JSONObject().put("code", fallback).put("message", "");
+        } catch (JSONException impossible) {
+            return new JSONObject();
+        }
     }
 
     // ---- static bundle -------------------------------------------------
