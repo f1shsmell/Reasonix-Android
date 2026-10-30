@@ -294,6 +294,11 @@ bug this section exists for.
   requires it), so `AskCard` renders the surface path and skips the option
   path entirely. `POST /answer` carries
   `{QuestionID, Selected: [], Value: {...}}`.
+- An option question always ends with an "other" free-text option, even when
+  the kernel offered none — that is what makes a question with no options
+  answerable — and a single-choice pick keeps an optional note. Both are sent
+  as ordinary selected strings (`[text]`, or `[label, note]`), which is what
+  the desktop sends and the kernel joins untouched.
 
 ## Images
 

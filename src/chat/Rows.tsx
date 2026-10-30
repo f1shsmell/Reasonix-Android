@@ -201,28 +201,51 @@ export interface PromptHandlers {
   onApprove: (approvalId: string, allow: boolean, session: boolean, persist: boolean) => void;
 }
 
+/** The kernel's own "write it yourself" option, spelled either way. */
+function isOtherOption(label: string): boolean {
+  return /^\s*(?:其他|其它|other)(?:\s|[（(—\-:：]|$)/i.test(label);
+}
+
 /**
  * One question, and the options it offers.
  *
- * Multi-select questions exist (`multi: true`), and a phone that rendered them
- * as single-select would send one answer where the person picked two. So the
- * selection is local state and is only sent when it is complete.
+ * An ask is not a multiple-choice exam. The card always ends with an "other"
+ * option that takes free text — a question with no options at all is answerable
+ * because of it — and a single-choice pick keeps an optional note box, so an
+ * option that asks for more ("paste the output") has somewhere to take it.
+ * Desktop AskCard behaves the same way, and the kernel treats both the other
+ * text and the note as ordinary selected strings.
  */
 function AskQuestionBlock({
   question,
   pending,
   chosen,
+  otherOn,
+  other,
+  note,
   onToggle,
+  onToggleOther,
+  onOther,
+  onNote,
 }: {
   question: WireAskQuestion;
   pending: boolean;
   chosen: string[];
+  otherOn: boolean;
+  other: string;
+  note: string;
   onToggle: (label: string) => void;
+  onToggleOther: () => void;
+  onOther: (text: string) => void;
+  onNote: (text: string) => void;
 }) {
   const multi = question.multi === true;
   // A newer kernel could omit options for a question type this build does not
   // know. Drawing nothing is correct; crashing the whole transcript is not.
-  const options = Array.isArray(question.options) ? question.options : [];
+  const offered = Array.isArray(question.options) ? question.options : [];
+  const custom = offered.find((option) => isOtherOption(option.label));
+  const options = offered.filter((option) => !isOtherOption(option.label));
+  const noting = !multi && !otherOn && chosen.length > 0;
   return (
     <div className="question">
       <div className="q">{question.header ?? question.prompt}</div>
@@ -233,9 +256,7 @@ function AskQuestionBlock({
         <div className="why">需要你补一个值，agent 自己找不到。</div>
       ) : null}
       {pending ? (
-        options.length === 0 ? (
-          <div className="why">这个问题没有可选项。</div>
-        ) : (
+        <>
           <div className="choices">
             {options.map((option) => {
               const active = chosen.includes(option.label);
@@ -252,8 +273,35 @@ function AskQuestionBlock({
                 </button>
               );
             })}
+            <button
+              type="button"
+              className={`opt-other${otherOn ? " chosen" : ""}`}
+              aria-pressed={otherOn}
+              onClick={onToggleOther}
+            >
+              {custom?.label ?? "其他 —— 自行填写"}
+              {custom?.description ? <small>{custom.description}</small> : null}
+            </button>
           </div>
-        )
+          {otherOn ? (
+            <input
+              className="ask-extra"
+              value={other}
+              onChange={(event) => onOther(event.target.value)}
+              placeholder="或直接输入你的回答"
+              aria-label="其他回答"
+              autoFocus
+            />
+          ) : noting ? (
+            <input
+              className="ask-extra"
+              value={note}
+              onChange={(event) => onNote(event.target.value)}
+              placeholder="补充说明（可选），会随所选项一起发送"
+              aria-label="补充说明"
+            />
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -263,7 +311,34 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
   // A form with several questions is answered once, so the selection for all
   // of them is held here rather than inside one question block.
   const [chosen, setChosen] = useState<Record<string, string[]>>({});
+  // Free text is kept apart from picks: an "other" answer left behind by a
+  // pick is not a note, and going back to it finds it where it was.
+  const [otherOn, setOtherOn] = useState<Record<string, boolean>>({});
+  const [other, setOther] = useState<Record<string, string>>({});
+  const [note, setNote] = useState<Record<string, string>>({});
   const questions = row.ask.questions;
+
+  const picksOf = (question: WireAskQuestion): string[] =>
+    chosen[question.id] ?? question.default ?? [];
+  const noting = (question: WireAskQuestion): boolean =>
+    question.multi !== true && !otherOn[question.id] && picksOf(question).length > 0;
+  const freeOf = (question: WireAskQuestion): string => {
+    if (otherOn[question.id]) return (other[question.id] ?? "").trim();
+    if (noting(question)) return (note[question.id] ?? "").trim();
+    return "";
+  };
+  /**
+   * What this question sends.
+   *
+   * Both a free-text answer and a pick's note are ordinary selected strings:
+   * the kernel joins them into the tool result untouched, and a single-choice
+   * question may legitimately carry a label plus its note.
+   */
+  const valueOf = (question: WireAskQuestion): string[] => {
+    const picks = picksOf(question);
+    const free = freeOf(question);
+    return free ? [...picks, free] : picks;
+  };
 
   const toggle = (question: WireAskQuestion, label: string) => {
     setChosen((current) => {
@@ -276,16 +351,37 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
         : [...already, label];
       return { ...current, [question.id]: next };
     });
+    if (question.multi !== true) {
+      setOtherOn((current) => ({ ...current, [question.id]: false }));
+    }
   };
 
-  const valueOf = (question: WireAskQuestion): string[] =>
-    chosen[question.id] ?? question.default ?? [];
+  const toggleOther = (question: WireAskQuestion) => {
+    const on = !otherOn[question.id];
+    setOtherOn((current) => ({ ...current, [question.id]: on }));
+    if (on && question.multi !== true) {
+      setChosen((current) => ({ ...current, [question.id]: [] }));
+    }
+  };
+
+  const typeOther = (question: WireAskQuestion, text: string) => {
+    setOther((current) => ({ ...current, [question.id]: text }));
+    if (!text || otherOn[question.id]) return;
+    setOtherOn((current) => ({ ...current, [question.id]: true }));
+    if (question.multi !== true) {
+      setChosen((current) => ({ ...current, [question.id]: [] }));
+    }
+  };
+
+  const typeNote = (question: WireAskQuestion, text: string) => {
+    setNote((current) => ({ ...current, [question.id]: text }));
+  };
+
   const ready = questions.every((question) => valueOf(question).length > 0);
   const submit = () => {
     const answers: Record<string, string[]> = {};
     for (const question of questions) {
-      const value = valueOf(question);
-      if (value.length > 0) answers[question.id] = value;
+      answers[question.id] = valueOf(question);
     }
     handlers.onAnswer(row.ask.id, answers);
   };
@@ -322,8 +418,14 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
           key={question.id}
           question={question}
           pending={row.pending}
-          chosen={valueOf(question)}
+          chosen={picksOf(question)}
+          otherOn={otherOn[question.id] === true}
+          other={other[question.id] ?? ""}
+          note={note[question.id] ?? ""}
           onToggle={(label) => toggle(question, label)}
+          onToggleOther={() => toggleOther(question)}
+          onOther={(text) => typeOther(question, text)}
+          onNote={(text) => typeNote(question, text)}
         />
       ))}
       {row.pending ? (

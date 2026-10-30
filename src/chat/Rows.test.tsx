@@ -64,12 +64,74 @@ function askRow(overrides: Partial<AskRow> = {}): AskRow {
 
 const noop = { onAnswer: () => {}, onAnswerSurface: () => {}, onApprove: () => {} };
 
+function typeInto(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("AskCard", () => {
   it("draws every option of the question it was given", () => {
     // The flat shape this used to read had no options at all, so the card
     // rendered a question with no way to answer it.
     render(<AskCard row={askRow()} handlers={noop} />);
-    expect(buttons().map((button) => button.textContent)).toEqual(["茶", "咖啡", "确认"]);
+    expect(buttons().map((button) => button.textContent)).toEqual([
+      "茶",
+      "咖啡",
+      "其他 —— 自行填写",
+      "确认",
+    ]);
+  });
+
+  it("takes a free-text answer when the offered options do not fit", () => {
+    const onAnswer = vi.fn();
+    render(<AskCard row={askRow()} handlers={{ ...noop, onAnswer }} />);
+
+    act(() => byText("其他").click());
+    const input = container.querySelector('input[aria-label="其他回答"]') as HTMLInputElement;
+    act(() => typeInto(input, "葡萄"));
+    expect(byText("确认").disabled).toBe(false);
+
+    act(() => byText("确认").click());
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["葡萄"] });
+  });
+
+  it("makes a question with no options answerable through the same box", () => {
+    const onAnswer = vi.fn();
+    const row = askRow();
+    row.ask.questions[0]!.options = [];
+    render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
+
+    act(() => byText("其他").click());
+    const input = container.querySelector('input[aria-label="其他回答"]') as HTMLInputElement;
+    act(() => typeInto(input, "都可以"));
+    act(() => byText("确认").click());
+
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["都可以"] });
+  });
+
+  it("lets a single-choice pick carry an optional note", () => {
+    const onAnswer = vi.fn();
+    render(<AskCard row={askRow()} handlers={{ ...noop, onAnswer }} />);
+
+    act(() => byText("茶").click());
+    const note = container.querySelector('input[aria-label="补充说明"]') as HTMLInputElement;
+    act(() => typeInto(note, "加冰"));
+    act(() => byText("确认").click());
+
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["茶", "加冰"] });
+  });
+
+  it("uses the kernel's own other option instead of adding a second", () => {
+    const row = askRow();
+    row.ask.questions[0]!.options = [
+      { label: "茶" },
+      { label: "其他（请说明）", description: "写下来" },
+    ];
+    render(<AskCard row={row} handlers={noop} />);
+
+    const labels = buttons().map((button) => button.textContent ?? "");
+    expect(labels.filter((label) => label.includes("其他"))).toEqual(["其他（请说明）写下来"]);
   });
 
   it("will not send before a question has an answer", () => {
