@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding-top: env(safe-area-inset-top);
+  padding-top: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px));
   background: transparent;
 }
 
@@ -954,7 +954,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 0 12px calc(8px + env(safe-area-inset-bottom));
+  margin: 0 12px calc(8px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
   padding: 8px 10px 6px;
   border: 1px solid var(--line);
   border-radius: 22px;

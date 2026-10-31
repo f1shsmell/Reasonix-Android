@@ -17,7 +17,12 @@
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: env(safe-area-inset-top) var(--pad) calc(24px + env(safe-area-inset-bottom));
+  /* The inset is whichever source answers: Android WebView reports zero for
+     env() on many devices, while Capacitor's SystemBars plugin measures the
+     bars natively and injects them as --safe-area-inset-*. Without the max(),
+     the home title draws under the status bar clock. */
+  padding: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px)) var(--pad)
+    calc(24px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
   background: transparent;
   /* A vertical scroll keeps the page, a horizontal drag is the pane switch. */
   touch-action: pan-y pinch-zoom;

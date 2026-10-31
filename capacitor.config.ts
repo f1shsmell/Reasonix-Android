@@ -30,6 +30,16 @@ const config: CapacitorConfig = {
     // arbitrary http subresources.
     allowMixedContent: false,
   },
+  plugins: {
+    // The page always declares viewport-fit=cover, and the SystemBars plugin
+    // needs one page-load round-trip to discover it — until then it assumes
+    // the opposite, which pushes the whole page below the status bar for the
+    // first frames of a cold start. The hint skips that jump; the plugin
+    // still corrects itself if the meta tag ever changes.
+    SystemBars: {
+      initialViewportFitValueHint: "cover",
+    },
+  },
 };
 
 export default config;
