@@ -49,9 +49,13 @@ afterEach(() => {
 const runtime: RuntimeView = { id: "r1", base: "/rt/r1", root: "/w", name: "w" };
 const other: RuntimeView = { id: "r2", base: "/rt/r2", root: "/w2", name: "w2" };
 
-function snapshot(lastEvent?: EventPayload, runtimes: RuntimeView[] = [runtime]): ConnectionSnapshot {
+function snapshot(
+  lastEvent?: EventPayload,
+  runtimes: RuntimeView[] = [runtime],
+  reach: ConnectionSnapshot["reach"] = { kind: "ok" },
+): ConnectionSnapshot {
   return {
-    reach: { kind: "ok" },
+    reach,
     runtimes,
     stream: { kind: "open" },
     ...(lastEvent ? { lastEvent } : {}),
@@ -203,7 +207,7 @@ describe("ChatScreen history", () => {
   it("repaints the cached conversation instead of waiting on the read", async () => {
     // The point of the cache: the rows the screen drew last time are on
     // screen before the history request returns.
-    scheduleSaveRows("r1", [
+    scheduleSaveRows(["r1"], [
       { kind: "user", id: "u1", text: "缓存里的问题" },
       { kind: "assistant", id: "a1", text: "缓存里的回答", reasoning: "", streaming: false },
     ]);
@@ -236,6 +240,43 @@ describe("ChatScreen history", () => {
     // The read replaces the cache rather than prefixing it — the cache IS the
     // earlier history, so a merge would draw the conversation twice.
     expect(container.textContent.split("缓存里的问题")).toHaveLength(2);
+  });
+
+  it("paints the cache before /runtimes answers, and says so", async () => {
+    // `base` comes from `GET /runtimes`, which is the slowest thing on a bad
+    // network. The cache exists to paint before that lands, so it must not be
+    // gated on it — and the screen must not claim the pane is gone meanwhile.
+    scheduleSaveRows(["r1"], [
+      { kind: "user", id: "u1", text: "缓存里的问题" },
+      { kind: "assistant", id: "a1", text: "缓存里的回答", reasoning: "", streaming: false },
+    ]);
+
+    // Every route hangs: the runtime list has not arrived.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    // `unknown` is the state before the first answer, which is what a phone on
+    // a bad network sits in.
+    render(snapshot(undefined, [], { kind: "unknown" }));
+    await flush();
+
+    // The cache was read without a base, which is the fix.
+    expect(container.textContent).toContain("已缓存 2 条");
+    expect(container.textContent).not.toContain("这个会话已经关掉了");
+  });
+
+  it("says the pane is gone once the list has answered without it", async () => {
+    // The list did answer (reach ok) and this pane is not in it: the old
+    // wording is right, and a stale cache must not hide it.
+    scheduleSaveRows(["r1"], [{ kind: "user", id: "u1", text: "旧缓存" }]);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    render(snapshot(undefined, [other], { kind: "ok" }));
+    await flush();
+
+    expect(container.textContent).toContain("这个会话已经关掉了");
   });
 });
 

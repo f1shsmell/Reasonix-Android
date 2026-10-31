@@ -387,6 +387,7 @@ function useTranscript(
   snapshot: ConnectionSnapshot,
   runtimeId: string,
   base: string | undefined,
+  sessionPath: string | undefined,
 ): {
   transcript: Transcript;
   history: "loading" | "loaded" | "failed";
@@ -413,12 +414,17 @@ function useTranscript(
   // Paint the cached conversation before the history read lands. The read
   // still runs — the cache is the speed, the kernel is the truth — so a stale
   // copy survives at most until the response arrives.
+  //
+  // This deliberately does not wait for `base`: `base` only arrives with
+  // `GET /runtimes`, and on a slow network that request is the slowest thing
+  // on the screen. Gating the cache on it made the accelerator sit behind the
+  // very wait it exists to hide. `runtimeId` is known the moment the screen
+  // mounts, and the session path joins it once the runtime list lands.
   useEffect(() => {
-    if (!base) return;
     let cancelled = false;
     hydrated.current = false;
     historyDone.current = false;
-    void loadCachedRows(runtimeId).then((cached) => {
+    void loadCachedRows([sessionPath, runtimeId]).then((cached) => {
       if (cancelled || !cached || historyDone.current) return;
       hydrated.current = true;
       setTranscript((current) =>
@@ -428,7 +434,7 @@ function useTranscript(
     return () => {
       cancelled = true;
     };
-  }, [base, runtimeId]);
+  }, [sessionPath, runtimeId]);
 
   useEffect(() => {
     if (!base) return;
@@ -497,11 +503,11 @@ function useTranscript(
   // conversation, and caching it would redraw the hole tomorrow.
   useEffect(() => {
     if (transcript.gap === true) {
-      dropCachedRows(runtimeId);
+      dropCachedRows([sessionPath, runtimeId]);
       return;
     }
-    scheduleSaveRows(runtimeId, transcript.rows);
-  }, [runtimeId, transcript.rows]);
+    scheduleSaveRows([sessionPath, runtimeId], transcript.rows);
+  }, [sessionPath, runtimeId, transcript.rows]);
 
   return { transcript, history, reload, setTranscript };
 }
@@ -600,6 +606,7 @@ export function ChatScreen({
     snapshot,
     runtimeId,
     runtime?.base,
+    runtime?.sessionPath,
   );
   const { todos, state: todosState } = useTodos(runtime?.base, snapshot.lastEvent);
   /** The stored transcript's identity; a pane id is only the fallback. */
@@ -1117,7 +1124,24 @@ export function ChatScreen({
     [runtime, setTranscript],
   );
 
+  // `runtimes` is empty until `GET /runtimes` answers, so a missing runtime is
+  // two different states: still asking, or the pane really is gone. Reporting
+  // the second while in the first is what a slow network showed — "会话不存在"
+  // over a conversation that was merely waiting on the list.
+  //
+  // The cached rows draw here rather than below: they were read from
+  // `runtimeId` alone, which is exactly why they exist before the runtime
+  // does. This branch must stay before every hook below it, so the row list is
+  // rendered without the machinery that needs a `base`.
   if (!runtime) {
+    // `unknown` is the state before the first `/runtimes` answer lands, so it
+    // is "still asking", not "settled". Only a real answer — ok, refused, or
+    // failed — lets us say the pane is gone.
+    const settled =
+      snapshot.reach.kind === "ok" ||
+      snapshot.reach.kind === "unauthorized" ||
+      snapshot.reach.kind === "unreachable";
+    const cached = transcript.rows.length > 0;
     return (
       <div className="chat">
         <div className="chat-head">
@@ -1125,13 +1149,27 @@ export function ChatScreen({
             ←
           </button>
           <div className="title">
-            <strong>会话不存在</strong>
+            <strong>{settled ? "会话不存在" : "正在打开"}</strong>
           </div>
         </div>
         <div className="centered">
           <div>
-            <strong>这个会话已经关掉了</strong>
-            它可能被桌面端关闭，或者连接换了。
+            {settled ? (
+              <>
+                <strong>这个会话已经关掉了</strong>
+                它可能被桌面端关闭，或者连接换了。
+              </>
+            ) : cached ? (
+              <>
+                <strong>正在读取这个会话</strong>
+                已缓存 {transcript.rows.length} 条，连接恢复后显示。
+              </>
+            ) : (
+              <>
+                <strong>正在读取这个会话</strong>
+                网络慢的时候要等一会儿，已经看过的内容会先显示。
+              </>
+            )}
           </div>
         </div>
       </div>
