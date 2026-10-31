@@ -185,11 +185,70 @@ export interface HistoryRead {
   hasMoreBefore: boolean;
   /** Pass back to `loadHistory` to read the page before this one. */
   nextCursor?: string;
+  /** The snapshot this page was cut from; a mismatched older page is stale. */
+  snapshot?: string;
+  /** Index of this page's first message in the whole conversation. */
+  start?: number;
+  /** Index one past this page's last message. */
+  end?: number;
   /** False when a kernel without `/history/page` served the whole transcript. */
   paged: boolean;
 }
 
 type HistoryResult = { ok: true; read: HistoryRead } | { ok: false; code: string };
+
+/**
+ * Shape-check one page the way the desktop's own reader does.
+ *
+ * A page whose bookkeeping disagrees with itself — `hasMoreBefore` without a
+ * cursor, bounds outside `total`, `hasMoreBefore` claiming more when `start`
+ * says this was the first — is not a page to fold, it is a kernel bug to
+ * surface as `history.shape`. Folding it silently would wedge the cursor
+ * walk: the next request would re-read the same window forever.
+ */
+function checkedPage(page: {
+  messages?: unknown;
+  total?: unknown;
+  hasMoreBefore?: unknown;
+  nextCursor?: unknown;
+  snapshot?: unknown;
+  start?: unknown;
+  end?: unknown;
+}): {
+  messages: HistoryMessage[];
+  total: number;
+  hasMoreBefore: boolean;
+  nextCursor?: string;
+  snapshot?: string;
+  start?: number;
+  end?: number;
+} | null {
+  if (!page || !Array.isArray(page.messages)) return null;
+  const total = page.total as number;
+  if (!Number.isSafeInteger(total) || total < 0) return null;
+  const hasMoreBefore = page.hasMoreBefore === true;
+  if (hasMoreBefore && typeof page.nextCursor !== "string") return null;
+  if (page.start !== undefined || page.end !== undefined) {
+    const start = page.start as number;
+    const end = page.end as number;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null;
+    if (start < 0 || end < start || total < end) return null;
+    if (hasMoreBefore !== start > 0) return null;
+  }
+  return {
+    messages: page.messages,
+    total,
+    hasMoreBefore,
+    ...(typeof page.nextCursor === "string" && page.nextCursor
+      ? { nextCursor: page.nextCursor }
+      : {}),
+    ...(typeof page.snapshot === "string" && page.snapshot
+      ? { snapshot: page.snapshot }
+      : {}),
+    ...(Number.isSafeInteger(page.start) ? { start: page.start as number } : {}),
+    ...(Number.isSafeInteger(page.end) ? { end: page.end as number } : {}),
+  };
+}
 
 async function readPage(base: string, cursor?: string): Promise<HistoryResult> {
   const query = cursor
@@ -202,22 +261,18 @@ async function readPage(base: string, cursor?: string): Promise<HistoryResult> {
   );
   if (response.status === 409) return { ok: false, code: "history.snapshot_changed" };
   if (!response.ok) return { ok: false, code: `http.${response.status}` };
-  const page = (await response.json()) as {
-    messages?: HistoryMessage[];
-    total?: number;
-    hasMoreBefore?: boolean;
-    nextCursor?: string;
-  };
-  if (!page || !Array.isArray(page.messages)) return { ok: false, code: "history.shape" };
+  const page = checkedPage((await response.json()) as Record<string, unknown>);
+  if (!page) return { ok: false, code: "history.shape" };
   return {
     ok: true,
     read: {
       rows: foldHistory(page.messages),
-      total: typeof page.total === "number" ? page.total : page.messages.length,
-      hasMoreBefore: page.hasMoreBefore === true,
-      ...(typeof page.nextCursor === "string" && page.nextCursor
-        ? { nextCursor: page.nextCursor }
-        : {}),
+      total: page.total,
+      hasMoreBefore: page.hasMoreBefore,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      ...(page.snapshot ? { snapshot: page.snapshot } : {}),
+      ...(page.start !== undefined ? { start: page.start } : {}),
+      ...(page.end !== undefined ? { end: page.end } : {}),
       paged: true,
     },
   };
