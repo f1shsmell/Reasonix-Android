@@ -34,6 +34,7 @@ import { useBackCloser } from "./backStack";
 import { SessionSheet } from "./SessionSheet";
 import { Segmented } from "./Segmented";
 import { RMark } from "./RMark";
+import { StudioIcon } from "./StudioIcon";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
 import { runtimeOpenMessage, sessionTitle } from "./SessionList";
@@ -384,7 +385,7 @@ function LinkBar({ link, onOpen }: { link: LinkState; onOpen: () => void }) {
         <span className="linkbar-state">{linkSummary(link)}</span>
       </span>
       <span className="chev" aria-hidden="true">
-        ⌄
+        <StudioIcon name="down" />
       </span>
     </button>
   );
@@ -939,7 +940,7 @@ export function Home({
       <div className="bar">
         {onSettings ? (
           <button type="button" className="iconbtn" onClick={onSettings} aria-label="连接与账号">
-            ⚙
+            <StudioIcon name="settings" />
           </button>
         ) : (
           <span className="bar-spacer" />
@@ -958,7 +959,7 @@ export function Home({
             aria-label="派任务"
             disabled={link.phase !== "connected" || tree.projects.length === 0}
           >
-            ➤
+            <StudioIcon name="arrow" />
           </button>
         ) : null}
         <button
@@ -968,10 +969,10 @@ export function Home({
           aria-label="新建会话"
           disabled={tree.projects.length === 0}
         >
-          ＋
+          <StudioIcon name="plus" />
         </button>
         <button type="button" className="iconbtn" onClick={onRefresh} aria-label="刷新">
-          ⟳
+          <StudioIcon name="refresh" />
         </button>
       </div>
 
