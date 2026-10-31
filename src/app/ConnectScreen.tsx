@@ -813,6 +813,14 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
   );
 
   const known = config?.origin ?? "";
+  /**
+   * The addresses this phone can reach without going through a tunnel.
+   *
+   * A computer exposing both its Wi-Fi address and a mesh-VPN one is two rows
+   * in the list above, and they are not equally good. Naming the direct one
+   * is what lets a person pick it on purpose instead of by experiment.
+   */
+  const direct = config?.direct ?? [];
   const labelOf = (entry: SavedConnection): string =>
     entry.kind === "cloud"
       ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
@@ -859,7 +867,6 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           )}
           <div className="settings-title">
             <h1>设置</h1>
-            <span>连接、机器与偏好</span>
           </div>
           {onClose ? (
             <button type="button" className="linkbtn" onClick={onClose}>
@@ -917,6 +924,9 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
                         </span>
                         <span className="setting-sub">
                           {entry.kind === "lan" ? `局域网 · ${entry.target}` : "云端 · Reasonix 账号"}
+                          {entry.kind === "lan" && direct.includes(entry.target)
+                            ? " · 可直连"
+                            : ""}
                         </span>
                       </span>
                       <span className="chev" aria-hidden="true">
@@ -943,7 +953,7 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
               })}
             </section>
             <p className="group-note">
-              回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换；× 会移除记录，云端电脑同时忘记已确认的身份。
+              回到同一 Wi-Fi 会自动走局域网，并优先选能直连的地址；离开后自动改用云端。点一行即可手动切换；× 会移除记录，云端电脑同时忘记已确认的身份。
             </p>
           </>
         ) : null}

@@ -34,14 +34,18 @@ function reachCode(reach: ConnectionSnapshot["reach"]): string {
   return reach.kind === "unauthorized" ? "device.unauthorized" : "client.offline";
 }
 
-/** Every LAN address worth trying: the proxy's own first, duplicates removed. */
-function lanDoorsOf(config: ProxyConfig | null): string[] {
+/** Every LAN address worth trying, the ones this phone can reach directly first. */
+export function lanDoorsOf(config: ProxyConfig | null): string[] {
   const saved = loadConnections()
     .filter((row) => row.kind === "lan")
     .map((row) => row.target);
+  // The proxy already ordered what it remembered by "is this a neighbour of
+  // my Wi-Fi". Rows the app knows about but the proxy does not keep their
+  // place at the end rather than jumping the queue.
+  const ordered = [...(config?.preferred ?? []), ...(config?.candidates ?? [])];
   return [
     ...new Set(
-      [config?.origin ?? "", ...(config?.candidates ?? []), ...saved].filter(Boolean),
+      [config?.origin ?? "", ...ordered, ...saved].filter(Boolean),
     ),
   ];
 }
