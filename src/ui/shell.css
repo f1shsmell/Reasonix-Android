@@ -12,7 +12,10 @@
   gap: 6px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(var(--bg-rgb), 0.76);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg) 76%, transparent);
+  }
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
@@ -65,7 +68,10 @@
   padding: 0 16px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
+  background: rgba(var(--bg-raised-rgb), 0.86);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 86%, transparent);
+  }
   color: var(--fg);
   font: inherit;
   font-size: 15px;
@@ -82,7 +88,10 @@
 }
 
 .search:focus {
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  }
   background: var(--bg-raised);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -97,7 +106,10 @@
   padding: var(--seg-pad);
   border: 1px solid var(--line);
   border-radius: 999px;
+  background: rgba(var(--bg-raised-rgb), 0.7);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+  }
   isolation: isolate;
 }
 
@@ -177,7 +189,10 @@
   border: 0;
   border-bottom: 1px solid var(--line-soft);
   border-radius: 0;
+  background: rgba(var(--bg-raised-rgb), 0.84);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+  }
   color: var(--fg);
   text-align: left;
 }
@@ -223,7 +238,10 @@
    computer that has something blocked or running; quiet ones stay hidden. */
 .fleet {
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(var(--bg-raised-rgb), 0.84);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+  }
 }
 
 .fleet-row {
@@ -401,7 +419,10 @@
 
 .session:active:not(:disabled),
 .project:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 .empty {
@@ -542,7 +563,10 @@ pre.frame {
 /* A pinned row keeps the list's background but says so with a tint, so the
    block at the top does not read as a different kind of list. */
 .list li.pinned > .session {
+  background: rgba(var(--accent-rgb), 0.06);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
 }
 
 /* ---- needs you ---- */
@@ -590,9 +614,17 @@ pre.frame {
   background:
     linear-gradient(
       155deg,
-      color-mix(in srgb, var(--warn) 7%, var(--bg-raised)),
+      var(--warn),
       var(--bg-raised) 58%
     );
+  @supports (color: color-mix(in srgb, red, blue)) {
+    background:
+      linear-gradient(
+        155deg,
+        color-mix(in srgb, var(--warn) 7%, var(--bg-raised)),
+        var(--bg-raised) 58%
+      );
+  }
   box-shadow: var(--shadow-1);
   transition:
     transform var(--dur-1) var(--ease-out),
@@ -608,9 +640,17 @@ pre.frame {
   background:
     linear-gradient(
       155deg,
-      color-mix(in srgb, var(--accent) 9%, var(--bg-raised)),
+      var(--accent),
       var(--bg-raised) 58%
     );
+  @supports (color: color-mix(in srgb, red, blue)) {
+    background:
+      linear-gradient(
+        155deg,
+        color-mix(in srgb, var(--accent) 9%, var(--bg-raised)),
+        var(--bg-raised) 58%
+      );
+  }
 }
 
 .card-need[data-kind="running"] .need-verb {
@@ -644,7 +684,10 @@ pre.frame {
   flex: none;
   padding: 0 6px;
   border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
   color: var(--accent);
   font-size: 10px;
   font-weight: 650;
@@ -773,7 +816,10 @@ pre.frame {
   color: #fff;
   font-weight: 600;
   flex: none;
+  box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
+  @supports (color: color-mix(in srgb, red, blue)) {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 28%, transparent);
+  }
 }
 
 .primary:active:not(:disabled) {
@@ -970,7 +1016,10 @@ pre.frame {
 }
 
 .sheet-input:focus {
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -997,8 +1046,14 @@ pre.frame {
 }
 
 .danger.solid {
+  border-color: var(--line);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--bad) 42%, var(--line));
+  }
+  background: var(--bg-raised);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bad) 12%, var(--bg-raised));
+  }
   color: var(--bad);
   font-weight: 600;
 }
@@ -1028,7 +1083,10 @@ pre.frame {
 }
 
 .sheet-actions button:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 .sheet-actions button[aria-pressed="true"] {
@@ -1069,7 +1127,10 @@ pre.frame {
 
 .dispatch-project.on {
   border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
   color: var(--accent);
   font-weight: 600;
 }
@@ -1094,7 +1155,10 @@ pre.frame {
 
 .dispatch-prompt:focus {
   outline: none;
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1119,7 +1183,10 @@ pre.frame {
   color: #fff;
   font: inherit;
   font-weight: 600;
+  box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
+  @supports (color: color-mix(in srgb, red, blue)) {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 28%, transparent);
+  }
 }
 
 .dispatch-send:active:not(:disabled) {

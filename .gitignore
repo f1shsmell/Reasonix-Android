@@ -16,3 +16,4 @@ ios/
 keystore.properties
 *.jks
 *.keystore
+$TMPDIR/

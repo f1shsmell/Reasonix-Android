@@ -40,7 +40,10 @@
   margin: 0 calc(-1 * var(--pad));
   padding: 4px var(--pad) 10px;
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(var(--bg-rgb), 0.8);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg) 80%, transparent);
+  }
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
@@ -96,7 +99,10 @@
 .settings-tabs {
   margin-bottom: 0;
   min-height: 40px;
+  background: rgba(var(--bg-raised-rgb), 0.62);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 62%, transparent);
+  }
 }
 
 .settings-tabs button {
@@ -149,6 +155,7 @@
    traces only while the link is actually working. */
 .link-hero {
   --hero-tone: var(--fg-dim);
+  --hero-tone-rgb: var(--fg-dim-rgb);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -160,7 +167,7 @@
   background:
     radial-gradient(
       120% 90% at 50% -12%,
-      color-mix(in srgb, var(--hero-tone) 15%, transparent),
+      rgba(var(--hero-tone-rgb), 0.15),
       transparent 70%
     ),
     var(--bg-raised);
@@ -169,10 +176,10 @@
   text-align: center;
 }
 
-.link-hero[data-tone="busy"] { --hero-tone: var(--accent); }
-.link-hero[data-tone="ok"] { --hero-tone: var(--ok); }
-.link-hero[data-tone="warn"] { --hero-tone: var(--warn); }
-.link-hero[data-tone="bad"] { --hero-tone: var(--bad); }
+.link-hero[data-tone="busy"] { --hero-tone: var(--accent); --hero-tone-rgb: var(--accent-rgb); }
+.link-hero[data-tone="ok"] { --hero-tone: var(--ok); --hero-tone-rgb: 62, 207, 142; }
+.link-hero[data-tone="warn"] { --hero-tone: var(--warn); --hero-tone-rgb: var(--warn-rgb); }
+.link-hero[data-tone="bad"] { --hero-tone: var(--bad); --hero-tone-rgb: var(--bad-rgb); }
 
 /* A resting link is a fact, not an event: the tall animated card is kept for
    a connection in progress; connected and failed states settle into one row. */
@@ -232,7 +239,7 @@
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--hero-tone) 26%, transparent),
+    rgba(var(--hero-tone-rgb), 0.26),
     transparent 68%
   );
   opacity: 0.4;
@@ -332,7 +339,10 @@
 .link-steps li[data-state="active"] { color: var(--fg); }
 .link-steps li[data-state="active"]::before {
   background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.22);
+  @supports (color: color-mix(in srgb, red, blue)) {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -435,7 +445,10 @@ button.setting {
 }
 
 button.setting:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 button.setting:disabled {
@@ -512,7 +525,10 @@ button.setting:disabled {
 }
 
 .saved-row .saved-main:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 .saved-row .saved-main:disabled {
@@ -572,7 +588,10 @@ button.setting:disabled {
 }
 
 .setting:focus-within {
+  background: rgba(var(--accent-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
 }
 
 /* A labelled row holding an input: the label keeps its own width so two rows
@@ -606,9 +625,15 @@ label.setting .setting-title {
   letter-spacing: 0.18em;
   text-align: center;
   padding: 14px 8px;
+  border: 1px dashed var(--line);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--line));
+  }
   border-radius: 12px;
+  background: rgba(var(--accent-rgb), 0.06);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
   user-select: all;
 }
 

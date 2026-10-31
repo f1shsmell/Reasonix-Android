@@ -1,22 +1,32 @@
 :root {
   color-scheme: dark light;
   --bg: #0b0e14;
+  --bg-rgb: 11, 14, 20;
   --bg-raised: #151a24;
+  --bg-raised-rgb: 21, 26, 36;
   --bg-sunken: #07090e;
   --line: #242b39;
+  --line-rgb: 36, 43, 57;
   --line-soft: #1a2030;
   --fg: #eef2f9;
+  --fg-rgb: 238, 242, 249;
   --fg-dim: #98a3b5;
+  --fg-dim-rgb: 152, 163, 181;
   --ok: #3ecf8e;
   --warn: #e8b45a;
+  --warn-rgb: 232, 180, 90;
   --bad: #f16a70;
+  --bad-rgb: 241, 106, 112;
   --accent: #7b93ff;
+  --accent-rgb: 123, 147, 255;
   /* Filled buttons put white on this darker blue: 5.1:1, AA. */
   --accent-fill: #4763e0;
+  --accent-fill-rgb: 71, 99, 224;
   --accent-press: #3b55c9;
   --accent-soft: rgba(123, 147, 255, 0.14);
   /* White on the user bubble clears AA. */
   --bubble-user: #4a6be0;
+  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #283043;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
@@ -44,16 +54,25 @@
 @media (prefers-color-scheme: light) {
   :root {
     --bg: #f4f6fa;
+    --bg-rgb: 244, 246, 250;
     --bg-raised: #ffffff;
+    --bg-raised-rgb: 255, 255, 255;
     --bg-sunken: #eceff5;
     --line: #e2e7ef;
+    --line-rgb: 226, 231, 239;
     --line-soft: #edf0f5;
     --fg: #12151b;
+    --fg-rgb: 18, 21, 27;
     --fg-dim: #5e6776;
+    --fg-dim-rgb: 94, 103, 118;
     --accent: #3e5ce0;
+    --accent-rgb: 62, 92, 224;
     --accent-fill: #4763e0;
+    --accent-fill-rgb: 71, 99, 224;
     --accent-press: #3b55c9;
     --accent-soft: rgba(74, 107, 224, 0.1);
+    --bubble-user: #4a6be0;
+    --bubble-user-rgb: 74, 107, 224;
     --seg-thumb: #e4e9f3;
     --shadow-1:
       inset 0 1px 0 rgba(255, 255, 255, 0.8),
@@ -69,16 +88,25 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #f4f6fa;
+  --bg-rgb: 244, 246, 250;
   --bg-raised: #ffffff;
+  --bg-raised-rgb: 255, 255, 255;
   --bg-sunken: #eceff5;
   --line: #e2e7ef;
+  --line-rgb: 226, 231, 239;
   --line-soft: #edf0f5;
   --fg: #12151b;
+  --fg-rgb: 18, 21, 27;
   --fg-dim: #5e6776;
+  --fg-dim-rgb: 94, 103, 118;
   --accent: #3e5ce0;
+  --accent-rgb: 62, 92, 224;
   --accent-fill: #4763e0;
+  --accent-fill-rgb: 71, 99, 224;
   --accent-press: #3b55c9;
   --accent-soft: rgba(74, 107, 224, 0.1);
+  --bubble-user: #4a6be0;
+  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #e4e9f3;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
@@ -90,16 +118,27 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b0e14;
+  --bg-rgb: 11, 14, 20;
   --bg-raised: #151a24;
+  --bg-raised-rgb: 21, 26, 36;
   --bg-sunken: #07090e;
   --line: #242b39;
+  --line-rgb: 36, 43, 57;
   --line-soft: #1a2030;
   --fg: #eef2f9;
+  --fg-rgb: 238, 242, 249;
   --fg-dim: #98a3b5;
+  --fg-dim-rgb: 152, 163, 181;
+  --warn-rgb: 232, 180, 90;
+  --bad-rgb: 241, 106, 112;
   --accent: #7b93ff;
+  --accent-rgb: 123, 147, 255;
   --accent-fill: #4763e0;
+  --accent-fill-rgb: 71, 99, 224;
   --accent-press: #3b55c9;
-  --accent-soft: rgba(123, 147, 255, 0.14);
+  --accent-soft: rgba(var(--accent-rgb), 0.14);
+  --bubble-user: #4a6be0;
+  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #283043;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
@@ -124,10 +163,19 @@ body {
   background:
     radial-gradient(
       120% 55% at 50% -14%,
-      color-mix(in srgb, var(--accent) 9%, transparent),
+      rgba(var(--accent-rgb), 0.09),
       transparent 62%
     ),
     var(--bg);
+  @supports (color: color-mix(in srgb, red, blue)) {
+    background:
+      radial-gradient(
+        120% 55% at 50% -14%,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 62%
+      ),
+      var(--bg);
+  }
   color: var(--fg);
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
@@ -169,7 +217,10 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline: 2px solid rgba(var(--accent-rgb), 0.72);
+  @supports (color: color-mix(in srgb, red, blue)) {
+    outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  }
   outline-offset: 2px;
 }
 
