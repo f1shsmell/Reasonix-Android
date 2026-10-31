@@ -1,42 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The notification mark: the same cat R the launcher icon uses, scaled up
-     to fill the slot a status bar gives it.
+<!-- The notification mark: the same cat R the launcher icon uses, sized to
+     fill the slot a status bar gives it.
 
      A notification small icon is an alpha mask. The system tints it with the
      bar's own foreground colour, so only the shape survives: it is drawn in
      white because the value is ignored, and any colour or gradient here would
-     be flattened to the same silhouette anyway. The cat and whale read as
-     negative space cut out of the R, which is what keeps them legible at 18dp
-     - they are holes in the glyph, not thin strokes that anti-alias away.
+     be flattened to the same silhouette anyway.
+
+     No <group> transform. An earlier revision wrapped the artwork in
+     translate+scale, which is valid VectorDrawable and renders in a browser,
+     but the notification path does not use the same renderer: the system
+     rasterises this drawable through its own icon pipeline. The 0.099311
+     scale put every coordinate far outside the 24-unit viewport before the
+     matrix applied, and on a device the icon came out unchanged - the
+     silhouette never reached the bar. The transform is baked into the path
+     data instead: every coordinate is absolute and already inside 0..24, so
+     there is nothing left to interpret.
 
      Size: the drawn bbox is 19.30 x 21.80dp, centred on (12, 12). Android
      clips a notification icon to a 22dp safe area, so this fills it with
      1.10dp of margin top and bottom (and 2.35dp left and right, because the
      glyph is narrower than it is tall). Pushing it to a full 22dp left the
-     bottom at 0.999dp, which is close enough to the clip to shave the foot of
-     the leg on some renderers, so it stops just short.
-
-     The transform is translate-then-scale about the artwork's own origin:
-     the source paths start at x=262.58, y=82.87, which is why the offsets are
-     not simply 12 - (w/2). -->
+     bottom at 0.999dp, close enough to the clip to shave the foot of the leg
+     on some renderers, so it stops just short. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <group
-        android:translateX="-23.7256"
-        android:translateY="-7.1291"
-        android:scaleX="0.099311"
-        android:scaleY="0.099311">
-        <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M369.75,185.3c2.09,1.76,4.98,2.41,7.95,1.06,1.18-.54,1.96-1.91,1.47-3.25-3.92-10.71-14.97-18.54-19.38-12.48-.54.74-.52,1.7-.11,2.29.32.47.97.57,1.82.4,2.68-.56,6.02,1.31,5.7,4.3-.33,3.12.3,5.79,2.56,7.69Z" />
-        <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M434.28,204.78c10.12-11.32,16.46-25.01,18.67-40.07,5.04-32.93-11.31-63.01-42.11-75.75-10.83-4.35-21.95-6.2-33.76-6.09l-114.5.03v219.42s56.29-.04,56.29-.04v-77.17c-1.86-.69-3.15-1.27-3.15-1.27-12.24-5.59-21.6-15.29-26.74-27.44-6.56-15.51-4.54-32.9,5.78-46.12,10.28-12.84,24.31-16.92,40.41-14.67,5.95.83,12.3-6.15,24.4-4.81.81.09,1.63.7,1.71,1.18.28,1.65-4.4,2.54-4.4,7.05,0,1.9.85,4.1,2.65,5.36,6.17,4.33,11.51,9.19,17.1,14.22,2.72,2.44,11.93,9.31,14.27,3.72,1.37-3.26,2.27-6.68,3.18-10.15.45-1.72-.5-2.74-1.89-3.56-9.5-5.63-13.08-17.35-9.37-27.74.36-1,1.29-1.49,2.08-1.52,3.19-.14,1.49,5.78,9.38,8.21,7.49,2.31,7.71,8.53,11.35,6.05,8.48-5.78,11.54-1.05,19.41-8.46.81-.76,2.2-.82,3.04-.23.52.36.97,1.29.93,2.38-.23,6.26-2.67,12.24-6.95,16.84-8.09,8.69-14.89,4.53-15.33,10.62-1.29,17.86-7.13,35.69-19.81,48.66-.41.42-.65,1.01-.58,1.41.07.42.57.83,1.12,1.01l10.68,3.63c1.51.51,2.6,1.87,2.41,3.31-.17,1.26-1.17,2.37-2.61,2.85-7.84,2.59-16.26,2.14-24.24-.27-10.56,8.89-23.54,13.48-37.68,12.93l20.53,28.34,33.49,45.73,66.85-.09-56.68-76.53c13.19-3.89,24.78-10.87,34.07-20.94Z" />
-        <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M300.31,167.85c-3.53.43-5.65,2.96-5.31,6.74,2.39,26.35,26.7,47.92,53.94,42.72,5.8-1.11,11.08-3.41,15.36-7.74-9.27-7.98-13.79-16.12-21.41-24.13-10.91-11.47-26.43-19.54-42.58-17.59Z" />
-    </group>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12.995 11.273C13.202 11.448 13.489 11.513 13.784 11.378C13.901 11.325 13.979 11.189 13.93 11.056C13.541 9.992 12.443 9.215 12.006 9.816C11.952 9.89 11.954 9.985 11.995 10.044C12.026 10.09 12.091 10.1 12.175 10.083C12.441 10.028 12.773 10.214 12.741 10.511C12.709 10.82 12.771 11.086 12.996 11.274ZM19.403 13.208C20.408 12.084 21.038 10.724 21.257 9.228C21.758 5.958 20.134 2.971 17.075 1.706C16 1.274 14.895 1.09 13.723 1.101L2.351 1.104L2.351 22.895Q7.942 22.891 7.942 22.891L7.942 15.227C7.757 15.158 7.629 15.101 7.629 15.101C6.413 14.546 5.484 13.582 4.973 12.376C4.322 10.835 4.522 9.108 5.547 7.795C6.568 6.52 7.962 6.115 9.56 6.338C10.151 6.421 10.782 5.728 11.984 5.861C12.064 5.87 12.146 5.93 12.153 5.978C12.181 6.142 11.717 6.23 11.717 6.678C11.717 6.867 11.801 7.085 11.98 7.21C12.592 7.64 13.123 8.123 13.678 8.623C13.948 8.865 14.863 9.547 15.095 8.992C15.231 8.668 15.321 8.329 15.411 7.984C15.456 7.813 15.361 7.712 15.223 7.631C14.28 7.071 13.924 5.907 14.293 4.876C14.328 4.776 14.421 4.728 14.499 4.725C14.816 4.711 14.647 5.299 15.431 5.54C16.175 5.769 16.196 6.387 16.558 6.141C17.4 5.567 17.704 6.037 18.486 5.301C18.566 5.225 18.704 5.219 18.787 5.278C18.839 5.314 18.884 5.406 18.88 5.514C18.857 6.136 18.615 6.73 18.19 7.187C17.386 8.05 16.711 7.636 16.667 8.241C16.539 10.015 15.959 11.786 14.7 13.074C14.659 13.115 14.635 13.174 14.642 13.214C14.649 13.255 14.699 13.296 14.753 13.314L15.814 13.675C15.964 13.725 16.072 13.86 16.053 14.003C16.037 14.128 15.937 14.239 15.794 14.286C15.016 14.544 14.179 14.499 13.387 14.26C12.338 15.142 11.049 15.598 9.645 15.544L11.684 18.358L15.01 22.9L21.649 22.891L16.02 15.29C17.33 14.904 18.481 14.211 19.403 13.211ZM6.098 9.54C5.748 9.583 5.537 9.834 5.571 10.21C5.808 12.826 8.223 14.969 10.928 14.452C11.504 14.342 12.028 14.114 12.453 13.684C11.533 12.891 11.084 12.083 10.327 11.287C9.244 10.148 7.702 9.347 6.098 9.54Z" />
 </vector>
