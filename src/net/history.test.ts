@@ -203,6 +203,52 @@ describe("foldHistory", () => {
     ]);
     for (const row of rows) expect(row.id.startsWith("h:")).toBe(true);
   });
+
+  it("joins a result to a call the page itself does not carry", () => {
+    // The newest page of a paged conversation can hold a result whose call
+    // sits pages earlier. The kernel ships that call in toolContext; folding
+    // it in gives the result somewhere to land instead of drawing an orphan
+    // card, and the card's id is the one the call's own message generates —
+    // so when an older page brings that message in, the dedupe drops the
+    // duplicate rather than drawing the step twice.
+    const rows = foldHistory(
+      [
+        message({ role: "tool", content: "later page output", toolCallId: "c1", msgIndex: 10 }),
+      ],
+      [{ messageIndex: 8, ordinal: 0, call: { id: "c1", name: "read_file", arguments: '{"p":"a"}' } }],
+    );
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row?.kind === "tool") {
+      expect(row.name).toBe("read_file");
+      expect(row.args).toBe('{"p":"a"}');
+      expect(row.output).toBe("later page output");
+      expect(row.running).toBe(false);
+    } else {
+      expect.unreachable("expected a tool card");
+    }
+    expect(row.id).toBe("h:8:1");
+  });
+
+  it("prefers the in-page call over a stale toolContext duplicate", () => {
+    // A toolContext entry naming a message the page also carries is stale
+    // bookkeeping; the in-page call wins and the context entry draws nothing.
+    const rows = foldHistory(
+      [
+        message({
+          role: "assistant",
+          msgIndex: 1,
+          toolCalls: [{ id: "c1", name: "bash", arguments: '{"in":"page"}' }],
+        }),
+        message({ role: "tool", content: "in-page output", toolCallId: "c1", msgIndex: 2 }),
+      ],
+      [{ messageIndex: 1, ordinal: 0, call: { id: "c1", name: "stale" } }],
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind === "tool" && rows[0].args).toBe('{"in":"page"}');
+  });
 });
 
 describe("loadHistory", () => {
@@ -354,5 +400,58 @@ describe("loadHistory", () => {
     const result = await loadHistory("/rt/r1");
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.read.rows).toHaveLength(0);
+  });
+
+  it("rejects a page whose bookkeeping disagrees with itself", async () => {
+    // Each of these would wedge the cursor walk — hasMoreBefore pointing at
+    // nothing, bounds outside total, hasMoreBefore contradicting start — so
+    // each must surface as history.shape rather than fold silently.
+    const contradictory = [
+      // hasMoreBefore without a cursor to walk.
+      { messages: [], total: 5, hasMoreBefore: true },
+      // Bounds outside total.
+      { messages: [], total: 5, hasMoreBefore: true, nextCursor: "c", start: 0, end: 9 },
+      // end before start.
+      { messages: [], total: 5, hasMoreBefore: false, start: 4, end: 2 },
+      // hasMoreBefore true but start says this is the first page.
+      { messages: [], total: 5, hasMoreBefore: true, nextCursor: "c", start: 0, end: 5 },
+      // hasMoreBefore false though start says older messages exist.
+      { messages: [], total: 5, hasMoreBefore: false, start: 3, end: 5 },
+      // A total that is not a whole count.
+      { messages: [], total: "many", hasMoreBefore: false },
+    ];
+    for (const body of contradictory) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pageResponse(body)));
+      const result = await loadHistory("/rt/r1");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("history.shape");
+    }
+  });
+
+  it("accepts a self-consistent page with bounds", async () => {
+    // The shape the kernel actually ships: start/end bookkeeping that agrees
+    // with hasMoreBefore, and a cursor when more pages exist.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        pageResponse({
+          messages: [message({ role: "user", content: "hi", msgIndex: 1 })],
+          total: 130,
+          hasMoreBefore: true,
+          nextCursor: "c-old",
+          start: 70,
+          end: 130,
+          snapshot: "snap-1",
+        }),
+      ),
+    );
+    const result = await loadHistory("/rt/r1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.read.rows).toHaveLength(1);
+      expect(result.read.start).toBe(70);
+      expect(result.read.end).toBe(130);
+      expect(result.read.snapshot).toBe("snap-1");
+    }
   });
 });

@@ -442,6 +442,9 @@ type HistoryState =
   | { kind: "loaded" }
   | { kind: "failed"; code: string };
 
+/** After a failed older-page read, wait this long before asking again. */
+const OLDER_RETRY_COOLDOWN_MS = 10_000;
+
 function useTranscript(
   snapshot: ConnectionSnapshot,
   runtimeId: string,
@@ -476,6 +479,16 @@ function useTranscript(
   useEffect(() => {
     cursorRef.current = cursor;
   }, [cursor]);
+  /**
+   * The same history state, readable inside loadOlder. A cursor read may
+   * only fire once this conversation's newest page has actually landed: a
+   * failed or still-loading read means the cursor on screen is stale or
+   * foreign, and walking it would prepend another conversation's messages.
+   */
+  const historyRef = useRef(history);
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
   const loadedBase = useRef<string | null>(null);
   /**
    * The two cache handshakes. `hydrated` says the cached rows are already on
@@ -523,6 +536,13 @@ function useTranscript(
     if (switched) {
       hydrated.current = false;
       historyDone.current = false;
+      // The cursor belongs to the previous conversation's newest page. A page
+      // read against the old base would prepend the old conversation's
+      // messages onto this one, so it dies here before any scroll can fire it.
+      // The cooldown dies with it: a fresh conversation deserves a fresh try.
+      olderLoading.current = false;
+      olderFailedUntil.current = 0;
+      setCursor({ hasMoreBefore: false });
       setTranscript(emptyTranscript);
       setHistory({ kind: "loading" });
     }
@@ -607,14 +627,27 @@ function useTranscript(
    * a read whose rows all land anyway is rare enough not to need a dedupe
    * (the cursor is opaque and moves backward monotonically).
    */
+  const olderFailedUntil = useRef(0);
   const loadOlder = useCallback(() => {
     const state = cursorRef.current;
     if (olderLoading.current || !state.hasMoreBefore || !state.nextCursor) return;
+    // Only walk a cursor this conversation's newest page produced. A failed
+    // or in-flight history read leaves whatever cursor was last on screen —
+    // possibly the previous conversation's, if a switch is still settling —
+    // and a read against it would prepend foreign messages onto this pane.
+    if (historyRef.current.kind !== "loaded") return;
+    // A read that just failed stays failed for a while: the trigger effect
+    // re-runs on every scroll frame, and a kernel that is timing out would
+    // otherwise take a request per frame, silently.
+    if (olderFailedUntil.current > Date.now()) return;
     if (!base) return;
     olderLoading.current = true;
     void loadHistory(base, state.nextCursor)
       .then((result) => {
-        if (!result.ok) return;
+        if (!result.ok) {
+          olderFailedUntil.current = Date.now() + OLDER_RETRY_COOLDOWN_MS;
+          return;
+        }
         const older = result.read.rows;
         setCursor({
           hasMoreBefore: result.read.hasMoreBefore,
