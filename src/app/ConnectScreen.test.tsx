@@ -480,6 +480,38 @@ describe("ConnectScreen saved connections", () => {
     expect(onConnected).toHaveBeenCalledTimes(1);
   });
 
+  it("names the door this phone can reach directly", async () => {
+    // One computer, two addresses: the Wi-Fi one is a neighbour, the mesh-VPN
+    // one is only reachable through the tunnel. Both are saved rows, and the
+    // person has to be able to tell which is the fast one.
+    rememberConnection("lan", "http://172.16.2.59:57074");
+    rememberConnection("lan", "http://192.168.5.3:57074");
+    vi.mocked(readProxyConfig).mockResolvedValue(
+      config({
+        origin: "http://192.168.5.3:57074",
+        candidates: ["http://172.16.2.59:57074", "http://192.168.5.3:57074"],
+        preferred: ["http://192.168.5.3:57074", "http://172.16.2.59:57074"],
+        direct: ["http://192.168.5.3:57074"],
+      }),
+    );
+
+    await renderScreen();
+
+    const direct = row("192.168.5.3:57074");
+    const tunnel = row("172.16.2.59:57074");
+    expect(direct?.textContent).toContain("可直连");
+    expect(tunnel?.textContent).not.toContain("可直连");
+  });
+
+  it("says nothing about directness when the proxy named no order", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+
+    // A browser dev session has no interfaces to judge, so no row claims to
+    // be the direct one.
+    expect(container.textContent).not.toContain("可直连");
+  });
+
   it("forgets a saved computer without touching the rest", async () => {
     rememberConnection("lan", "http://192.168.9.9:51234");
     await renderScreen();
