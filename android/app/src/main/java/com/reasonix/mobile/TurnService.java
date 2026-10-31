@@ -599,7 +599,7 @@ public class TurnService extends Service {
     private Notification buildAsk(Watch watch, String text) {
         String heading = watch.title.isEmpty() ? "需要你处理" : watch.title;
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ASK)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(heading)
                 .setContentText(text)
                 .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
@@ -611,7 +611,7 @@ public class TurnService extends Service {
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicAsk())
                 .setContentIntent(openChat(watch, askRequest(watch.key)))
-                .addAction(android.R.drawable.ic_dialog_info, "去回答", openChat(watch, askRequest(watch.key)));
+                .addAction(R.drawable.ic_notification, "去回答", openChat(watch, askRequest(watch.key)));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
@@ -621,7 +621,7 @@ public class TurnService extends Service {
     /** The lock-screen stand-in: no session title, no question text. */
     private Notification publicAsk() {
         return new Notification.Builder(this, CHANNEL_ASK)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
                 .setContentText("有会话需要你处理")
                 .setContentIntent(openApp())
@@ -630,7 +630,7 @@ public class TurnService extends Service {
 
     private Notification publicDone() {
         return new Notification.Builder(this, CHANNEL_DONE)
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
                 .setContentText("这一轮已完成")
                 .setContentIntent(openApp())
@@ -756,7 +756,7 @@ public class TurnService extends Service {
             }
         }
         return new Notification.Builder(this, CHANNEL_RUNNING)
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
                 .setContentText(text)
                 .setSubText("Reasonix")
@@ -771,7 +771,7 @@ public class TurnService extends Service {
         if (manager == null || !manager.areNotificationsEnabled()) return;
         String heading = watch.title == null || watch.title.isEmpty() ? "Reasonix" : watch.title;
         Notification notification = new Notification.Builder(this, CHANNEL_DONE)
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(heading)
                 .setContentText("这一轮已完成")
                 .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
