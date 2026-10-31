@@ -1675,3 +1675,115 @@ describe("ChatScreen reading position", () => {
     }
   });
 });
+
+describe("ChatScreen transcript windowing", () => {
+  /**
+   * A long session read whole puts thousands of nodes into the DOM at once,
+   * and every streaming delta re-renders all of them — the stutter a phone
+   * shows flicking through an old pane. The window draws the tail and grows
+   * as the reader scrolls up, so the DOM stays proportional to what is on
+   * screen, not to how long the conversation is.
+   */
+
+  function longHistory(count: number): unknown[] {
+    return Array.from({ length: count }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `消息 ${i}`,
+      msgIndex: i + 1,
+    }));
+  }
+
+  it("draws the newest entries first and leaves the rest off the DOM", async () => {
+    stubKernel({ history: longHistory(120) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("消息 119");
+    expect(text).toContain("消息 91");
+    // Window is 30 entries: the first ~90 stay unpainted...
+    expect(text).not.toContain("消息 60");
+    // ...until the reader asks for them via the top affordance.
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+  });
+
+  it("grows the window when the reader scrolls toward the top", async () => {
+    stubKernel({ history: longHistory(120) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+    const before = container.textContent ?? "";
+
+    act(() => {
+      list.scrollTop = 10; // near the top → onScroll widens the window
+      list.dispatchEvent(new Event("scroll"));
+    });
+
+    const after = container.textContent ?? "";
+    expect(after).not.toBe(before);
+    expect(after).toContain("消息 60");
+    // The spacer stays as long as entries remain above the window.
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+  });
+
+  it("removes the spacer once the window covers the whole conversation", async () => {
+    stubKernel({ history: longHistory(60) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(container.querySelector(".window-gap")).toBeNull();
+    expect(container.textContent ?? "").toContain("消息 0");
+  });
+
+  it("keeps a short conversation unwindowed", async () => {
+    stubKernel({
+      history: [
+        { role: "user", content: "only question", msgIndex: 1 },
+        { role: "assistant", content: "only answer", msgIndex: 2 },
+      ],
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".window-gap")).toBeNull();
+    expect(container.textContent ?? "").toContain("only answer");
+  });
+
+  it("starts a new pane's window fresh when switching conversations", async () => {
+    stubKernel({ history: longHistory(120) });
+    render(snapshot());
+    await flush();
+    await flush();
+
+    // Widen this pane's window.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    expect(container.textContent ?? "").toContain("消息 60");
+
+    // The other pane opens with its own tail window, not the widened one.
+    render(snapshot(undefined, [other]), "r2");
+    await flush();
+    await flush();
+
+    expect(container.textContent ?? "").not.toContain("消息 0");
+  });
+});
