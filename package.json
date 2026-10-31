@@ -1,7 +1,7 @@
 {
   "name": "reasonix-mobile",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "Reasonix For Android — an unofficial Android client for Reasonix Studio.",
   "scripts": {
