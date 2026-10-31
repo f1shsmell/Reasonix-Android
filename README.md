@@ -1,108 +1,93 @@
-# Reasonix For Android
-
-> 第三方、非官方的 Android 客户端，把 [Reasonix Studio](https://github.com/esengine/DeepSeek-Reasonix) 装进口袋。
-> 不内置内核；手机负责界面与连接，任务仍在你的桌面电脑上执行。
-
-[![CI](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml/badge.svg)](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml)
-[![Release](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/release.yml/badge.svg)](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Android 8+](https://img.shields.io/badge/Android-8%2B-3ddc84)
+<h1 align="center">Reasonix For Android</h1>
 
 <p align="center">
-  <img src="docs/screenshots/home.png" width="30%" alt="首页：最近会话与连接状态" />
-  <img src="docs/screenshots/chat.png" width="30%" alt="对话：活动行、已处理 N 个操作与输入区" />
-  <img src="docs/screenshots/operations.png" width="30%" alt="操作时间线" />
+  <strong>把 Reasonix Studio 装进口袋。</strong><br>
+  手机负责界面与连接，模型和任务仍在你的电脑上运行。
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/composer.png" width="46%" alt="输入区与添加菜单" />
+  <a href="https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/f1shsmell/Reasonix-Android/ci.yml?branch=main&amp;style=flat-square&amp;label=CI" alt="CI"></a>
+  <a href="https://github.com/f1shsmell/Reasonix-Android/releases"><img src="https://img.shields.io/github/v/release/f1shsmell/Reasonix-Android?style=flat-square&amp;label=release" alt="最新版本"></a>
+  <a href="https://github.com/f1shsmell/Reasonix-Android/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/f1shsmell/Reasonix-Android/release.yml?branch=main&amp;style=flat-square&amp;label=release%20build" alt="发布构建"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/f1shsmell/Reasonix-Android?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8.0+">
 </p>
 
-<p align="center"><sub>界面图为 Web 构建在无头浏览器中的渲染，不是实机截图。</sub></p>
+<p align="center">
+  <img src="docs/screenshots/tour.png" width="100%" alt="首页、对话、操作时间线与输入区">
+</p>
 
-## 这是什么
+<p align="center"><sub>界面为 Web 构建的无头浏览器渲染，非实机截图。</sub></p>
 
-Reasonix For Android 是一个 Android 客户端。它不运行模型，也不带内核，只通过手机与桌面端的连接使用
-Reasonix Studio 的能力：
+> [!IMPORTANT]
+> 这是第三方、非官方客户端，不包含内核。使用前需要在电脑上安装并运行
+> [Reasonix Studio](https://github.com/esengine/DeepSeek-Reasonix)。
 
-- **局域网**：扫描电脑上「设备访问」的二维码，手机与电脑同一 Wi-Fi 时直连。
-- **云端**：登录 Reasonix 账号，通过账号中继连接，不在同一网络也能用。
-- **自动切换**：回到同一 Wi-Fi 自动切回局域网，离开后回落到云端；已连过的电脑会留下记录，
-  在首页连接条或设置里一键切回。
+## 为什么用它
 
-手机端复用了桌面端的 HTTP/SSE 约定，但界面、连接桥和 Android 原生部分都是为手机重写的。
+- **同一 Wi-Fi，直连更快。** 扫描电脑「设备访问」里的二维码完成配对，之后打开 App 就能继续桌面上的会话。
+- **离开网络，自动走云端。** 登录同一个 Reasonix 账号，不在家也能连；回到电脑所在 Wi-Fi 再自动切回直连。
+- **桌面在跑，手机跟进。** 待处理、正在运行和完成提醒都会到手机；回答、审批、排队、插话，不必回到电脑前。
 
 ## 功能
 
-**连接**
-- 扫码、粘贴链接、手动地址三种配对方式；账号登录使用设备码 + 应用内登录页。
-- 已连接的电脑会保存为记录（局域网地址 / 云端设备），当前连接有标记，可一键切换或移除。
-- 云端电脑第一次连接时显示身份指纹并请你确认；之后每次连接（含自动重连）都核对指纹，
-  钥匙变了就拒绝，而不是悄悄连上一台身份不同的电脑。移除该电脑会一并忘记它的身份。
-- 连接页顶部是连接状态：桌面端同款的标记在连接时逐笔描出，下面写明当前步骤
-  （查找电脑 → 切换连接 → 读取会话）；连上后停在对应颜色，失败时原地说明原因。
-- 连接状态机：`探测地址 → 切换上游 → 读取会话`，失败可重试，网络变化/回到前台自动重连，
-  退避重试带次数提示；只有 `/runtimes` 真正答上才算连接成功。
+### 连接
 
-**对话**
-- 「最近」聚合所有项目的会话；「项目」按文件夹浏览，长按项目可拖动排序。
-- 首页顶部是实时状态区：「待你处理」和「正在运行」分开列出，可见时每 20 秒刷新一次；
-  回到前台也会重新读取，不必等会话列表变化。
-- 长按会话打开操作表：置顶、打开；置顶会话排在前面并保留 📌。
-- **活动行**：思考、执行命令、读取/修改文件都是一行，点开看参数、输出与 diff。
-- 任务结束后，同一轮的多步操作收成一条分类摘要（如「读取、搜索、执行命令 · 5 个操作」），
-  点开是带时间线的操作记录。
-- 回答以正文呈现；长思考可以进单页阅读。运行中可**停止**；输入框里可**排队 / 插话**。
-- 往上翻读时浮出「↓ 最新」；提示只留一条，按优先级显示，不把输入区越推越高。
-- **检查点**：从「…」菜单回到任意一轮之前的快照。先看内核给出的恢复计划（文件数、覆盖范围、
-  快照外的改动），确认后才提交；只会恢复编辑工具写过的文件。
-- 模型选择、计划模式、图片/相机附件、任务清单进度、审批与结构化问答。问答题始终有
-  「其他」自由填写（没有选项也能答），单选还能附一句补充说明。
-- **需要你处理的通知**：正在跑的那一轮被提问/审批卡住时，手机会发高优先级通知，
-  点开直达该会话；问题解决后通知自动消失。
-- 按会话保留草稿与阅读位置：切走再回来回到上次读到的地方。
-- **会话详略**：精简只留结论和一行操作摘要（思考收起、运行中也收成摘要）；
-  标准在运行中逐条展开、结束后收成摘要；详尽始终展开每一步。
-- 断线补历史、流中断提示、前台服务保活与完成通知。
+- 扫码、粘贴链接、手动地址三种配对方式。
+- 局域网与云端电脑都会保存为记录，当前连接有标记，点一下即可切换；回到同一 Wi-Fi 自动优先直连。
+- 云端电脑第一次连接时显示身份指纹；之后每次连接（包括自动重连）都会核对，钥匙变了就拒绝。
+- 只有 `/runtimes` 真正应答才算连接成功；失败退避重试，换网络或回到前台自动重连。
 
-**设置**
-- 分成「电脑」「机器」「偏好」三页：电脑页管连接、已连接记录、账号与云端电脑；机器页只读展示
-  最近 30 天用量、上下文占用、工具与权限边界、桌面端版本；偏好页管主题、会话详略、后台运行和关于。
-- 机器页只读：这些是桌面端的决定，手机只解释不同步修改。
-- 工具批准是会话属性，放在聊天的「…」菜单里，不再混在全局设置中。
-- 后台运行：直接查看通知权限和电池优化状态，点一行跳到对应的系统设置。
+### 对话
+
+- 「最近」聚合所有项目，「项目」按文件夹浏览，长按项目可拖动排序。
+- 活动行把思考、命令、读写文件收成一行，点开看参数、输出与 diff；一轮结束后再收成操作摘要。
+- 运行中可停止、排队或插话；长思考可单页阅读，回答可复制。
+- 支持模型选择、计划模式、图片 / 相机附件、任务清单、审批与结构化问答。
+- 检查点回退：从「…」菜单选择一轮之前的快照，先看恢复计划再确认；只恢复编辑工具写过的文件。
+- 会话详略分三档：精简、标准、详尽；草稿与阅读位置按会话保留。
+- 向上翻读时浮出「↓ 最新」；断线会补历史，流中断有提示。
+
+### 设置与后台
+
+- 设置分「电脑 / 机器 / 偏好」：连接与账号、只读机器状态、主题与后台运行各归其位。
+- 「机器」页只读展示最近 30 天用量、上下文占用、工具与权限边界、桌面版本。
+- 工具批准是会话属性，放在聊天的「…」菜单里。
+- 直接查看通知权限与电池优化状态，点一行跳到对应的系统设置。
 
 ## 通知
 
-正在跑的那一轮被提问、工具批准或计划批准卡住时，手机会发一条高优先级通知：会话名 + 问题；
-点「去回答」直接回到那个会话，问题解决后通知自动消失。不同会话的通知各有各的编号和深链，
-不会互相覆盖或点开错会话。
+被提问、工具批准或计划确认卡住时，手机发一条高优先级通知：会话名 + 问题。点「去回答」直达会话，
+问题解决后通知自动消失；不同会话使用各自的编号和深链，不会互相覆盖或点开错会话。
 
-运行中的常驻通知会写明当前走的是局域网还是云端；连续几次读不到会话时改成「连接中断，正在重试…」，
-恢复后自动改回来。前台服务同时持有 CPU 和 Wi-Fi 锁，锁屏后仍能轮询。
+运行中的常驻通知会写明当前走局域网还是云端；连续读不到会话时改成「连接中断，正在重试…」，恢复后自动改回。
+前台服务持有 CPU 和 Wi-Fi 锁，锁屏后仍能轮询。
 
 <p align="center">
-  <img src="docs/screenshots/ask-headsup.png" width="44%" alt="锁屏上的需要你处理通知" />
-  <img src="docs/screenshots/ask-shade.png" width="44%" alt="通知栏里的提问与运行中通知" />
+  <img src="docs/screenshots/notifications.png" width="66%" alt="锁屏提醒与通知中心">
 </p>
 
-<p align="center"><sub>界面示意图（无头浏览器渲染，不是实机截图）。</sub></p>
+<p align="center"><sub>界面为 Web 构建的无头浏览器渲染，非实机截图。</sub></p>
 
 ## 安装
 
-### 从 GitHub Actions 下载
+### 正式版
 
-每次推送，CI 都会构建一个可安装的 debug APK：
+从 [Releases](https://github.com/f1shsmell/Reasonix-Android/releases) 下载最新签名 APK。
+正式版使用固定密钥签名，可以直接覆盖后续正式版。
+
+> 从早期 debug 测试包切换到正式版需要先卸载一次（两者签名不同）。卸载会清空配对信息和连接记录，
+> 安装后重新扫码即可。
+
+### CI 测试包
+
+每次 push / PR，CI 都会构建一个 debug APK：
 
 1. 打开 [CI 工作流](https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml)；
 2. 选择最近一次成功的运行；
 3. 在 **Artifacts** 里下载 `reasonix-for-android-debug`。
 
-### 从 Releases 下载
-
-[Releases](https://github.com/f1shsmell/Reasonix-Android/releases) 只包含**明确的版本发布**；
-日常提交和修复只跑 CI，不产生 Release。发版需要有版本号、`release-notes/android/<version>.md`
-和 main 上的 tag，流程见 [RELEASING.md](RELEASING.md)。
+测试包使用 debug 签名，适合试用和开发；日常使用请下载 Releases 里的正式版。
 
 ### 命令行安装
 
@@ -110,12 +95,9 @@ Reasonix Studio 的能力：
 adb install -r app-debug.apk
 ```
 
-> 这些是 debug 签名的测试包。仓库暂未配置发布签名；需要正式版时请自行提供
-> `android/keystore.properties`。
-
 ## 开发
 
-环境：Node 22+、JDK 21、Android SDK（API 35/36）。
+需要 Node 22+、JDK 21 与 Android SDK 36。
 
 ```bash
 npm ci
@@ -124,7 +106,7 @@ npm test
 npm run build
 ```
 
-浏览器里接一个真实内核预览：
+在浏览器里接一个真实内核预览：
 
 ```bash
 REASONIX_SERVE=http://<desktop>:8791 npm run dev
@@ -138,36 +120,38 @@ node ./node_modules/@capacitor/cli/bin/capacitor sync android
 cd android && ./gradlew assembleDebug
 ```
 
-产物：`android/app/build/outputs/apk/debug/app-debug.apk`。
+产物在 `android/app/build/outputs/apk/debug/app-debug.apk`。
 原生单元测试：`cd android && ./gradlew testDebugUnitTest`。
 
-## CI 与产物
+## CI 与发布
 
-- **`.github/workflows/ci.yml`**：每次 push / PR 跑 Web 类型检查、全量测试、构建；
-  Android 原生单元测试与 debug APK。APK 是测试产物（artifact，保留 14 天），不是发布。
-- **`.github/workflows/release.yml`**：只在 `vX.Y.Z` tag 或手动指定已有 tag 时运行。
-  构建前会校验 tag 在 main 上、发布说明存在、版本号一致；Release 正文直接使用
-  `release-notes/android/<version>.md`。规则见 [RELEASING.md](RELEASING.md)。
+- **`ci.yml`**：每次 push / PR 跑 Web 类型检查、全量测试与构建，以及 Android 原生单元测试和 debug APK。
+  APK 是测试产物（artifact，保留 14 天），不是发布。
+- **`release.yml`**：只在 `vX.Y.Z` tag 或手动指定已有 tag 时运行。构建前会校验 tag 在 main 上、
+  发布说明存在、版本号一致；Release 正文直接使用 `release-notes/android/<version>.md`。
+  流程见 [RELEASING.md](RELEASING.md)。
 
-## 目录
+## 项目结构
 
-```
-src/app/       应用外壳、首页、连接设置、连接状态机与已保存连接
-src/chat/      对话记录折叠、活动行、操作时间线、输入区与模型面板
-src/net/       内核 / 代理 / 中继客户端，HTTP 超时与连接验证
-src/wire/      桌面端与手机共享的 wire 类型
-android/       Capacitor 壳、LoopbackProxy、扫码/登录/配对/保活等原生插件
-docs/          交接文档、计划、界面渲染图
-```
+| 目录 | 内容 |
+| --- | --- |
+| `src/app/` | 应用外壳、首页、连接设置、连接状态机与已保存连接 |
+| `src/chat/` | 对话记录折叠、活动行、操作时间线、输入区与模型面板 |
+| `src/net/` | 内核 / 代理 / 中继客户端，HTTP 超时与连接验证 |
+| `src/wire/` | 桌面端与手机共享的 wire 类型 |
+| `android/` | Capacitor 壳、LoopbackProxy、扫码 / 登录 / 配对 / 保活等原生插件 |
+| `docs/` | 交接文档、计划、自建说明与界面渲染图 |
+
+更多文档：[交接与决策](docs/HANDOFF.md)、[自建与排障](docs/SELF_HOST.md)、[发版流程](RELEASING.md)。
 
 ## 第三方声明
 
-**Reasonix For Android 是第三方、非官方项目，与 Reasonix、DeepSeek 及其维护者没有隶属关系，
-也未获其背书。** 仓库只包含手机客户端，**不包含内核**；使用前需要在电脑上单独安装并运行
-Reasonix Studio。名称与商标归各自所有者。依赖与许可清单见 [NOTICE.md](NOTICE.md)。
+**Reasonix For Android 是第三方、非官方项目**，与 Reasonix、DeepSeek 及其维护者没有隶属关系，也未获其背书。
 
-界面设计参考了 Qoder 手机端的交互组织方式（活动行、操作时间线、悬浮输入区），
-代码与实现均为本项目自有。
+仓库只包含手机客户端，**不包含内核**；使用前需要在电脑上单独安装并运行 Reasonix Studio。
+名称与商标归各自所有者，依赖与许可清单见 [NOTICE.md](NOTICE.md)。
+
+界面设计参考了 Qoder 手机端的交互组织方式，代码与实现均为本项目自有。
 
 ## License
 
