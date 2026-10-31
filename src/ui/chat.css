@@ -153,10 +153,16 @@
   border-color: transparent;
 }
 
+.transcript > * {
+  flex-shrink: 0;
+}
+
 .transcript {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   padding: 12px 12px 4px;
   display: flex;
   flex-direction: column;

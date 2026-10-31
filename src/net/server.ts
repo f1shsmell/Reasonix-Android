@@ -29,6 +29,10 @@ export interface ProxyConfig {
   /** `relay` means kernel requests go through the account relay, not a LAN origin. */
   mode?: "lan" | "relay";
   relayDevice?: string;
+  /** A VPN/HTTP proxy is active on this phone. */
+  vpn?: boolean;
+  /** A non-VPN Wi-Fi or Ethernet interface is available for a LAN share. */
+  lan?: boolean;
   account: ProxyAccount;
 }
 

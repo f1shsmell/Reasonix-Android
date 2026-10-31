@@ -650,6 +650,40 @@ describe("Home", () => {
       expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
+    it("offers rename and delete from the recent row's actions", async () => {
+      const fetchMock = route(() => new Response(null, { status: 204 }));
+      const onRefresh = vi.fn();
+      render({ tree: tree({ projects: [pinnedProject()] }), onRefresh });
+
+      act(() => {
+        container
+          .querySelector(".session")
+          ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+      const sheet = container.querySelector(".session-sheet") as HTMLElement;
+      expect(sheet.textContent).toContain("重命名");
+      expect(sheet.textContent).toContain("删除会话");
+
+      act(() => {
+        (Array.from(sheet.querySelectorAll("button")).find((candidate) =>
+          candidate.textContent?.includes("删除会话"),
+        ) as HTMLButtonElement).click();
+      });
+      expect(container.textContent).toContain("不能撤销");
+      await act(async () => {
+        (container.querySelector(".sheet-foot .danger") as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/tree/sessions/remove",
+        expect.objectContaining({
+          body: JSON.stringify({ path: "/work/app/b.jsonl" }),
+        }),
+      );
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
     it("does not draw the pin before the kernel agrees", async () => {
       // A refusal means the row must stay exactly where it was.
       route(() => json({ code: "session.outside_workspace" }, 403));
@@ -716,6 +750,21 @@ describe("Home", () => {
         }),
       );
       expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("lifts the row into a ghost and moves its neighbours aside", () => {
+      vi.useFakeTimers();
+      route(() => new Response(null, { status: 204 }));
+      const rows = drawProjects();
+
+      hold(rowAt(rows, 0), 160, 10);
+      const ghost = document.querySelector(".drag-ghost") as HTMLElement;
+      expect(ghost).toBeTruthy();
+      expect(ghost.style.transform).toContain("scale(1.02)");
+
+      pointer(rowAt(rows, 0), "pointermove", 160, 110);
+      expect(ghost.style.transform).toContain("translate3d(0, 100px, 0)");
+      expect(rowAt(rows, 1).style.transform).toContain("translateY(-60px)");
     });
 
     it("drops before the project it was released above", async () => {

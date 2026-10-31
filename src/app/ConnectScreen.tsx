@@ -377,7 +377,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           // A restored upstream is still a live link; only an attempt that
           // left the phone nowhere belongs in the link machine's failed state.
           if (!(await restore(next))) onFailed?.(failure);
-          setError(`连上了地址，但读不到会话：${failure.message}`);
+          setError(
+            `连上了地址，但读不到会话：${failure.message}` +
+              (previous?.vpn ? " 检测到 VPN/代理，请在代理里放行局域网或暂时关闭。" : ""),
+          );
           return false;
         }
         setPairCode("");
@@ -443,7 +446,10 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
           setPairCode("");
         } else if (failureCode === "device.pair_unreachable" || failureCode === "proxy.upstream_unreachable") {
           // A network failure does not spend the code; keep it for the retry.
-          setError("到不了这台电脑：确认手机和电脑在同一 Wi-Fi，并使用二维码里的地址。");
+          setError(
+            "到不了这台电脑：确认手机和电脑在同一 Wi-Fi，并使用二维码里的地址。" +
+              (previous?.vpn ? " 检测到 VPN/代理，请在代理里放行局域网或暂时关闭。" : ""),
+          );
         } else {
           setError(`没连上：${failureCode}`);
         }
@@ -970,6 +976,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
         <p className="group-note">
           浏览器能连、App 不能时：在电脑上点「换一个」，把新链接复制到手机（先别在浏览器里打开），再点「粘贴链接」。
         </p>
+        {config?.vpn ? (
+          <p className="group-note">
+            检测到 VPN/代理。局域网连接会优先走 Wi-Fi/以太网；如果电脑仍不可达，请在代理里放行局域网，或暂时关闭代理。
+          </p>
+        ) : null}
 
         <details className="group manual-group">
           <summary className="setting manual-summary">
