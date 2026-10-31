@@ -784,6 +784,67 @@ export function ChatScreen({
     });
   }, [transcript.running, title, runtime?.name, runtime?.base, runtime?.root, runtimeId, mode]);
 
+  const streaming = transcript.running;
+  const display = useMemo(
+    () => buildDisplay(transcript.rows, transcript.running, fold),
+    [transcript.rows, transcript.running, fold],
+  );
+
+  /**
+   * Draw the tail of the conversation, and grow the window as the reader
+   * scrolls up.
+   *
+   * A long session read whole puts thousands of nodes into the DOM at once,
+   * and every streaming delta then re-renders all of them — the stutter when
+   * flicking through an old pane. The window starts at the newest
+   * `INITIAL_TAIL` entries, which is what a pane opens to, and every upward
+   * scroll that reaches near the top adds `GROW_BY` more below the spacer.
+   * Collapsing back down again on a downward scroll would re-parse rows the
+   * reader already paid for and make the top flicker, so the window only
+   * ever grows for the life of the pane.
+   *
+   * Growing prepends entries above the current scroll position, which would
+   * otherwise shove the pane's content down. The ref remembers the height
+   * before React commits the new entries and the layout effect restores the
+   * delta, so the reader's thumb position stays on the same content.
+   *
+   * The spacer is `min-height` on purpose: when the window already covers
+   * everything it must not force a scrollable height of its own.
+   */
+  const INITIAL_TAIL = 30;
+  const GROW_BY = 40;
+  const [windowEnd, setWindowEnd] = useState(INITIAL_TAIL);
+  const firstVisible = Math.max(0, display.length - windowEnd);
+  const visible = display.slice(firstVisible);
+  const topSpacer = useRef<HTMLDivElement | null>(null);
+  /** scrollHeight captured before a widen commits; the restore adds the delta. */
+  const widenFromRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setWindowEnd(INITIAL_TAIL);
+  }, [runtimeId]);
+
+  const growWindow = useCallback(() => {
+    setWindowEnd((end) => {
+      if (end >= display.length) return end;
+      const list = listRef.current;
+      if (list) widenFromRef.current = list.scrollHeight;
+      return Math.min(display.length, end + GROW_BY);
+    });
+  }, [display.length]);
+
+  // A widen prepends entries above the reader's thumb. Restoring the height
+  // delta in the same layout pass as the commit keeps the thumb on the same
+  // content — no jump, no flicker.
+  useLayoutEffect(() => {
+    const from = widenFromRef.current;
+    widenFromRef.current = null;
+    if (from === null) return;
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollTop += list.scrollHeight - from;
+  }, [windowEnd]);
+
   const scrollToBottom = useCallback((smooth: boolean) => {
     const list = listRef.current;
     if (!list) return;
@@ -830,8 +891,11 @@ export function ChatScreen({
     if (!list) return;
     const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
     setAtBottom(gap < 48);
+    // Near the top with more above the window: widen it. The 400px lead is
+    // enough that the widen lands before the reader hits the spacer.
+    if (list.scrollTop < 400) growWindow();
     persistReading();
-  }, [persistReading]);
+  }, [persistReading, growWindow]);
 
   // Leaving flushes the last position; a screen that never finished reading
   // history keeps the position it had rather than overwriting it with zero.
@@ -1239,11 +1303,6 @@ export function ChatScreen({
     );
   }
 
-  const streaming = transcript.running;
-  const display = useMemo(
-    () => buildDisplay(transcript.rows, transcript.running, fold),
-    [transcript.rows, transcript.running, fold],
-  );
   const openProcess = (entry: { steps: ProcessStep[] }) =>
     setProcess({ title: `已处理 ${entry.steps.length} 个操作`, steps: entry.steps });
 
@@ -1314,28 +1373,38 @@ export function ChatScreen({
             </div>
           </div>
         ) : (
-          display.map((entry) =>
-            entry.kind === "steps" ? (
-              entry.live ? (
-                entry.steps.map((step) => (
-                  <ActivityRow
-                    key={step.id}
-                    step={step}
-                    onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
+          <>
+            {firstVisible > 0 ? (
+              <div
+                ref={topSpacer}
+                className="window-gap"
+                style={{ minHeight: 80 }}
+                aria-hidden="true"
+              />
+            ) : null}
+            {visible.map((entry) =>
+              entry.kind === "steps" ? (
+                entry.live ? (
+                  entry.steps.map((step) => (
+                    <ActivityRow
+                      key={step.id}
+                      step={step}
+                      onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
+                    />
+                  ))
+                ) : (
+                  <ProcessSummary
+                    key={entry.id}
+                    steps={entry.steps}
+                    running={entry.running}
+                    onOpen={() => openProcess(entry)}
                   />
-                ))
+                )
               ) : (
-                <ProcessSummary
-                  key={entry.id}
-                  steps={entry.steps}
-                  running={entry.running}
-                  onOpen={() => openProcess(entry)}
-                />
-              )
-            ) : (
-              <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
-            ),
-          )
+                <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
+              ),
+            )}
+          </>
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
           <div className="notice error">
