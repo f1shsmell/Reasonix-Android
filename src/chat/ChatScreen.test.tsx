@@ -173,6 +173,18 @@ describe("ChatScreen history", () => {
     expect(container.textContent).toContain("没读到历史");
   });
 
+  it("names the failure, so a bug report can tell a 404 from a deadline", async () => {
+    // Without the code, every failure looked identical on the phone: the
+    // deadline on a long conversation and a kernel that closed the pane both
+    // read as "没读到历史".
+    stubKernel({ historyStatus: 404 });
+
+    render(snapshot());
+    await flush();
+
+    expect(container.textContent).toContain("http.404");
+  });
+
   it("says it is still reading rather than claiming there is nothing", async () => {
     // "还没有消息" on a session with history is a lie the person acts on.
     let resolve: (value: Response) => void = () => {};

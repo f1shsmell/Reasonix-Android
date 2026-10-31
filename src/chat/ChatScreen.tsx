@@ -67,6 +67,26 @@ function shortRef(ref: string): string {
   return at >= 0 ? ref.slice(at + 1) : ref;
 }
 
+/**
+ * Why the history read failed, in the terms that decide what to do next.
+ *
+ * The distinction that matters is whether retrying can help: a deadline on a
+ * long conversation will pass on a second try once the kernel has it parsed,
+ * while a 404 will not. The raw code is appended so a bug report can name it.
+ */
+function historyHint(code: string): string {
+  switch (code) {
+    case "client.timeout":
+      return "（读取超时：会话很长，再试一次通常能读到。client.timeout）";
+    case "client.offline":
+      return "（连不上电脑。client.offline）";
+    case "history.shape":
+      return "（电脑返回了无法识别的记录。history.shape）";
+    default:
+      return `（${code}）`;
+  }
+}
+
 function imageMessage(code: string): string {
   switch (code) {
     case "attachment.too_large":
@@ -383,6 +403,18 @@ function keepUnconfirmed(row: Row): boolean {
  * rows paints first, and the read — still the authority — replaces it when it
  * lands.
  */
+/**
+ * What the history read left behind.
+ *
+ * `failed` carries the code from `loadHistory`. A bare "没读到历史" told the
+ * person nothing and told us nothing either: a deadline, a 404 and a socket
+ * that died all looked alike. The code is how a bug report says which.
+ */
+type HistoryState =
+  | { kind: "loading" }
+  | { kind: "loaded" }
+  | { kind: "failed"; code: string };
+
 function useTranscript(
   snapshot: ConnectionSnapshot,
   runtimeId: string,
@@ -390,12 +422,12 @@ function useTranscript(
   sessionPath: string | undefined,
 ): {
   transcript: Transcript;
-  history: "loading" | "loaded" | "failed";
+  history: HistoryState;
   reload: () => void;
   setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
-  const [history, setHistory] = useState<"loading" | "loaded" | "failed">("loading");
+  const [history, setHistory] = useState<HistoryState>({ kind: "loading" });
   const [reloadToken, setReloadToken] = useState(0);
   const loadedBase = useRef<string | null>(null);
   /**
@@ -445,13 +477,13 @@ function useTranscript(
       hydrated.current = false;
       historyDone.current = false;
       setTranscript(emptyTranscript);
-      setHistory("loading");
+      setHistory({ kind: "loading" });
     }
     void loadHistory(base).then((result) => {
       if (cancelled) return;
       historyDone.current = true;
       if (!result.ok) {
-        setHistory("failed");
+        setHistory({ kind: "failed", code: result.code });
         return;
       }
       if (switched) {
@@ -485,7 +517,7 @@ function useTranscript(
           gap: false,
         }));
       }
-      setHistory("loaded");
+      setHistory({ kind: "loaded" });
     });
     return () => {
       cancelled = true;
@@ -739,7 +771,7 @@ export function ChatScreen({
   // first time has no position and follows the newest row.
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (!list || restoredReading.current || history !== "loaded") return;
+    if (!list || restoredReading.current || history.kind !== "loaded") return;
     restoredReading.current = true;
     const saved = loadReading(readingId);
     if (saved && !saved.atBottom) {
@@ -1231,15 +1263,16 @@ export function ChatScreen({
         {transcript.rows.length === 0 ? (
           <div className="centered">
             <div>
-              {history === "loading" ? (
+              {history.kind === "loading" ? (
                 <>
                   <strong>正在读这个会话</strong>
                   桌面上跑过的内容会先补上。
                 </>
-              ) : history === "failed" ? (
+              ) : history.kind === "failed" ? (
                 <>
                   <strong>没读到历史</strong>
                   新的消息照常显示，往回翻的内容暂时看不到。
+                  <span className="hint">{historyHint(history.code)}</span>
                 </>
               ) : (
                 <>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { foldHistory, loadHistory } from "./history";
+import { HISTORY_TIMEOUT_MS, foldHistory, loadHistory } from "./history";
 import type { HistoryMessage } from "../wire/history";
 
 function message(partial: Partial<HistoryMessage> & { role: HistoryMessage["role"] }): HistoryMessage {
@@ -232,6 +232,27 @@ describe("loadHistory", () => {
     const result = await loadHistory("/rt/r1");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("client.offline");
+  });
+
+  it("names a deadline, so a long conversation is not mistaken for a dead link", async () => {
+    // The screen tells the person whether retrying can help, and it can only
+    // do that if a timeout is distinguishable from a socket that died.
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const pending = loadHistory("/rt/r1");
+    await vi.advanceTimersByTimeAsync(HISTORY_TIMEOUT_MS + 1000);
+    const result = await pending;
+    vi.useRealTimers();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("client.timeout");
+  });
+
+  it("waits long enough for a large conversation to finish parsing", async () => {
+    // 15s was the old budget and long transcripts exceeded it. The value is
+    // pinned against the proxy's 60s read deadline: going past that would
+    // only move which side gives up first.
+    expect(HISTORY_TIMEOUT_MS).toBeGreaterThan(15_000);
+    expect(HISTORY_TIMEOUT_MS).toBeLessThan(60_000);
   });
 
   it("refuses a body that is not a message list", async () => {
