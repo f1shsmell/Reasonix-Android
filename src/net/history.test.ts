@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HISTORY_TIMEOUT_MS, foldHistory, loadHistory } from "./history";
+import {
+  HISTORY_PAGE_TIMEOUT_MS,
+  HISTORY_TIMEOUT_MS,
+  foldHistory,
+  loadHistory,
+} from "./history";
 import type { HistoryMessage } from "../wire/history";
 
 function message(partial: Partial<HistoryMessage> & { role: HistoryMessage["role"] }): HistoryMessage {
@@ -203,25 +208,102 @@ describe("foldHistory", () => {
 describe("loadHistory", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("reads the runtime's history and folds it", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify([{ role: "user", content: "hi", msgIndex: 1 }]), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
+  function pageResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("reads the newest page and reports the cursor state", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      pageResponse({
+        messages: [message({ role: "user", content: "hi", msgIndex: 1 })],
+        total: 1886,
+        hasMoreBefore: true,
+        nextCursor: "c1",
+      }),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     const result = await loadHistory("/rt/r1");
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.rows).toHaveLength(1);
+    if (result.ok) {
+      expect(result.read.rows).toHaveLength(1);
+      expect(result.read.paged).toBe(true);
+      expect(result.read.total).toBe(1886);
+      expect(result.read.hasMoreBefore).toBe(true);
+      expect(result.read.nextCursor).toBe("c1");
+    }
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/rt/r1/history/page?limit=200");
+  });
+
+  it("passes the cursor back when reading older messages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      pageResponse({ messages: [], total: 1886, hasMoreBefore: false }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await loadHistory("/rt/r1", "c1");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/rt/r1/history/page?limit=200&cursor=c1");
+  });
+
+  it("refetches the newest page when the conversation moved under a cursor", async () => {
+    // 409 history.snapshot_changed on a cursor read: the newest page is the
+    // answer the reader wants, so one retry follows and a second 409
+    // surfaces as a code instead of looping.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(pageResponse(null, 409))
+      .mockResolvedValueOnce(
+        pageResponse({ messages: [message({ role: "user", content: "fresh", msgIndex: 1 })], total: 1, hasMoreBefore: false }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loadHistory("/rt/r1", "stale");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.read.rows).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces a snapshot change that happens twice rather than looping", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(pageResponse(null, 409));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loadHistory("/rt/r1", "stale");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("history.snapshot_changed");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the whole read on a kernel without the page route", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(pageResponse(null, 404))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([message({ role: "user", content: "hi", msgIndex: 1 })]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loadHistory("/rt/r1");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.read.rows).toHaveLength(1);
+      expect(result.read.paged).toBe(false);
+    }
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/rt/r1/history");
   });
 
   it("reports a refusal as a code without failing the screen", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pageResponse(null, 404)));
     const result = await loadHistory("/rt/r1");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("http.404");
@@ -234,39 +316,43 @@ describe("loadHistory", () => {
     if (!result.ok) expect(result.code).toBe("client.offline");
   });
 
-  it("names a deadline, so a long conversation is not mistaken for a dead link", async () => {
+  it("names a deadline, so a slow page is not mistaken for a dead link", async () => {
     // The screen tells the person whether retrying can help, and it can only
     // do that if a timeout is distinguishable from a socket that died.
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const pending = loadHistory("/rt/r1");
-    await vi.advanceTimersByTimeAsync(HISTORY_TIMEOUT_MS + 1000);
+    await vi.advanceTimersByTimeAsync(HISTORY_PAGE_TIMEOUT_MS + 1000);
     const result = await pending;
     vi.useRealTimers();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("client.timeout");
   });
 
-  it("waits long enough for a large conversation to finish parsing", async () => {
-    // 15s was the old budget and long transcripts exceeded it. The value is
-    // pinned against the proxy's 60s read deadline: going past that would
-    // only move which side gives up first.
+  it("keeps a long fallback budget under the proxy's read deadline", async () => {
+    // The whole-transcript fallback still carries the full body, so its
+    // budget must stay generous; the proxy gives up at 60s and going past
+    // that would only move which side abandons first.
     expect(HISTORY_TIMEOUT_MS).toBeGreaterThan(15_000);
     expect(HISTORY_TIMEOUT_MS).toBeLessThan(60_000);
+    // A page is small by construction; waiting minutes for one body is a
+    // dead link wearing a timeout's clothes.
+    expect(HISTORY_PAGE_TIMEOUT_MS).toBeLessThan(HISTORY_TIMEOUT_MS);
   });
 
-  it("refuses a body that is not a message list", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ messages: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
-    );
+  it("refuses a page without a message list", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pageResponse({ total: 5 })));
     const result = await loadHistory("/rt/r1");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("history.shape");
+  });
+
+  it("accepts an empty newest page", async () => {
+    // A brand-new conversation: 200 with zero messages is a success the
+    // screen answers with "还没有消息", not a failure.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(pageResponse({ messages: [], total: 0, hasMoreBefore: false })));
+    const result = await loadHistory("/rt/r1");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.read.rows).toHaveLength(0);
   });
 });

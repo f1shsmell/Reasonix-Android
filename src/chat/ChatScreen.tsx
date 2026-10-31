@@ -452,10 +452,30 @@ function useTranscript(
   history: HistoryState;
   reload: () => void;
   setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
+  /** Read the page before the oldest rows on screen; guarded against re-entry. */
+  loadOlder: () => void;
+  /** The newest page's cursor state: whether older messages exist to read. */
+  cursor: { hasMoreBefore: boolean; nextCursor?: string };
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
   const [history, setHistory] = useState<HistoryState>({ kind: "loading" });
   const [reloadToken, setReloadToken] = useState(0);
+  /**
+   * Reading older pages, one at a time. `hasMoreBefore`/`nextCursor` come
+   * from the newest page the kernel served; when the window renderer needs
+   * more history than that page holds, `loadOlder` walks the cursor back.
+   * An in-flight page read is not re-fired by further scroll events, and a
+   * conversation with no cursor set reads no older pages at all.
+   */
+  const [cursor, setCursor] = useState<{ hasMoreBefore: boolean; nextCursor?: string }>({
+    hasMoreBefore: false,
+  });
+  const olderLoading = useRef(false);
+  /** The same cursor state, readable inside loadOlder without stale closures. */
+  const cursorRef = useRef(cursor);
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
   const loadedBase = useRef<string | null>(null);
   /**
    * The two cache handshakes. `hydrated` says the cached rows are already on
@@ -513,6 +533,12 @@ function useTranscript(
         setHistory({ kind: "failed", code: result.code });
         return;
       }
+      const fresh = result.read.rows;
+      // The newest page decides whether older ones exist and where they start.
+      setCursor({
+        hasMoreBefore: result.read.hasMoreBefore,
+        ...(result.read.nextCursor ? { nextCursor: result.read.nextCursor } : {}),
+      });
       if (switched) {
         if (hydrated.current) {
           // The cache is on screen: the read replaces it, keeping only what
@@ -520,11 +546,11 @@ function useTranscript(
           // same conversation twice, and a cached bubble history has already
           // finished is the ghost the phone drew twice.
           setTranscript((current) => {
-            const ghosts = ghostedByHistory(current.rows, result.rows);
+            const ghosts = ghostedByHistory(current.rows, fresh);
             return {
               ...current,
               rows: [
-                ...result.rows,
+                ...fresh,
                 ...current.rows.filter((row) => !ghosts.has(row.id) && keepUnconfirmed(row)),
               ],
             };
@@ -532,7 +558,7 @@ function useTranscript(
         } else {
           // Prefix the snapshot: a frame that landed while the read was in
           // flight must not be thrown away or moved above its own turn.
-          setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+          setTranscript((current) => ({ ...current, rows: [...fresh, ...current.rows] }));
         }
       } else {
         // A gap reload is a replacement, not a prefix. A row still streaming
@@ -542,7 +568,7 @@ function useTranscript(
         setTranscript((current) => ({
           ...current,
           rows: [
-            ...result.rows,
+            ...fresh,
             ...current.rows.filter(keepUnconfirmed),
           ],
           gap: false,
@@ -572,7 +598,45 @@ function useTranscript(
     scheduleSaveRows([sessionPath, runtimeId], transcript.rows);
   }, [sessionPath, runtimeId, transcript.rows]);
 
-  return { transcript, history, reload, setTranscript };
+  /**
+   * Read the page before the current oldest one.
+   *
+   * Fired by the window renderer when the reader's scroll reaches into the
+   * spacer and the newest page does not cover the request. Guarded three
+   * ways: one read at a time, no cursor means nothing older to ask for, and
+   * a read whose rows all land anyway is rare enough not to need a dedupe
+   * (the cursor is opaque and moves backward monotonically).
+   */
+  const loadOlder = useCallback(() => {
+    const state = cursorRef.current;
+    if (olderLoading.current || !state.hasMoreBefore || !state.nextCursor) return;
+    if (!base) return;
+    olderLoading.current = true;
+    void loadHistory(base, state.nextCursor)
+      .then((result) => {
+        if (!result.ok) return;
+        const older = result.read.rows;
+        setCursor({
+          hasMoreBefore: result.read.hasMoreBefore,
+          ...(result.read.nextCursor ? { nextCursor: result.read.nextCursor } : {}),
+        });
+        // Prepend in place: older messages are strictly before everything the
+        // pane holds, and the window's own widen keeps the reader's position.
+        // Rows already held are dropped rather than drawn twice — a retried
+        // cursor or an overlapping page boundary would otherwise put two
+        // copies of one message under each other.
+        setTranscript((current) => {
+          const known = new Set(current.rows.map((row) => row.id));
+          const fresh = older.filter((row) => !known.has(row.id));
+          return { ...current, rows: [...fresh, ...current.rows] };
+        });
+      })
+      .finally(() => {
+        olderLoading.current = false;
+      });
+  }, [base]);
+
+  return { transcript, history, reload, setTranscript, loadOlder, cursor };
 }
 
 /**
@@ -665,7 +729,7 @@ export function ChatScreen({
   mode,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  const { transcript, history, reload, setTranscript } = useTranscript(
+  const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
     snapshot,
     runtimeId,
     runtime?.base,
@@ -831,6 +895,39 @@ export function ChatScreen({
       if (list) widenFromRef.current = list.scrollHeight;
       return Math.min(display.length, end + GROW_BY);
     });
+  }, [display.length]);
+
+  // The window can only widen over rows the pane already holds. When the
+  // newest page did not carry the whole conversation, growing into the spacer
+  // is also the moment to ask the kernel for the page before this one — the
+  // load is guarded in useTranscript, so scroll events cannot stack it. The
+  // height goes into widenFromRef now: when the older rows commit, the same
+  // restore that covers a widen keeps the thumb on the same content.
+  const olderTrigger = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    widenFromRef.current = list.scrollHeight;
+    loadOlder();
+  }, [loadOlder]);
+
+  useEffect(() => {
+    if (firstVisible > 0 || !cursor.hasMoreBefore) return;
+    const list = listRef.current;
+    if (!list) return;
+    if (list.scrollTop < 400) olderTrigger();
+  }, [firstVisible, cursor.hasMoreBefore, olderTrigger]);
+
+  // Older-page rows land above the window, so the window must grow by the
+  // same count or the slice would keep showing only the newest rows and the
+  // freshly-read page would sit invisible above it. Live rows append below
+  // and leave the window alone — they only ever change this when a stale
+  // widenFromRef from a failed older read is consumed, which costs one entry.
+  const prevDisplayLen = useRef(display.length);
+  useLayoutEffect(() => {
+    const added = display.length - prevDisplayLen.current;
+    prevDisplayLen.current = display.length;
+    if (added <= 0 || widenFromRef.current === null) return;
+    setWindowEnd((end) => Math.min(display.length, end + added));
   }, [display.length]);
 
   // A widen prepends entries above the reader's thumb. Restoring the height
@@ -1374,7 +1471,7 @@ export function ChatScreen({
           </div>
         ) : (
           <>
-            {firstVisible > 0 ? (
+            {firstVisible > 0 || cursor.hasMoreBefore ? (
               <div
                 ref={topSpacer}
                 className="window-gap"
