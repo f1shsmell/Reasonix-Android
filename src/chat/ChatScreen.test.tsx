@@ -1803,6 +1803,68 @@ describe("ChatScreen transcript windowing", () => {
     expect(container.textContent ?? "").not.toContain("消息 0");
   });
 
+  it("never fires the previous conversation's cursor after a switch", async () => {
+    // Pane A is paged and holds a cursor. Switching to pane B resets it: the
+    // cursor belonged to A's newest page, and a read against it would prepend
+    // A's messages onto B — most visibly when B's own history read fails and
+    // nothing arrives to overwrite them.
+    const fetchMock = stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 130,
+        hasMoreBefore: true,
+        nextCursor: "c-old",
+      },
+      olderPage: {
+        messages: [{ role: "user", content: "A 的旧消息", msgIndex: 1 }],
+        total: 130,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.textContent ?? "").toContain("消息 59");
+
+    // B's history read fails outright: nothing will land to mask a stray
+    // cursor read.
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/history/page") && !url.includes("cursor=")) {
+        return Promise.resolve(new Response(null, { status: 500 }));
+      }
+      if (url.includes("/history")) {
+        return Promise.resolve(new Response(null, { status: 500 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ running: false, busy: false, decisions: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+
+    render(snapshot(undefined, [other]), "r2");
+    await flush();
+    await flush();
+
+    // Push B to the top exactly as a reader would; the cursor from A is dead
+    // and no older-page request may go out.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    await flush();
+
+    const cursorCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("cursor="),
+    );
+    expect(cursorCalls).toHaveLength(0);
+    expect(container.textContent ?? "").not.toContain("A 的旧消息");
+    expect(container.textContent ?? "").toContain("没读到历史");
+  });
+
   it("fetches an older page when the window reaches the top of a paged conversation", async () => {
     // The newest page holds 60 of 130 messages: growing into the spacer is
     // also the moment to ask the kernel for the page before this one. The

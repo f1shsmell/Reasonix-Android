@@ -12,7 +12,11 @@
  * two folds share the row types and nothing else.
  */
 
-import type { HistoryMessage, HistoryToolCall } from "../wire/history";
+import type {
+  HistoryMessage,
+  HistoryToolCall,
+  HistoryToolContext,
+} from "../wire/history";
 import { RequestTimeout, fetchWithTimeout } from "./http";
 import type { Row, ToolRow } from "../chat/transcript";
 
@@ -58,11 +62,31 @@ function toolRow(call: HistoryToolCall, id: string): ToolRow {
  * - A tool result is joined to its call by id, not by position. A call whose
  *   result is missing keeps its card; a result whose call is missing gets one
  *   of its own rather than being lost.
+ *
+ * A page of a paged conversation breaks that second rule on its own: the
+ * newest page can hold a result whose call sits pages earlier. The kernel
+ * ships those calls in `toolContext`, and each is drawn here as its own card
+ * so the result has somewhere to land. The card's id is the one the call's
+ * own message would generate, so when an older page later brings that
+ * message in, the prepend dedupe drops the duplicate and one card remains.
  */
-export function foldHistory(messages: HistoryMessage[]): Row[] {
+export function foldHistory(
+  messages: HistoryMessage[],
+  toolContext?: HistoryToolContext[],
+): Row[] {
   const rows: Row[] = [];
   // Where each call's card landed, so its result can fill it in.
   const calls = new Map<string, number>();
+
+  // Calls whose messages sit outside this page. They render before the page's
+  // own rows — their msgIndex is strictly earlier — in context order.
+  const inPage = new Set(messages.map((message) => message.msgIndex));
+  for (const ctx of toolContext ?? []) {
+    if (!ctx || typeof ctx.messageIndex !== "number" || !ctx.call?.id) continue;
+    if (inPage.has(ctx.messageIndex)) continue;
+    calls.set(ctx.call.id, rows.length);
+    rows.push(toolRow(ctx.call, historyId(ctx.messageIndex, (ctx.ordinal ?? 0) + 1)));
+  }
 
   for (const message of messages) {
     const index = message.msgIndex;
@@ -214,6 +238,7 @@ function checkedPage(page: {
   snapshot?: unknown;
   start?: unknown;
   end?: unknown;
+  toolContext?: unknown;
 }): {
   messages: HistoryMessage[];
   total: number;
@@ -222,6 +247,7 @@ function checkedPage(page: {
   snapshot?: string;
   start?: number;
   end?: number;
+  toolContext?: HistoryToolContext[];
 } | null {
   if (!page || !Array.isArray(page.messages)) return null;
   const total = page.total as number;
@@ -247,6 +273,11 @@ function checkedPage(page: {
       : {}),
     ...(Number.isSafeInteger(page.start) ? { start: page.start as number } : {}),
     ...(Number.isSafeInteger(page.end) ? { end: page.end as number } : {}),
+    // Calls whose messages sit outside the page; the fold guards each entry's
+    // own shape, so a list here is accepted as carried.
+    ...(Array.isArray(page.toolContext)
+      ? { toolContext: page.toolContext as HistoryToolContext[] }
+      : {}),
   };
 }
 
@@ -266,7 +297,7 @@ async function readPage(base: string, cursor?: string): Promise<HistoryResult> {
   return {
     ok: true,
     read: {
-      rows: foldHistory(page.messages),
+      rows: foldHistory(page.messages, page.toolContext),
       total: page.total,
       hasMoreBefore: page.hasMoreBefore,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
