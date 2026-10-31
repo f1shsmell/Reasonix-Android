@@ -277,6 +277,42 @@ function closePending(rows: Row[]): Row[] {
 }
 
 /**
+ * Re-draw a prompt this transcript may already hold.
+ *
+ * The kernel's prompt delivery is at-least-once by design: the original frame
+ * is numbered into the replay log, every (re)connection is handed a snapshot of
+ * what the run is blocked on, and each SSE reconnect takes both again. Folding
+ * each copy into its own row drew the same question once per reconnect — three
+ * identical cards for one ask. The id is the identity: a copy for a prompt this
+ * transcript already holds updates that row in place and keeps the answer state
+ * the row has already earned — a replay must not reopen a question a receipt
+ * has settled.
+ */
+function upsertAsk(rows: Row[], ask: WireAsk): Row[] | null {
+  const index = rows.findIndex((row) => row.kind === "ask" && row.id === ask.id);
+  if (index < 0) return [...rows, { kind: "ask", id: ask.id, ask, pending: true }];
+  const existing = rows[index];
+  if (existing === undefined || existing.kind !== "ask") return null;
+  // An unchanged copy costs no re-render, which a reconnecting phone sends
+  // several of per minute while a prompt sits unanswered.
+  if (JSON.stringify(existing.ask) === JSON.stringify(ask)) return null;
+  const next = rows.slice();
+  next[index] = { ...existing, ask };
+  return next;
+}
+
+function upsertApproval(rows: Row[], approval: WireApproval): Row[] | null {
+  const index = rows.findIndex((row) => row.kind === "approval" && row.id === approval.id);
+  if (index < 0) return [...rows, { kind: "approval", id: approval.id, approval, pending: true }];
+  const existing = rows[index];
+  if (existing === undefined || existing.kind !== "approval") return null;
+  if (JSON.stringify(existing.approval) === JSON.stringify(approval)) return null;
+  const next = rows.slice();
+  next[index] = { ...existing, approval };
+  return next;
+}
+
+/**
  * Close an approval this screen settled itself.
  *
  * The kernel also sends a receipt for it, but that is a separate round trip
@@ -483,10 +519,8 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       // is a shape this client does not know; drawing it would be a prompt
       // with no buttons, so it is left to the contract rule and ignored.
       if (!Array.isArray(ask.questions) || ask.questions.length === 0) return transcript;
-      return {
-        ...transcript,
-        rows: [...transcript.rows, { kind: "ask", id: ask.id, ask, pending: true }],
-      };
+      const rows = upsertAsk(transcript.rows, ask);
+      return rows === null ? transcript : { ...transcript, rows };
     }
 
     case "ask_engaged": {
@@ -501,13 +535,8 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
     case "approval_request": {
       const approval = event.approval;
       if (!approval) return transcript;
-      return {
-        ...transcript,
-        rows: [
-          ...transcript.rows,
-          { kind: "approval", id: approval.id, approval, pending: true },
-        ],
-      };
+      const rows = upsertApproval(transcript.rows, approval);
+      return rows === null ? transcript : { ...transcript, rows };
     }
 
     case "notice": {
