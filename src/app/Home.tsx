@@ -17,7 +17,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
-import { placeProject, setPinned, treeWriteMessage } from "../net/pin";
+import { placeProject, removeSession, renameSession, setPinned, treeWriteMessage } from "../net/pin";
+import type { TreeWrite } from "../net/pin";
 import { linkSummary, linkTone } from "../net/link";
 import type { LinkState } from "../net/link";
 import { loadConnections } from "../net/savedConnections";
@@ -30,6 +31,7 @@ import { useProjectDrag } from "./useProjectDrag";
 import type { ProjectDragHandlers, ProjectDragState } from "./useProjectDrag";
 import { useLongPress } from "./longPress";
 import { useBackCloser } from "./backStack";
+import { SessionSheet } from "./SessionSheet";
 import { Segmented } from "./Segmented";
 import { RMark } from "./RMark";
 import { ReachBanner } from "./ReachBanner";
@@ -158,6 +160,18 @@ function dropEdge(
   if (state.insertAt === index) return "before";
   if (state.insertAt >= count && index === count - 1) return "after";
   return undefined;
+}
+
+/** How far a row moves aside to open the gap under the finger. */
+function dragShift(state: ProjectDragState | null, index: number): number {
+  if (state === null || index === state.from) return 0;
+  if (state.from < state.insertAt && index > state.from && index < state.insertAt) {
+    return -state.height;
+  }
+  if (state.insertAt < state.from && index >= state.insertAt && index < state.from) {
+    return state.height;
+  }
+  return 0;
 }
 
 /**
@@ -345,65 +359,6 @@ function RecentItem({
         <Chevron />
       </button>
     </li>
-  );
-}
-
-/**
- * What a long press on a conversation offers.
- *
- * Pinning used to be a button on every row, which put the same word on the
- * screen as many times as there were conversations. It is a decision about one
- * row, so it belongs with that row's other actions, behind the press.
- */
-function SessionSheet({
-  row,
-  busy,
-  onClose,
-  onOpen,
-  onTogglePin,
-}: {
-  row: RecentRow;
-  busy: boolean;
-  onClose: () => void;
-  onOpen: () => void;
-  onTogglePin: () => void;
-}) {
-  const { project, session } = row;
-  const pinned = session.pinned === true;
-  useBackCloser(true, onClose);
-  return (
-    <div className="sheet-backdrop" role="presentation" onPointerDown={onClose}>
-      <section
-        className="sheet session-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="会话操作"
-        onClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <div className="sheet-head">
-          <h2>{sessionTitle(session)}</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
-        </div>
-        <p className="meta">
-          {[project.name, relativeTime(session.lastActiveAt)].filter(Boolean).join(" · ")}
-        </p>
-        <ul className="sheet-actions">
-          <li>
-            <button type="button" onClick={onOpen} disabled={busy}>
-              打开会话
-            </button>
-          </li>
-          <li>
-            <button type="button" onClick={onTogglePin} aria-pressed={pinned}>
-              {pinned ? "取消置顶" : "置顶会话"}
-            </button>
-          </li>
-        </ul>
-      </section>
-    </div>
   );
 }
 
@@ -611,12 +566,14 @@ function ProjectItem({
   project,
   drop,
   dragging,
+  shift,
   drag,
   onOpen,
 }: {
   project: TreeProject;
   drop: "before" | "after" | undefined;
   dragging: boolean;
+  shift: number;
   drag: ProjectDragHandlers;
   onOpen: () => void;
 }) {
@@ -626,6 +583,7 @@ function ProjectItem({
       data-project-root={project.root}
       data-drop={drop}
       className={dragging ? "dragging" : undefined}
+      style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
       {...drag}
     >
       <button type="button" className="project" onClick={onOpen}>
@@ -882,16 +840,22 @@ export function Home({
    * a local toggle would draw the pin before the kernel agreed, and a pin the
    * kernel refused is exactly the case where the row must not move.
    */
-  const togglePin = async (row: RecentRow) => {
-    const next = row.session.pinned !== true;
-    setMenu(null);
-    setError("");
-    const result = await setPinned(row.session.path, next);
-    if (!result.ok) {
-      setError(treeWriteMessage(result.code));
-      return;
-    }
-    onRefresh();
+  const togglePin = async (row: RecentRow): Promise<TreeWrite> => {
+    const result = await setPinned(row.session.path, row.session.pinned !== true);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
+  const rename = async (row: RecentRow, title: string): Promise<TreeWrite> => {
+    const result = await renameSession(row.session.path, title);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
+  const remove = async (row: RecentRow): Promise<TreeWrite> => {
+    const result = await removeSession(row.session.path);
+    if (result.ok) onRefresh();
+    return result;
   };
 
   /**
@@ -1093,13 +1057,18 @@ export function Home({
         ) : null}
 
         {tab === "projects" && shownProjects.length > 0 ? (
-          <ul className="list grouped" ref={drag.listRef}>
+          <ul
+            className="list grouped"
+            ref={drag.listRef}
+            data-dragging={drag.state ? "true" : undefined}
+          >
             {shownProjects.map((project, index) => (
               <ProjectItem
                 key={project.root}
                 project={project}
                 drop={dropEdge(drag.state, index, shownProjects.length)}
                 dragging={drag.state?.root === project.root}
+                shift={dragShift(drag.state, index)}
                 drag={drag.row(project.root)}
                 onOpen={() => onOpenProject(project.root)}
               />
@@ -1120,7 +1089,10 @@ export function Home({
 
       {menu ? (
         <SessionSheet
-          row={menu}
+          title={sessionTitle(menu.session)}
+          projectName={menu.project.name}
+          when={relativeTime(menu.session.lastActiveAt)}
+          pinned={menu.session.pinned === true}
           busy={busy === menu.session.path}
           onClose={() => setMenu(null)}
           onOpen={() => {
@@ -1128,7 +1100,9 @@ export function Home({
             setMenu(null);
             void open(row.project, row.session);
           }}
-          onTogglePin={() => void togglePin(menu)}
+          onTogglePin={() => togglePin(menu)}
+          onRename={(title) => rename(menu, title)}
+          onRemove={() => remove(menu)}
         />
       ) : null}
 

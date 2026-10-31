@@ -50,6 +50,20 @@ export function setPinned(path: string, pinned: boolean): Promise<TreeWrite> {
   return post("/tree/sessions/pin", { path: target, pinned });
 }
 
+/** Set the title the sidebar and the phone both read for this transcript. */
+export function renameSession(path: string, title: string): Promise<TreeWrite> {
+  const target = path.trim();
+  if (!target) return Promise.resolve({ ok: false, code: "client.empty_path" });
+  return post("/tree/sessions/rename", { path: target, title: title.trim() });
+}
+
+/** Remove one stored conversation; a running turn is refused by the kernel. */
+export function removeSession(path: string): Promise<TreeWrite> {
+  const target = path.trim();
+  if (!target) return Promise.resolve({ ok: false, code: "client.empty_path" });
+  return post("/tree/sessions/remove", { path: target });
+}
+
 /**
  * Put one project before another in the remembered order; `""` means the end.
  *
@@ -89,6 +103,18 @@ export function treeWriteMessage(code: string): string {
       return "这个会话不在已知项目里。";
     case "session.bad_path":
       return "这个会话的路径读不出来。";
+    case "session.running":
+      return "这个会话还在运行，先停止再删除。";
+    case "session.in_use":
+      return "这个会话正在被写入，稍后再试。";
+    case "session.in_use_by":
+      return "另一个设备或桌面端正打开这个会话，先关掉再删除。";
+    case "session.unknown":
+      return "这个会话已经不在了。";
+    case "session.title_save_failed":
+      return "标题没有保存成功，稍后再试。";
+    case "device.host_only":
+      return "桌面端不允许手机做这个操作。";
     case "workspace.unknown":
     case "workspace.not_found":
       return "这个项目不在桌面端的列表里。";

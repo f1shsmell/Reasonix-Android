@@ -40,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   act(() => root?.unmount());
   root = null;
   container.remove();
@@ -105,6 +106,28 @@ async function settle(): Promise<void> {
       await Promise.resolve();
     });
   }
+}
+
+/** jsdom has no PointerEvent; the long press only reads the coordinates. */
+function pointer(node: Element, type: string, x: number, y: number): void {
+  act(() => {
+    node.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y }),
+    );
+  });
+}
+
+function hold(node: Element, x: number, y: number): void {
+  pointer(node, "pointerdown", x, y);
+  act(() => {
+    vi.advanceTimersByTime(500);
+  });
+}
+
+function typeInto(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 describe("SessionList", () => {
@@ -200,6 +223,92 @@ describe("SessionList", () => {
     await render({ project: project({ missing: true }) });
     expect(container.textContent).toContain("这个文件夹已经不在电脑上了");
     expect(button("新会话").disabled).toBe(true);
+  });
+
+  it("opens the row's actions on a long press and renames the conversation", async () => {
+    vi.useFakeTimers();
+    const fetchMock = route(() => new Response(null, { status: 204 }));
+    const onRefresh = vi.fn();
+    const onOpen = vi.fn();
+    await render({ onRefresh, onOpen });
+
+    const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+      candidate.textContent?.includes("修一下登录"),
+    ) as HTMLElement;
+    hold(row, 100, 100);
+    pointer(row, "pointerup", 100, 100);
+
+    const sheet = container.querySelector(".session-sheet") as HTMLElement;
+    expect(sheet.textContent).toContain("打开会话");
+    expect(sheet.textContent).toContain("重命名");
+    expect(sheet.textContent).toContain("删除会话");
+
+    act(() => button("重命名").click());
+    const input = container.querySelector(".sheet-input") as HTMLInputElement;
+    act(() => typeInto(input, "新的标题"));
+    await act(async () => {
+      button("保存").click();
+    });
+    await settle();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/tree/sessions/rename",
+      expect.objectContaining({
+        body: JSON.stringify({ path: "/work/app/a.jsonl", title: "新的标题" }),
+      }),
+    );
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(container.querySelector(".session-sheet")).toBeNull();
+  });
+
+  it("confirms and deletes a conversation from the row's actions", async () => {
+    vi.useFakeTimers();
+    const fetchMock = route(() => new Response(null, { status: 204 }));
+    const onRefresh = vi.fn();
+    await render({ onRefresh });
+
+    const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+      candidate.textContent?.includes("修一下登录"),
+    ) as HTMLElement;
+    hold(row, 100, 100);
+    pointer(row, "pointerup", 100, 100);
+
+    act(() => button("删除会话").click());
+    expect(container.textContent).toContain("不能撤销");
+    await act(async () => {
+      (container.querySelector(".sheet-foot .danger") as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/tree/sessions/remove",
+      expect.objectContaining({
+        body: JSON.stringify({ path: "/work/app/a.jsonl" }),
+      }),
+    );
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the refusal visible when a running conversation cannot be deleted", async () => {
+    vi.useFakeTimers();
+    route(() => json({ code: "session.running" }, 409));
+    const onRefresh = vi.fn();
+    await render({ onRefresh });
+
+    const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+      candidate.textContent?.includes("修一下登录"),
+    ) as HTMLElement;
+    hold(row, 100, 100);
+    pointer(row, "pointerup", 100, 100);
+    act(() => button("删除会话").click());
+    await act(async () => {
+      (container.querySelector(".sheet-foot .danger") as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(container.textContent).toContain("还在运行");
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it("goes back to the project list", async () => {

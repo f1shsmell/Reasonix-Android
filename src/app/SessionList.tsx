@@ -15,9 +15,13 @@
 import { useState } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import { openRuntime } from "../net/workspaces";
+import { removeSession, renameSession, setPinned } from "../net/pin";
+import type { TreeWrite } from "../net/pin";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
+import { useLongPress } from "./longPress";
+import { SessionSheet } from "./SessionSheet";
 import type { TreeState } from "./useTree";
 
 export interface SessionListProps {
@@ -65,15 +69,30 @@ function SessionRow({
   session,
   busy,
   onOpen,
+  onMenu,
 }: {
   session: TreeSession;
   busy: boolean;
   onOpen: () => void;
+  onMenu: () => void;
 }) {
   const when = relativeTime(session.lastActiveAt);
+  const press = useLongPress(onMenu);
   return (
     <li>
-      <button type="button" className="session" onClick={onOpen} disabled={busy}>
+      <button
+        type="button"
+        className="session"
+        onClick={onOpen}
+        disabled={busy}
+        aria-haspopup="menu"
+        onKeyDown={(event) => {
+          if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+          event.preventDefault();
+          onMenu();
+        }}
+        {...press}
+      >
         <span className="row-main">
           <span className="session-name">
             {sessionTitle(session)}
@@ -105,6 +124,7 @@ export function SessionList({
 }: SessionListProps) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [menu, setMenu] = useState<TreeSession | null>(null);
 
   const open = async (session?: TreeSession) => {
     if (busy) return;
@@ -118,6 +138,24 @@ export function SessionList({
       return;
     }
     onOpen(result.runtime.id, session ? sessionTitle(session) : "新会话");
+  };
+
+  const togglePin = async (session: TreeSession): Promise<TreeWrite> => {
+    const result = await setPinned(session.path, session.pinned !== true);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
+  const rename = async (session: TreeSession, title: string): Promise<TreeWrite> => {
+    const result = await renameSession(session.path, title);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
+  const remove = async (session: TreeSession): Promise<TreeWrite> => {
+    const result = await removeSession(session.path);
+    if (result.ok) onRefresh();
+    return result;
   };
 
   const sessions = project.sessions;
@@ -173,6 +211,7 @@ export function SessionList({
                 session={session}
                 busy={busy === session.path}
                 onOpen={() => void open(session)}
+                onMenu={() => setMenu(session)}
               />
             ))}
           </ul>
@@ -188,6 +227,25 @@ export function SessionList({
           </button>
         ) : null}
       </div>
+
+      {menu ? (
+        <SessionSheet
+          title={sessionTitle(menu)}
+          projectName={project.name}
+          when={relativeTime(menu.lastActiveAt)}
+          pinned={menu.pinned === true}
+          busy={busy === menu.path}
+          onClose={() => setMenu(null)}
+          onOpen={() => {
+            const session = menu;
+            setMenu(null);
+            void open(session);
+          }}
+          onTogglePin={() => togglePin(menu)}
+          onRename={(title) => rename(menu, title)}
+          onRemove={() => remove(menu)}
+        />
+      ) : null}
     </div>
   );
 }
