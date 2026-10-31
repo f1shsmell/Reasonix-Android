@@ -81,8 +81,13 @@ function json(body: unknown, status = 200): Response {
  */
 function stubKernel(
   options: {
+    /** Newest-page body; `messages` is the array the screen folds. */
     history?: unknown;
     historyStatus?: number;
+    /** Served for cursor requests: the page before the newest one. */
+    olderPage?: unknown;
+    /** Serves the whole-transcript fallback at GET /history. */
+    wholeHistory?: unknown;
     todos?: unknown;
     todosStatus?: number;
     status?: unknown;
@@ -99,7 +104,18 @@ function stubKernel(
         json(options.status ?? { running: false, busy: false, decisions: [] }, options.statusStatus),
       );
     }
-    return Promise.resolve(json(options.history ?? [], options.historyStatus));
+    if (url.includes("/history/page")) {
+      if (url.includes("cursor=") && options.olderPage !== undefined) {
+        return Promise.resolve(json(options.olderPage, options.historyStatus));
+      }
+      const body = options.history ?? [];
+      const page =
+        Array.isArray(body)
+          ? { messages: body, total: body.length, hasMoreBefore: false }
+          : body;
+      return Promise.resolve(json(page, options.historyStatus));
+    }
+    return Promise.resolve(json(options.wholeHistory ?? options.history ?? [], options.historyStatus));
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -1785,5 +1801,76 @@ describe("ChatScreen transcript windowing", () => {
     await flush();
 
     expect(container.textContent ?? "").not.toContain("消息 0");
+  });
+
+  it("fetches an older page when the window reaches the top of a paged conversation", async () => {
+    // The newest page holds 60 of 130 messages: growing into the spacer is
+    // also the moment to ask the kernel for the page before this one. The
+    // older rows must land above the ones on screen, in order.
+    const older = Array.from({ length: 70 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `旧消息 ${i}`,
+      msgIndex: i + 1,
+    }));
+    const fetchMock = stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 130,
+        hasMoreBefore: true,
+        nextCursor: "c-old",
+      },
+      olderPage: {
+        messages: older,
+        total: 130,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.textContent ?? "").toContain("消息 59");
+    expect(container.textContent ?? "").not.toContain("旧消息 69");
+
+    // Near the top with the whole page drawn: the cursor read fires.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    await flush();
+
+    expect(container.textContent ?? "").toContain("旧消息 69");
+    expect(container.textContent ?? "").toContain("消息 59");
+    const pageCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("cursor=c-old"),
+    );
+    expect(pageCalls).toHaveLength(1);
+  });
+
+  it("stops asking for older pages once the kernel says there are none", async () => {
+    stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 60,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+
+    // The spacer is gone with the window covering everything, and no cursor
+    // request was ever made: /history/page without hasMoreBefore is terminal.
+    expect(container.querySelector(".window-gap")).toBeNull();
   });
 });
