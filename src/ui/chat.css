@@ -1471,6 +1471,16 @@
   font-size: 16px;
 }
 
+/* The reason a read failed, under the sentence that says it did. Small and
+   dim: it is for whoever reports the problem, not the first thing to read. */
+.centered .hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.62;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- structured ask (surface) ---- */
 
 /* A surface card sits inside `.row.prompt`, which already draws the frame;

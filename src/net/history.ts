@@ -13,7 +13,7 @@
  */
 
 import type { HistoryMessage, HistoryToolCall } from "../wire/history";
-import { fetchWithTimeout } from "./http";
+import { RequestTimeout, fetchWithTimeout } from "./http";
 import type { Row, ToolRow } from "../chat/transcript";
 
 /** Control sequences are not text; a transcript that shows them is broken. */
@@ -151,16 +151,40 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
  * transcript with a working composer is better than no screen at all. The
  * caller is told which happened.
  */
+/**
+ * Reading the stored conversation gets its own deadline.
+ *
+ * `/history` returns the whole transcript in one body - the kernel has no
+ * paging - so the cost grows with the conversation. A session that has run
+ * for a day was measured at 6-7 MB on disk, and the kernel re-parses that
+ * file for every pane that was not already live. Fifteen seconds is enough
+ * for a new conversation and not enough for one of those, which is why the
+ * long ones failed while short ones read fine.
+ *
+ * The proxy's own read deadline is 60s (`FORWARD_READ_TIMEOUT_MS`), so going
+ * past that would only change which side gives up. This sits just under it:
+ * the request survives a slow parse instead of being abandoned halfway, and a
+ * kernel that is genuinely gone still fails in a bounded time.
+ */
+export const HISTORY_TIMEOUT_MS = 55_000;
+
 export async function loadHistory(
   base: string,
 ): Promise<{ ok: true; rows: Row[] } | { ok: false; code: string }> {
   try {
-    const response = await fetchWithTimeout(`${base}/history`, { credentials: "same-origin" }, 15_000);
+    const response = await fetchWithTimeout(
+      `${base}/history`,
+      { credentials: "same-origin" },
+      HISTORY_TIMEOUT_MS,
+    );
     if (!response.ok) return { ok: false, code: `http.${response.status}` };
     const messages = (await response.json()) as HistoryMessage[];
     if (!Array.isArray(messages)) return { ok: false, code: "history.shape" };
     return { ok: true, rows: foldHistory(messages) };
-  } catch {
+  } catch (error) {
+    // A deadline and a dead socket both used to read as `client.offline`,
+    // which hid the one that this screen can actually do something about.
+    if (error instanceof RequestTimeout) return { ok: false, code: "client.timeout" };
     return { ok: false, code: "client.offline" };
   }
 }
