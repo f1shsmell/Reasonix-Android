@@ -2,6 +2,9 @@ package com.reasonix.mobile;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -18,6 +21,7 @@ import java.net.CookiePolicy;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
@@ -645,6 +649,81 @@ public final class LoopbackProxy {
         writeJson(socket, status, text.isEmpty() ? "{\"devices\":[]}" : text);
     }
 
+    /**
+     * Open a kernel connection. A phone with a VPN such as FlClash active often
+     * routes private addresses through the tunnel; the LAN share is on Wi-Fi,
+     * so prefer a non-VPN Wi-Fi/Ethernet network for a private target. With no
+     * VPN, bypass any configured HTTP proxy for the same private target.
+     */
+    private HttpURLConnection openKernelConnection(URI uri) throws IOException {
+        if (lanTarget(uri.getHost()) == null) {
+            return (HttpURLConnection) uri.toURL().openConnection();
+        }
+        Network lan = lanNetwork();
+        if (lan != null) {
+            return (HttpURLConnection) lan.openConnection(uri.toURL());
+        }
+        return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
+    }
+
+    /** The IP a LAN share uses, or null for an internet host. */
+    static InetAddress lanTarget(String host) {
+        if (host == null || host.isEmpty()) return null;
+        String value = host.startsWith("[") && host.endsWith("]")
+                ? host.substring(1, host.length() - 1) : host;
+        try {
+            InetAddress address = InetAddress.getByName(value);
+            if (address.isSiteLocalAddress() || address.isLinkLocalAddress() || address.isLoopbackAddress()) {
+                return address;
+            }
+            byte[] bytes = address.getAddress();
+            if (bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc) return address;
+        } catch (Exception ignored) {
+            // A name that does not resolve cannot be classified; use the default network.
+        }
+        return null;
+    }
+
+    /** A non-VPN Wi-Fi or Ethernet network, when the active route is a VPN. */
+    private Network lanNetwork() {
+        ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return null;
+        Network active = manager.getActiveNetwork();
+        NetworkCapabilities activeCaps = active == null ? null : manager.getNetworkCapabilities(active);
+        if (activeCaps == null || !activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
+        for (Network network : manager.getAllNetworks()) {
+            NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                return network;
+            }
+        }
+        return null;
+    }
+
+    private boolean vpnActive() {
+        ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return false;
+        Network active = manager.getActiveNetwork();
+        NetworkCapabilities caps = active == null ? null : manager.getNetworkCapabilities(active);
+        return caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+    }
+
+    private boolean lanAvailable() {
+        ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return false;
+        for (Network network : manager.getAllNetworks()) {
+            NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private JSONObject configJson() throws JSONException {
         String origin = prefs.getString(KEY_ORIGIN, "");
         JSONObject out = new JSONObject();
@@ -654,6 +733,8 @@ public final class LoopbackProxy {
                 && (hasCookie(origin) || !webCookie(origin.endsWith("/") ? origin : origin + "/").isEmpty()));
         out.put("mode", prefs.getString(KEY_MODE, "lan"));
         out.put("relayDevice", prefs.getString(KEY_RELAY_DEVICE, ""));
+        out.put("vpn", vpnActive());
+        out.put("lan", lanAvailable());
         out.put("account", accountJson());
         return out;
     }
@@ -723,7 +804,7 @@ public final class LoopbackProxy {
         HttpURLConnection conn = null;
         try {
             URI uri = URI.create(origin + "/runtimes");
-            conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn = openKernelConnection(uri);
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
@@ -744,7 +825,7 @@ public final class LoopbackProxy {
 
     private int pair(String origin, String code) throws IOException {
         URI uri = URI.create(origin + "/pair");
-        HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+        HttpURLConnection conn = openKernelConnection(uri);
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(10000);
@@ -1133,7 +1214,7 @@ public final class LoopbackProxy {
     private void forwardTo(Socket socket, String origin, String method, String target,
                            Map<String, String> headers, byte[] body) throws IOException {
         URI uri = URI.create(origin + target);
-        HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+        HttpURLConnection conn = openKernelConnection(uri);
         try {
             conn.setRequestMethod(method);
             conn.setInstanceFollowRedirects(false);

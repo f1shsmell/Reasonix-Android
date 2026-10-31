@@ -2,6 +2,8 @@ package com.reasonix.mobile;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -110,6 +112,19 @@ public class LoopbackProxyTest {
     public void fleetRouteRefusesAnUnusableIndex() {
         assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet/abc/runtimes"));
         assertEquals(-1, LoopbackProxy.fleetPeerIndex("/__reasonix/fleet//runtimes"));
+    }
+
+    @Test
+    public void classifiesLanTargetsForNetworkBinding() {
+        assertNotNull(LoopbackProxy.lanTarget("192.168.1.20"));
+        assertNotNull(LoopbackProxy.lanTarget("10.0.2.2"));
+        assertNotNull(LoopbackProxy.lanTarget("172.16.4.8"));
+        assertNotNull(LoopbackProxy.lanTarget("127.0.0.1"));
+        assertNotNull(LoopbackProxy.lanTarget("fe80::1"));
+        assertNotNull(LoopbackProxy.lanTarget("fd00::1"));
+        assertNull(LoopbackProxy.lanTarget("8.8.8.8"));
+        assertNull(LoopbackProxy.lanTarget("2001:4860:4860::8888"));
+        assertNull(LoopbackProxy.lanTarget(""));
     }
 
     @Test
