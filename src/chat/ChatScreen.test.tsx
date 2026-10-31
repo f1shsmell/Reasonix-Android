@@ -7,6 +7,7 @@ import type { Connection, ConnectionSnapshot } from "../net/connection";
 import type { EventPayload } from "../wire/events";
 import type { RuntimeView } from "../wire/runtime";
 import { saveReading } from "./reading";
+import { resetTranscriptCache, scheduleSaveRows } from "./transcriptCache";
 
 vi.mock("../native/speech", () => ({
   speechSupported: () => true,
@@ -30,6 +31,9 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   localStorage.clear();
+  // The cache is module state: rows saved by an earlier test would hydrate
+  // the next one and break every empty/loading assertion.
+  resetTranscriptCache();
 });
 
 afterEach(() => {
@@ -37,6 +41,7 @@ afterEach(() => {
   root = null;
   container.remove();
   localStorage.clear();
+  resetTranscriptCache();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -193,6 +198,44 @@ describe("ChatScreen history", () => {
     await flush();
 
     expect(container.textContent).toContain("还没有消息");
+  });
+
+  it("repaints the cached conversation instead of waiting on the read", async () => {
+    // The point of the cache: the rows the screen drew last time are on
+    // screen before the history request returns.
+    scheduleSaveRows("r1", [
+      { kind: "user", id: "u1", text: "缓存里的问题" },
+      { kind: "assistant", id: "a1", text: "缓存里的回答", reasoning: "", streaming: false },
+    ]);
+
+    let resolve: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/todos")) return Promise.resolve(json([]));
+        return new Promise<Response>((done) => (resolve = done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+
+    expect(container.textContent).toContain("缓存里的问题");
+    expect(container.textContent).not.toContain("正在读这个会话");
+
+    await act(async () => {
+      resolve(
+        json([
+          { role: "user", content: "缓存里的问题", msgIndex: 1 },
+          { role: "assistant", content: "缓存里的回答", msgIndex: 2 },
+        ]),
+      );
+      await Promise.resolve();
+    });
+
+    // The read replaces the cache rather than prefixing it — the cache IS the
+    // earlier history, so a merge would draw the conversation twice.
+    expect(container.textContent.split("缓存里的问题")).toHaveLength(2);
   });
 });
 

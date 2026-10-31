@@ -31,6 +31,7 @@ import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
 import type { Row, Transcript } from "./transcript";
+import { dropCachedRows, loadCachedRows, scheduleSaveRows } from "./transcriptCache";
 import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "./Rows";
 import type { PromptHandlers } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
@@ -341,6 +342,24 @@ const RowView = memo(function RowView({
 });
 
 /**
+ * Rows the read cannot reconstruct, kept across any replacement.
+ *
+ * A row still streaming has no earlier half in history; a pending prompt is
+ * connection state the kernel still owes a receipt for; an unconfirmed send
+ * may still confirm. The same set serves the gap reload and the cache
+ * hydration: both put kernel rows under whatever this screen holds that the
+ * kernel does not know the screen has seen.
+ */
+function keepUnconfirmed(row: Row): boolean {
+  return (
+    (row.kind === "assistant" && row.streaming) ||
+    (row.kind === "ask" && row.pending) ||
+    (row.kind === "approval" && row.pending) ||
+    (row.kind === "user" && row.local === true)
+  );
+}
+
+/**
  * The transcript on screen: the stored conversation, then the live stream.
  *
  * Both are needed and neither stands alone. The kernel answers a first
@@ -351,7 +370,9 @@ const RowView = memo(function RowView({
  *
  * History is folded in as a prefix rather than replacing what is there: a frame
  * that landed while the read was in flight must not be thrown away, and it must
- * not end up above the messages it follows.
+ * not end up above the messages it follows. The cached copy of the last drawn
+ * rows paints first, and the read — still the authority — replaces it when it
+ * lands.
  */
 function useTranscript(
   snapshot: ConnectionSnapshot,
@@ -367,9 +388,38 @@ function useTranscript(
   const [history, setHistory] = useState<"loading" | "loaded" | "failed">("loading");
   const [reloadToken, setReloadToken] = useState(0);
   const loadedBase = useRef<string | null>(null);
+  /**
+   * The two cache handshakes. `hydrated` says the cached rows are already on
+   * screen for this conversation, so the history read must replace them rather
+   * than prefix them (the cache IS the earlier history — prefixing it would
+   * draw the conversation twice). `historyDone` says the read has settled, so
+   * a cache read that finishes after it is stale and must be dropped.
+   */
+  const hydrated = useRef(false);
+  const historyDone = useRef(false);
   const lastEvent = snapshot.lastEvent;
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), []);
+
+  // Paint the cached conversation before the history read lands. The read
+  // still runs — the cache is the speed, the kernel is the truth — so a stale
+  // copy survives at most until the response arrives.
+  useEffect(() => {
+    if (!base) return;
+    let cancelled = false;
+    hydrated.current = false;
+    historyDone.current = false;
+    void loadCachedRows(runtimeId).then((cached) => {
+      if (cancelled || !cached || historyDone.current) return;
+      hydrated.current = true;
+      setTranscript((current) =>
+        current.rows.length === 0 ? { ...current, rows: cached } : { ...current, rows: [...cached, ...current.rows] },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, runtimeId]);
 
   useEffect(() => {
     if (!base) return;
@@ -377,19 +427,35 @@ function useTranscript(
     const switched = loadedBase.current !== base;
     loadedBase.current = base;
     if (switched) {
+      hydrated.current = false;
+      historyDone.current = false;
       setTranscript(emptyTranscript);
       setHistory("loading");
     }
     void loadHistory(base).then((result) => {
       if (cancelled) return;
+      historyDone.current = true;
       if (!result.ok) {
         setHistory("failed");
         return;
       }
       if (switched) {
-        // Prefix the snapshot: a frame that landed while the read was in
-        // flight must not be thrown away or moved above its own turn.
-        setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+        if (hydrated.current) {
+          // The cache is on screen: the read replaces it, keeping only what
+          // the kernel does not know about yet. A prefix merge would stack the
+          // same conversation twice.
+          setTranscript((current) => ({
+            ...current,
+            rows: [
+              ...result.rows,
+              ...current.rows.filter(keepUnconfirmed),
+            ],
+          }));
+        } else {
+          // Prefix the snapshot: a frame that landed while the read was in
+          // flight must not be thrown away or moved above its own turn.
+          setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+        }
       } else {
         // A gap reload is a replacement, not a prefix. A row still streaming
         // is kept because its remaining deltas have no earlier half; a pending
@@ -399,13 +465,7 @@ function useTranscript(
           ...current,
           rows: [
             ...result.rows,
-            ...current.rows.filter(
-              (row) =>
-                (row.kind === "assistant" && row.streaming) ||
-                (row.kind === "ask" && row.pending) ||
-                (row.kind === "approval" && row.pending) ||
-                (row.kind === "user" && row.local === true),
-            ),
+            ...current.rows.filter(keepUnconfirmed),
           ],
           gap: false,
         }));
@@ -421,6 +481,18 @@ function useTranscript(
     if (!lastEvent) return;
     setTranscript((current) => reduce(current, lastEvent));
   }, [lastEvent]);
+
+  // Keep the copy current. The cache holds what the screen shows, streaming
+  // rows included; the history read overwrites them the moment it lands. A
+  // gap means the phone missed a stretch — what is on screen is not the
+  // conversation, and caching it would redraw the hole tomorrow.
+  useEffect(() => {
+    if (transcript.gap === true) {
+      dropCachedRows(runtimeId);
+      return;
+    }
+    scheduleSaveRows(runtimeId, transcript.rows);
+  }, [runtimeId, transcript.rows]);
 
   return { transcript, history, reload, setTranscript };
 }
