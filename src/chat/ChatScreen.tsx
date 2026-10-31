@@ -42,6 +42,7 @@ import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
 import { CheckpointsSheet } from "./CheckpointsSheet";
+import { QueueSheet } from "./QueueSheet";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -182,6 +183,7 @@ function HeadMenu({
   onModel,
   onApproval,
   onCheckpoints,
+  onQueue,
 }: {
   model: string;
   approval: string;
@@ -190,6 +192,7 @@ function HeadMenu({
   onModel: () => void;
   onApproval: () => void;
   onCheckpoints: () => void;
+  onQueue: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -224,6 +227,12 @@ function HeadMenu({
             <button type="button" onClick={onApproval}>
               <span>工具批准</span>
               <small>{approvalLabel(approval) || "读不到当前模式"}</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onQueue}>
+              <span>排队</span>
+              <small>这一轮结束后要发的消息</small>
             </button>
           </li>
           <li>
@@ -624,6 +633,8 @@ export function ChatScreen({
   const [approval, setApproval] = useState("");
   /** What the kernel said about the last message sent into a running turn. */
   const [inboxNote, setInboxNote] = useState("");
+  /** Whether the queued messages are on screen. */
+  const [queueSheet, setQueueSheet] = useState(false);
   /** Plan mode as the kernel reports it; undefined until the first read. */
   const [plan, setPlan] = useState<boolean | undefined>(undefined);
   /** The model `/status` names, until a live turn names one in the transcript. */
@@ -1297,7 +1308,14 @@ export function ChatScreen({
         </div>
       ) : inboxNote ? (
         <div className="inbox-note" role="status">
-          <span>{inboxNote}</span>
+          <button
+            type="button"
+            className="inbox-note-open"
+            onClick={() => setQueueSheet(true)}
+            aria-label="查看排队列表"
+          >
+            {inboxNote}
+          </button>
           <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
             ×
           </button>
@@ -1479,6 +1497,10 @@ export function ChatScreen({
             setHeadMenu(false);
             setCheckpointsSheet(true);
           }}
+          onQueue={() => {
+            setHeadMenu(false);
+            setQueueSheet(true);
+          }}
         />
       ) : null}
 
@@ -1500,6 +1522,10 @@ export function ChatScreen({
           onClose={() => setCheckpointsSheet(false)}
           onRewound={() => reload()}
         />
+      ) : null}
+
+      {queueSheet && runtime ? (
+        <QueueSheet base={runtime.base} onClose={() => setQueueSheet(false)} />
       ) : null}
 
       {process ? (
