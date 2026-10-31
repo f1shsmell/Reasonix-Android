@@ -19,8 +19,9 @@
   overflow-x: hidden;
   /* The inset is whichever source answers: Android WebView reports zero for
      env() on many devices, while Capacitor's SystemBars plugin measures the
-     bars natively and injects them as --safe-area-inset-*. Without the max(),
-     the home title draws under the status bar clock. */
+     bars natively and injects them as --safe-area-inset-* (capacitor.config.ts
+     pins the mode that writes them). Without the max(), this page's title bar
+     draws under the status bar clock. */
   padding: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px)) var(--pad)
     calc(24px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
   background: transparent;

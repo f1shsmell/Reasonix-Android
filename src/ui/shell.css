@@ -1,3 +1,8 @@
+/* The system bars are padded from whichever source reports a real inset:
+   `env()` where the WebView answers it, and Capacitor's injected
+   `--safe-area-inset-*` where it does not (Android WebView returns zeroes on
+   many devices). The injected variables only exist while
+   `plugins.SystemBars.insetsHandling` stays "css" — see capacitor.config.ts. */
 .shell {
   display: flex;
   flex-direction: column;
