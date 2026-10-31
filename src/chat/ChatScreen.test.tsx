@@ -254,6 +254,75 @@ describe("ChatScreen history", () => {
     expect(container.textContent.split("缓存里的问题")).toHaveLength(2);
   });
 
+  it("drops a cached streaming bubble that history has finished — no ghost answer", async () => {
+    // Reported on a device: a turn still streaming when the pane was closed
+    // reopens with the answer drawn twice. The cache flushed the bubble
+    // mid-turn (streaming: true), history carries the finished message, and
+    // keepUnconfirmed alone preserves both. A genuinely running turn is
+    // unaffected: history carries settled messages only, so no prefix match.
+    scheduleSaveRows(["r1"], [
+      { kind: "assistant", id: "a-ghost", text: "这段回答出现过两次", reasoning: "", streaming: true },
+    ]);
+
+    let resolve: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/todos")) return Promise.resolve(json([]));
+        return new Promise<Response>((done) => (resolve = done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+
+    // The streamed half painted from the cache, ghost included.
+    expect(container.textContent).toContain("这段回答出现过两次");
+
+    await act(async () => {
+      resolve(
+        json([
+          { role: "user", content: "问题", msgIndex: 1 },
+          { role: "assistant", content: "这段回答出现过两次，以及后文", msgIndex: 2 },
+        ]),
+      );
+      await Promise.resolve();
+    });
+
+    // History's finished copy stays, the streaming ghost is dropped: exactly
+    // one draw now.
+    expect(container.textContent.split("这段回答出现过两次")).toHaveLength(2);
+  });
+
+  it("keeps a cached streaming bubble when history has no finished copy — a turn still running", async () => {
+    // The turn is genuinely live: no settled message in history matches, so
+    // the streamed text must survive the replace and keep absorbing deltas.
+    scheduleSaveRows(["r1"], [
+      { kind: "assistant", id: "a-live", text: "仍在生成的回答前半", reasoning: "", streaming: true },
+    ]);
+
+    let resolve: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/todos")) return Promise.resolve(json([]));
+        return new Promise<Response>((done) => (resolve = done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+
+    await act(async () => {
+      resolve(
+        json([{ role: "user", content: "问题", msgIndex: 1 }]),
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("仍在生成的回答前半");
+  });
+
   it("paints the cache before /runtimes answers, and says so", async () => {
     // `base` comes from `GET /runtimes`, which is the slowest thing on a bad
     // network. The cache exists to paint before that lands, so it must not be

@@ -389,6 +389,33 @@ function keepUnconfirmed(row: Row): boolean {
 }
 
 /**
+ * Cached rows history has already superseded, by id.
+ *
+ * A bubble that was still streaming when the pane was last closed is the
+ * ghost: the cache flushed it mid-turn, the kernel has since finished the
+ * turn, and the history read now carries the finished message. Keeping the
+ * streaming copy as "unconfirmed" draws the same answer twice — seen on a
+ * device once history loaded reliably enough for the replace path to run.
+ *
+ * A turn that is genuinely still running has no finished copy in history
+ * (`/history` carries settled messages only), so a prefix match is what
+ * separates the ghost from a turn to be continued: streamed deltas only ever
+ * append, so the streamed text is a prefix of the finished one. At most one
+ * turn streams at a time, so the scan is one pass for a single candidate.
+ */
+function ghostedByHistory(current: Row[], history: Row[]): Set<string> {
+  const ghosts = new Set<string>();
+  for (const row of current) {
+    if (row.kind !== "assistant" || !row.streaming) continue;
+    const streamed = row.text;
+    if (history.some((h) => h.kind === "assistant" && h.text.startsWith(streamed))) {
+      ghosts.add(row.id);
+    }
+  }
+  return ghosts;
+}
+
+/**
  * The transcript on screen: the stored conversation, then the live stream.
  *
  * Both are needed and neither stands alone. The kernel answers a first
@@ -490,14 +517,18 @@ function useTranscript(
         if (hydrated.current) {
           // The cache is on screen: the read replaces it, keeping only what
           // the kernel does not know about yet. A prefix merge would stack the
-          // same conversation twice.
-          setTranscript((current) => ({
-            ...current,
-            rows: [
-              ...result.rows,
-              ...current.rows.filter(keepUnconfirmed),
-            ],
-          }));
+          // same conversation twice, and a cached bubble history has already
+          // finished is the ghost the phone drew twice.
+          setTranscript((current) => {
+            const ghosts = ghostedByHistory(current.rows, result.rows);
+            return {
+              ...current,
+              rows: [
+                ...result.rows,
+                ...current.rows.filter((row) => !ghosts.has(row.id) && keepUnconfirmed(row)),
+              ],
+            };
+          });
         } else {
           // Prefix the snapshot: a frame that landed while the read was in
           // flight must not be thrown away or moved above its own turn.
