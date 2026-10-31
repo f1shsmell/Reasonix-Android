@@ -36,8 +36,17 @@ const config: CapacitorConfig = {
     // the opposite, which pushes the whole page below the status bar for the
     // first frames of a cold start. The hint skips that jump; the plugin
     // still corrects itself if the meta tag ever changes.
+    //
+    // `insetsHandling: "css"` is already the 8.x default, and is written out
+    // because the stylesheets depend on it: `src/ui/*.css` pads with
+    // `max(env(safe-area-inset-*), var(--safe-area-inset-*))`, and only the
+    // "css" mode injects those variables (SystemBars.injectSafeAreaCSS
+    // returns early otherwise). Capacitor 9 plans to default this to
+    // "native", which would drop the variables and silently send every page
+    // back to the env() values that read zero on many Android WebViews.
     SystemBars: {
       initialViewportFitValueHint: "cover",
+      insetsHandling: "css",
     },
   },
 };

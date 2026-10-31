@@ -661,6 +661,37 @@ would appear in another. A successful `submit` clears the key before clearing
 the composer. The mount effect re-runs `grow` after restoring a multi-line
 draft. Do not replace this with a single `draft` state in `App`.
 
+### Safe-area padding has two sources, and the config picks one
+
+`src/ui/{shell,chat,connect}.css`. Android `targetSdk 35+` draws the app
+edge-to-edge, and Android WebView answers zeroes for `env(safe-area-inset-*)`
+on many devices — the home title sat under the status-bar clock and the
+composer on the gesture bar. Every such rule now reads
+`max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px))`: whichever
+source reports a real inset wins, and the `max()` means the change is a no-op
+where `env()` already worked.
+
+The `--safe-area-inset-*` half is written by Capacitor's bundled `SystemBars`
+plugin on each inset dispatch, and **only** while `insetsHandling` is `"css"`
+— `SystemBars.injectSafeAreaCSS` returns early otherwise, with no error.
+`capacitor.config.ts` therefore states `insetsHandling: "css"` explicitly even
+though it is the 8.x default: Capacitor 9 plans to default it to `"native"`,
+and a version bump alone would drop the variables and silently restore the
+original bug on exactly the devices it was fixed for.
+
+`initialViewportFitValueHint: "cover"` belongs to the same fix — without it the
+plugin spends the first frames of a cold start assuming the page is *not*
+`viewport-fit=cover` and pushes the whole page below the status bar before
+correcting itself.
+
+Both branches of the plugin are safe to combine with this CSS: the passthrough
+branch pads the decor view with zero and injects the real values, and the
+native-padding branch injects zeroes after padding natively, so `max()` never
+double-counts.
+
+Horizontal insets (`left`/`right`, a landscape notch) are **not** covered;
+that gap predates this fix and no page pads for it yet.
+
 ### Android back is a navigation action, not an exit
 
 `App` listens for Capacitor's `backButton`: the connect overlay closes, then a
@@ -695,9 +726,12 @@ working provider, driven by the app's own modules rather than by curl):
 
 - **Layout has not been systematically reviewed on a phone.** The phone build
   has run on a physical device and the component tests mount real components,
-  but scrolling under a finger, the software keyboard, safe areas, rotation
-  and tap targets are still hypotheses. The todo panel's collapsed row, 34 vh
-  cap and sub-step indent are claims about CSS.
+  but scrolling under a finger, the software keyboard, rotation and tap targets
+  are still hypotheses. The todo panel's collapsed row, 34 vh cap and sub-step
+  indent are claims about CSS. Safe-area padding got a targeted fix (above)
+  after a device drew the home title under the status-bar clock; whether that
+  fix holds on the device that reported it has not been recorded, and
+  horizontal insets are still unhandled.
 - **The transcript is never scrolled under a real finger.** `atBottom` is
   asserted only by reading the code.
 - **The relay channel has not been exercised end to end.** The protocol is
