@@ -44,10 +44,48 @@ export interface InboxItem {
   id: string;
   intent: InboxIntent | string;
   state: string;
+  /** One line the kernel already cut to ~120 characters. */
   preview: string;
   /** Present when the item cannot run yet, e.g. `steer_unapplied`. */
   blockReason?: string;
+  /** The host's dotted identity for a block; `blockReason` is its wording. */
+  blockCode?: string;
   images?: boolean;
+  /** RFC 3339, as the kernel writes `time.Time`. */
+  createdAt?: string;
+  /** The frozen body's size, so a huge item reads as huge before opening it. */
+  byteSize?: number;
+  /** References the item froze at enqueue time. */
+  refs?: InboxRef[];
+}
+
+/** One `@`-reference a queued item froze when it was written. */
+export interface InboxRef {
+  kind: string;
+  path?: string;
+  displayPath?: string;
+  bytes?: number;
+}
+
+/**
+ * The full body of one queued item.
+ *
+ * The list carries only a `preview`, so reading what was actually queued is a
+ * second request. It is kept separate from `InboxItem` because the body can be
+ * megabytes of text and is only worth fetching once someone asks to see it.
+ */
+export interface InboxDetail {
+  item: InboxItem;
+  /** What the person typed, as the composer showed it. */
+  displayText: string;
+  /** What the model will read; differs when the line carried skill chips. */
+  submitText: string;
+  format?: string;
+  refs?: InboxRef[];
+  /** Images frozen for direct input, already authorized data URLs. */
+  images?: string[];
+  /** References the kernel could not resolve, in its own words. */
+  referenceErrors?: string[];
 }
 
 export interface InboxSnapshot {
@@ -66,6 +104,22 @@ export type InboxRead =
   | { ok: true; snapshot: InboxSnapshot }
   | { ok: false; code: string };
 
+function refsOf(value: unknown): InboxRef[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: InboxRef[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.kind !== "string" || !row.kind) continue;
+    const ref: InboxRef = { kind: row.kind };
+    if (typeof row.path === "string" && row.path) ref.path = row.path;
+    if (typeof row.displayPath === "string" && row.displayPath) ref.displayPath = row.displayPath;
+    if (typeof row.bytes === "number" && Number.isFinite(row.bytes)) ref.bytes = row.bytes;
+    out.push(ref);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function item(value: unknown): InboxItem | null {
   if (value === null || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
@@ -77,7 +131,12 @@ function item(value: unknown): InboxItem | null {
     preview: typeof row.preview === "string" ? row.preview : "",
   };
   if (typeof row.blockReason === "string" && row.blockReason) out.blockReason = row.blockReason;
+  if (typeof row.blockCode === "string" && row.blockCode) out.blockCode = row.blockCode;
   if (row.images === true) out.images = true;
+  if (typeof row.createdAt === "string" && row.createdAt) out.createdAt = row.createdAt;
+  if (typeof row.byteSize === "number" && Number.isFinite(row.byteSize)) out.byteSize = row.byteSize;
+  const refs = refsOf(row.refs);
+  if (refs) out.refs = refs;
   return out;
 }
 
@@ -162,6 +221,71 @@ export async function loadInbox(base: string): Promise<InboxRead> {
           : [],
       },
     };
+  } catch {
+    return { ok: false, code: "client.offline" };
+  }
+}
+
+export type InboxDetailRead = { ok: true; detail: InboxDetail } | { ok: false; code: string };
+
+/**
+ * The full body of one queued item.
+ *
+ * `GET /inbox/items/{id}` answers `{meta, envelope}`. The envelope carries
+ * three spellings of the same line — what the composer showed, what was typed,
+ * and what the model reads — and they only differ when the line carried skill
+ * chips. Showing `displayText` and sending `submitText` is the point of
+ * keeping them apart, so the detail keeps both.
+ */
+export async function loadInboxItem(base: string, id: string): Promise<InboxDetailRead> {
+  if (!id) return { ok: false, code: "inbox.shape" };
+  try {
+    const response = await fetchWithTimeout(
+      `${base}/inbox/items/${encodeURIComponent(id)}`,
+      { credentials: "same-origin" },
+      12_000,
+    );
+    if (!response.ok) {
+      try {
+        const body = (await response.json()) as { code?: unknown };
+        if (body && typeof body === "object" && typeof body.code === "string") {
+          return { ok: false, code: body.code };
+        }
+      } catch {
+        // A refusal that is not JSON still has an HTTP status.
+      }
+      return { ok: false, code: `http.${response.status}` };
+    }
+    const body = (await response.json()) as Record<string, unknown>;
+    const meta = item(body.meta);
+    if (meta === null) return { ok: false, code: "inbox.shape" };
+    const envelope =
+      body.envelope !== null && typeof body.envelope === "object"
+        ? (body.envelope as Record<string, unknown>)
+        : {};
+    const text = (key: string): string =>
+      typeof envelope[key] === "string" ? (envelope[key] as string) : "";
+    const detail: InboxDetail = {
+      item: meta,
+      // An older writer stored only `submitText`; the fallbacks keep such an
+      // item readable instead of drawing an empty sheet.
+      displayText: text("displayText") || text("rawText") || text("submitText"),
+      submitText: text("submitText") || text("rawText") || text("displayText"),
+    };
+    if (typeof envelope.format === "string" && envelope.format) detail.format = envelope.format;
+    const refs = refsOf(envelope.refs);
+    if (refs) detail.refs = refs;
+    if (Array.isArray(envelope.frozenImages)) {
+      const images = envelope.frozenImages.filter((url): url is string => typeof url === "string");
+      if (images.length > 0) detail.images = images;
+    }
+    if (Array.isArray(envelope.referenceErrors)) {
+      const errors = envelope.referenceErrors.filter(
+        (line): line is string => typeof line === "string" && line.trim() !== "",
+      );
+      if (errors.length > 0) detail.referenceErrors = errors;
+    }
+    return { ok: true, detail };
   } catch {
     return { ok: false, code: "client.offline" };
   }
