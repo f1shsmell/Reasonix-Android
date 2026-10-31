@@ -800,6 +800,16 @@ pre.frame {
   background: transparent;
 }
 
+.iconbtn .studio-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.chev .studio-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .iconbtn:active:not(:disabled) {
   background: var(--line-soft);
   transform: scale(0.9);

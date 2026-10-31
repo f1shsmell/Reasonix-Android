@@ -267,7 +267,9 @@ function text(): string {
 
 function click(label: string): void {
   const found = Array.from(container.querySelectorAll("button")).find(
-    (candidate) => candidate.textContent?.trim() === label,
+    (candidate) =>
+      candidate.textContent?.trim() === label ||
+      candidate.getAttribute("aria-label") === label,
   );
   if (!found) throw new Error(`no button labelled ${label}`);
   act(() => found.click());
@@ -602,7 +604,7 @@ describe("App", () => {
 
   it("starts a new conversation from the home plus after choosing a project", async () => {
     await renderApp();
-    click("＋");
+    click("新建会话");
     const sheet = container.querySelector(".sheet");
     expect(sheet).toBeTruthy();
     expect(sheet?.textContent).toContain("在哪个项目新建");
@@ -639,7 +641,7 @@ describe("App", () => {
 
   it("opens settings over the list and closes them without losing the list", async () => {
     await renderApp();
-    click("⚙");
+    click("连接与账号");
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
 
     click("close");
@@ -649,7 +651,7 @@ describe("App", () => {
   it("uses Android back to close settings, then a chat, then a project, then exits", async () => {
     await renderApp();
 
-    click("⚙");
+    click("连接与账号");
     await settle();
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
     act(() => appMock.back?.());
