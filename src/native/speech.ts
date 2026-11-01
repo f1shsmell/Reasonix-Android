@@ -21,7 +21,7 @@ interface SpeechEvents {
 }
 
 interface SpeechPlugin {
-  listen(options: { language?: string }): Promise<{ session?: number }>;
+  listen(options: { language?: string }): Promise<{ session?: number; reason?: string }>;
   stop(options?: { session?: number }): Promise<void>;
   cancel(options?: { session?: number }): Promise<void>;
   addListener(
@@ -97,13 +97,17 @@ let owner: SpeechHold | null = null;
 /**
  * Hold-to-talk dictation.
  *
- * Resolves with the hold once the recognizer is listening, or with `null`
- * when there is no recognizer or the person denied the microphone — the
- * composer shows its own hint rather than a flash. Events stream into
- * `state` and `onChange`; the hold ends with `state.ended` set and one last
- * `onChange`, carrying `state.error` when it failed.
+ * Resolves with the hold once the recognizer is listening. Resolves with
+ * `{ hold: null, reason: "denied" }` when the person refused the microphone
+ * and `{ hold: null, reason: "no-service" }` when the phone has none — the
+ * composer can then point at Settings instead of claiming a dead phone.
+ * Events stream into `state` and `onChange`; the hold ends with
+ * `state.ended` set and one last `onChange`, carrying `state.error` when
+ * it failed.
  */
-export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | null> {
+export async function beginSpeechHold(
+  onChange: Listener,
+): Promise<{ hold: SpeechHold; reason?: undefined } | { hold: null; reason: "denied" | "no-service" }> {
   if (owner) owner.abandon();
 
   const state: SpeechSession = {
@@ -118,7 +122,6 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
   let session: number | null = null;
   let finished = false;
   let finishTimer: ReturnType<typeof setTimeout> | null = null;
-  const handles: PluginListenerHandle[] = [];
   // The service can talk the moment listen() resolves — ready and volume
   // events race the resolve itself. Listeners go up first and hold what
   // arrives before the session id is known, then it is replayed.
@@ -137,7 +140,6 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
     for (const handle of handles) void handle.remove();
     onChange(state);
   };
-
   const apply = (event: keyof SpeechEvents, data: Record<string, unknown>): void => {
     switch (event) {
       case "ready":
@@ -163,15 +165,15 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
     onChange(state);
   };
 
-  for (const event of Object.keys({
-    ready: 0,
-    partial: 0,
-    final: 0,
-    volume: 0,
-    recerror: 0,
-  }) as (keyof SpeechEvents)[]) {
-    handles.push(
-      await plugin.addListener(event, (data) => {
+  const handles = await Promise.all(
+    (Object.keys({
+      ready: 0,
+      partial: 0,
+      final: 0,
+      volume: 0,
+      recerror: 0,
+    }) as (keyof SpeechEvents)[]).map((event) =>
+      plugin.addListener(event, (data) => {
         // A session that outlived its screen, or a second screen's, is not
         // ours. Before listen() resolves we cannot tell yet, so it waits.
         if (session === null) {
@@ -182,21 +184,20 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
         if (finished) return;
         apply(event, data);
       }),
-    );
-  }
+    ),
+  );
 
   const started = await plugin.listen({ language: navigator.language || "zh-CN" });
   if (started.session == null) {
     // No recognizer, or a refused prompt. Nothing was delivered for this
-    // hold; tear the listeners down and let the composer stay quiet.
+    // hold; tear the listeners down and say which it was.
     for (const handle of handles) void handle.remove();
-    return null;
+    return { hold: null, reason: started.reason === "denied" ? "denied" : "no-service" };
   }
   session = started.session;
   for (const { event, data } of buffered.splice(0)) {
     if (Number(data.session ?? -1) === session && !finished) apply(event, data);
   }
-  if (finished) return null;
 
   const hold: SpeechHold = {
     session,
@@ -212,6 +213,9 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
     release() {
       if (finished) return;
       if (state.cancelArmed) {
+        // A cancelled hold discards what was heard; the composer must not
+        // find transcript text to append after the fact.
+        state.transcript = "";
         finish();
         return;
       }
@@ -233,5 +237,5 @@ export async function beginSpeechHold(onChange: Listener): Promise<SpeechHold | 
     },
   };
   owner = hold;
-  return hold;
+  return { hold };
 }

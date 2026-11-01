@@ -790,6 +790,9 @@ export function ChatScreen({
   const [voice, setVoice] = useState<SpeechSession | null>(null);
   const voiceHold = useRef<SpeechHold | null>(null);
   const voiceStartY = useRef(0);
+  /** A press whose hold is still being created; the release may land first. */
+  const voicePending = useRef(false);
+  const voiceReleaseQueued = useRef(false);
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
   );
@@ -1071,25 +1074,38 @@ export function ChatScreen({
 
   /** Press-and-hold to talk; slide up to throw the sentence away. */
   const voiceDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (voiceHold.current) return;
+    if (voiceHold.current || voicePending.current) return;
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
       // A WebView without pointer capture drops the move/up once the finger
       // leaves the button; the window listener below ends the hold anyway.
-      const up = () => voiceHold.current?.release();
+      const up = () => voiceUpRef.current();
       window.addEventListener("pointerup", up, { once: true });
       window.addEventListener("pointercancel", up, { once: true });
     }
     voiceStartY.current = event.clientY;
+    voicePending.current = true;
+    voiceReleaseQueued.current = false;
     setPromptError("");
-    void beginSpeechHold(voiceChange).then((hold) => {
-      if (!hold) {
-        setPromptError("这个手机没有可用的语音服务");
+    void beginSpeechHold(voiceChange).then((result) => {
+      voicePending.current = false;
+      if (!result.hold) {
+        setPromptError(
+          result.reason === "denied"
+            ? "麦克风权限被拒绝，到系统设置里打开后重试"
+            : "这个手机没有可用的语音服务",
+        );
         return;
       }
-      voiceHold.current = hold;
-      setVoice({ ...hold.state });
+      voiceHold.current = result.hold;
+      setVoice({ ...result.hold.state });
+      // The finger came up while the hold was still being created: a tap,
+      // or a very short word. Release now instead of sticking the hold.
+      if (voiceReleaseQueued.current) {
+        voiceReleaseQueued.current = false;
+        result.hold.release();
+      }
     });
   }, [voiceChange]);
 
@@ -1098,8 +1114,17 @@ export function ChatScreen({
   }, []);
 
   const voiceUp = useCallback(() => {
+    if (voicePending.current) {
+      // The hold does not exist yet; remember the release for when it does.
+      voiceReleaseQueued.current = true;
+      return;
+    }
     voiceHold.current?.release();
   }, []);
+  // The fallback window listener must see the latest voiceUp, not the one
+  // captured when it was registered.
+  const voiceUpRef = useRef(voiceUp);
+  voiceUpRef.current = voiceUp;
 
   useEffect(
     () => () => {

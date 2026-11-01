@@ -24,16 +24,18 @@ vi.mock("../native/speech", () => ({
     };
     onChange({ ...state });
     return {
-      session: 1,
-      state,
-      move: () => {},
-      release: () => {
-        state.ended = true;
-        onChange({ ...state });
-      },
-      abandon: () => {
-        state.ended = true;
-        onChange({ ...state });
+      hold: {
+        session: 1,
+        state,
+        move: () => {},
+        release: () => {
+          state.ended = true;
+          onChange({ ...state });
+        },
+        abandon: () => {
+          state.ended = true;
+          onChange({ ...state });
+        },
       },
     };
   }),

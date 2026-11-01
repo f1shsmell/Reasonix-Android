@@ -2,23 +2,21 @@ package com.reasonix.mobile;
 
 import android.Manifest;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 
-import androidx.core.content.ContextCompat;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
-import com.getcapacitor.annotation.PermissionCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Dictation through the phone's own recognizer, in-process.
@@ -28,7 +26,14 @@ import java.util.ArrayList;
  * wait. A SpeechRecognizer instance streams instead: partial results arrive
  * as the person speaks, and RMS level callbacks drive the waveform. The
  * recognizer needs RECORD_AUDIO, granted here through Capacitor's alias
- * flow; a denial resolves with granted=false so the page can say why.
+ * flow; a denial resolves with reason "denied" so the page can point at
+ * Settings instead of claiming the phone has no recognizer.
+ *
+ * Capacitor runs @PluginMethod bodies on its own handler thread, while
+ * SpeechRecognizer must be created and driven from the main thread (a hard
+ * requirement since API 31), so every recognizer call hops once. The
+ * listener's callbacks then arrive on the main thread; notifyListeners is
+ * safe to call from there.
  *
  * One plugin instance exists while every page generation registers its own
  * listeners, so each listen() mints a session id and every event carries it;
@@ -45,14 +50,14 @@ public class SpeechPlugin extends Plugin {
     private static final long LEVEL_INTERVAL_MS = 80;
 
     private SpeechRecognizer recognizer;
-    private RecognitionListener listener;
-    private int session;
+    private final AtomicInteger sessions = new AtomicInteger();
+    /** Read and written on the main thread only, next to the callbacks. */
     private long lastLevelAt;
 
     @PluginMethod
     public void listen(PluginCall call) {
         if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
-            call.resolve(unavailable());
+            call.resolve(unavailable("no-service"));
             return;
         }
         if (!hasRequiredPermissions()) {
@@ -65,7 +70,7 @@ public class SpeechPlugin extends Plugin {
     @PermissionCallback
     private void micResult(PluginCall call) {
         if (!hasRequiredPermissions()) {
-            call.resolve(unavailable());
+            call.resolve(unavailable("denied"));
             return;
         }
         start(call);
@@ -75,18 +80,21 @@ public class SpeechPlugin extends Plugin {
     public void stop(PluginCall call) {
         // stopListening lets the service flush its final result; the page
         // shows a finishing state until that final event arrives.
-        if (recognizer != null) recognizer.stopListening();
+        bridge.executeOnMainThread(() -> {
+            if (recognizer != null) recognizer.stopListening();
+        });
         call.resolve();
     }
 
     @PluginMethod
     public void cancel(PluginCall call) {
-        destroyRecognizer();
+        bridge.executeOnMainThread(this::destroyRecognizer);
         call.resolve();
     }
 
     @Override
     protected void handleOnDestroy() {
+        // Activity teardown already runs on the main thread.
         destroyRecognizer();
         super.handleOnDestroy();
     }
@@ -107,9 +115,8 @@ public class SpeechPlugin extends Plugin {
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L);
 
-        int mySession = ++session;
-        lastLevelAt = 0;
-        listener = new RecognitionListener() {
+        int mySession = sessions.incrementAndGet();
+        RecognitionListener listener = new RecognitionListener() {
             private void emit(String event, JSObject payload) {
                 payload.put("session", mySession);
                 notifyListeners(event, payload);
@@ -168,11 +175,15 @@ public class SpeechPlugin extends Plugin {
             @Override
             public void onEvent(int eventType, Bundle params) {}
         };
-        recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-        recognizer.setRecognitionListener(listener);
-        recognizer.startListening(intent);
         JSObject out = new JSObject();
         out.put("session", mySession);
+        bridge.executeOnMainThread(() -> {
+            destroyRecognizer();
+            lastLevelAt = 0;
+            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer.setRecognitionListener(listener);
+            recognizer.startListening(intent);
+        });
         call.resolve(out);
     }
 
@@ -182,9 +193,10 @@ public class SpeechPlugin extends Plugin {
         return results == null || results.isEmpty() ? "" : results.get(0);
     }
 
-    private static JSObject unavailable() {
+    private static JSObject unavailable(String reason) {
         JSObject out = new JSObject();
         out.put("granted", false);
+        out.put("reason", reason);
         return out;
     }
 
@@ -192,7 +204,6 @@ public class SpeechPlugin extends Plugin {
         if (recognizer != null) {
             recognizer.destroy();
             recognizer = null;
-            listener = null;
         }
     }
 }
