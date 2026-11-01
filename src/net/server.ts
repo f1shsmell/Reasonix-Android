@@ -50,6 +50,11 @@ export interface ProxyConfig {
   vpn?: boolean;
   /** A non-VPN Wi-Fi or Ethernet interface is available for a LAN share. */
   lan?: boolean;
+  /**
+   * How the proxy reaches a LAN computer while a VPN is active. Absent on an
+   * old native build or in a browser, where the proxy itself does not exist.
+   */
+  netPolicy?: "auto" | "bypass" | "system";
   account: ProxyAccount;
 }
 
@@ -131,6 +136,22 @@ export async function refreshProxy(): Promise<ProxyConfig | null> {
   }
 }
 
+/**
+ * Tell the proxy how to reach a LAN computer while a VPN is active.
+ *
+ * The write is fire-and-forget on purpose: the proxy adopts what it receives
+ * and answers with the full config, but a phone that leaves this screen the
+ * moment it taps should not wait on the round trip. A refusal here is not
+ * shown — an old native build simply ignores the field, and the segmented
+ * control already says what it sent.
+ */
+export async function setNetworkPolicy(policy: "auto" | "bypass" | "system"): Promise<void> {
+  await request("/__reasonix/net-policy", {
+    method: "POST",
+    body: JSON.stringify({ policy }),
+  });
+}
+
 export async function startAccount(): Promise<DeviceGrant> {
   // The proxy's own connect deadline is 15 s. Giving the request a longer
   // deadline lets a stalled IPv6 route fall through to IPv4, and lets the
@@ -209,6 +230,18 @@ export async function markRelay(deviceId: string): Promise<ProxyConfig> {
 
 export async function clearRelay(): Promise<ProxyConfig> {
   return request<ProxyConfig>("/__reasonix/relay/clear", { method: "POST" });
+}
+
+/**
+ * Drop the active upstream: no origin, no relay device.
+ *
+ * Saved connections and pairing cookies survive, so reconnecting is one tap
+ * on a remembered row or one scan. This is the "断开连接" the settings screen
+ * offers; a phone that only clears the app side would leave the proxy still
+ * forwarding to a computer the person asked it to leave.
+ */
+export async function disconnectProxy(): Promise<ProxyConfig> {
+  return request<ProxyConfig>("/__reasonix/disconnect", { method: "POST" });
 }
 
 // ---- fleet: the other computers this phone listens to -------------------

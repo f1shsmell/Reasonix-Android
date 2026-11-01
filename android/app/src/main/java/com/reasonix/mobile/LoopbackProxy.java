@@ -72,6 +72,7 @@ public final class LoopbackProxy {
     private static final String KEY_RELAY_DEVICE = "relay_device";
     private static final String KEY_PROXY_SECRET = "proxy_secret";
     private static final String KEY_FLEET = "fleet";
+    private static final String KEY_NET_POLICY = "net_policy";
     /** Watching every remembered computer would make a sweep a port scan. */
     private static final int MAX_FLEET = 4;
     private static final String PROXY_COOKIE = "reasonix_loopback";
@@ -320,6 +321,12 @@ public final class LoopbackProxy {
                 case "/__reasonix/relay":
                     setRelay(socket, body);
                     return;
+                case "/__reasonix/net-policy":
+                    setNetPolicy(socket, body);
+                    return;
+                case "/__reasonix/disconnect":
+                    disconnect(socket, body);
+                    return;
                 case "/__reasonix/relay/clear":
                     prefs.edit().putString(KEY_MODE, "lan").remove(KEY_RELAY_DEVICE).apply();
                     writeJson(socket, 200, configJson().toString());
@@ -368,6 +375,8 @@ public final class LoopbackProxy {
             case "/__reasonix/account/approve":
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
+            case "/__reasonix/net-policy":
+            case "/__reasonix/disconnect":
             case "/__reasonix/relay/clear":
                 return "POST".equals(method);
             default:
@@ -580,6 +589,49 @@ public final class LoopbackProxy {
         writeJson(socket, 200, configJson().toString());
     }
 
+    /**
+     * Drop the active upstream and forget which one it was: the phone is
+     * offline until the person connects again. Saved connections and pairing
+     * cookies survive — this is a disconnect, not a factory reset.
+     */
+    private void disconnect(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONArray list;
+        try {
+            list = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));
+        } catch (JSONException e) {
+            list = new JSONArray();
+        }
+        JSONArray candidates = new JSONArray();
+        for (int i = 0; i < list.length(); i++) {
+            String value = list.optString(i, "");
+            if (!value.isEmpty()) candidates.put(value);
+        }
+        prefs.edit().remove(KEY_ORIGIN).putString(KEY_MODE, "lan")
+                .remove(KEY_RELAY_DEVICE).putString(KEY_CANDIDATES, candidates.toString()).apply();
+        writeJson(socket, 200, configJson().toString());
+    }
+
+    /**
+     * Adopt the UI's choice of network policy. Only the three known values
+     * are accepted: a client that invents one would silently widen what the
+     * connection code has to decide between.
+     */
+    private void setNetPolicy(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String policy = request.optString("policy", "").trim();
+        if (!isValidNetPolicy(policy)) {
+            writeJson(socket, 400, "{\"code\":\"proxy.bad_policy\"}");
+            return;
+        }
+        prefs.edit().putString(KEY_NET_POLICY, policy).apply();
+        writeJson(socket, 200, configJson().toString());
+    }
+
+    /** The values the connection code knows how to honour. */
+    static boolean isValidNetPolicy(String policy) {
+        return policy.equals("auto") || policy.equals("bypass") || policy.equals("system");
+    }
+
     private void accountGrant(Socket socket, byte[] body) throws IOException, JSONException {
         String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
         if (token.isEmpty()) {
@@ -664,20 +716,33 @@ public final class LoopbackProxy {
      * a network with no path to it and times out, while the tunnel that could
      * have carried it sits idle. Deciding by subnet rather than by "is this
      * address private" is what keeps the two apart.
+     *
+     * The net policy setting narrows or widens that behaviour: "bypass" keeps
+     * the private-route path even without a VPN, "system" leaves every
+     * connection on the default route so a chosen proxy sees LAN traffic too.
+     * "auto" — the default — is the paragraph above.
      */
     private HttpURLConnection openKernelConnection(URI uri) throws IOException {
+        String policy = prefs.getString(KEY_NET_POLICY, "auto");
         InetAddress target = lanTarget(uri.getHost());
-        if (target == null) {
+        if ("system".equals(policy) || target == null) {
             return (HttpURLConnection) uri.toURL().openConnection();
         }
-        Network local = lanNetwork(target);
+        Network local = "bypass".equals(policy) ? lanNetwork(target) : null;
+        if (local == null) {
+            // auto: bind only when the target is a neighbour of the Wi-Fi, so
+            // a mesh-VPN address rides the tunnel instead of a dead route.
+            local = vpnActive() ? null : lanNetwork(target);
+        }
         if (local != null) {
             return (HttpURLConnection) local.openConnection(uri.toURL());
         }
-        // Not on any directly attached subnet: only the tunnel (or whatever
-        // the default route is) can reach it. Still bypass an HTTP proxy, which
-        // would answer for a private address it cannot see.
-        return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
+        if ("auto".equals(policy) && !vpnActive()) {
+            // Not on any directly attached subnet, no VPN: an HTTP proxy would
+            // answer for a private address it cannot see, so bypass it.
+            return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
+        }
+        return (HttpURLConnection) uri.toURL().openConnection();
     }
 
     /** The IP a LAN share uses, or null for an internet host. */
@@ -808,6 +873,7 @@ public final class LoopbackProxy {
         out.put("relayDevice", prefs.getString(KEY_RELAY_DEVICE, ""));
         out.put("vpn", vpnActive());
         out.put("lan", lanAvailable());
+        out.put("netPolicy", prefs.getString(KEY_NET_POLICY, "auto"));
         out.put("account", accountJson());
         return out;
     }
@@ -862,8 +928,13 @@ public final class LoopbackProxy {
      * which is the tunnel as often as not. A neighbour of a Wi-Fi/Ethernet
      * interface is preferred, and everything else stays as a fallback so a
      * phone that left that network still recovers.
+     *
+     * No origin means the person disconnected on purpose, and a network flip
+     * must not quietly re-arm the proxy behind that choice: only an explicit
+     * connect (configure, pair, relay) writes an origin again.
      */
     private void refreshUpstream() {
+        if (prefs.getString(KEY_ORIGIN, "").isEmpty()) return;
         JSONArray list;
         try {
             list = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));

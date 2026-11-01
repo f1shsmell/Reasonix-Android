@@ -243,6 +243,17 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void controlPlaneAcceptsOnlyTheThreeNetPolicies() {
+        // The parse mirrors setNetPolicy: a value the connection code cannot
+        // decide between must be refused at the route, not stored.
+        assertTrue(LoopbackProxy.isValidNetPolicy("auto"));
+        assertTrue(LoopbackProxy.isValidNetPolicy("bypass"));
+        assertTrue(LoopbackProxy.isValidNetPolicy("system"));
+        assertFalse(LoopbackProxy.isValidNetPolicy("direct"));
+        assertFalse(LoopbackProxy.isValidNetPolicy(""));
+    }
+
+    @Test
     public void devicePollFailuresKeepTheServicesCodes() throws Exception {
         JSONObject expired = LoopbackProxy.pollFailure(
                 "{\"error\":{\"code\":\"expired_token\",\"message\":\"expired\"}}");
