@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  answeringOrigins,
   configureProxy,
   firstAnswering,
   originAnswers,
@@ -149,6 +150,37 @@ describe("firstAnswering", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     await expect(firstAnswering([])).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("answeringOrigins", () => {
+  it("keeps every address that replies, not only the first", async () => {
+    // The walk needs the whole answer: a door later in the list may be the one
+    // that actually opens, and `firstAnswering` would have hidden it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).startsWith("http://down")
+          ? Promise.reject(new TypeError("network"))
+          : Promise.resolve(new Response(null)),
+      ),
+    );
+
+    await expect(
+      answeringOrigins(["http://down:1", "http://up:2", "http://also:3"]),
+    ).resolves.toEqual(["http://up:2", "http://also:3"]);
+  });
+
+  it("answers an empty list when nothing replies", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    await expect(answeringOrigins(["http://a:1"])).resolves.toEqual([]);
+  });
+
+  it("probes nothing for an empty list", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(answeringOrigins([])).resolves.toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

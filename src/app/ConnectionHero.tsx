@@ -32,7 +32,8 @@ export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHero
   const staged =
     busy === "" && link !== undefined && (link.phase === "connecting" || link.phase === "reconnecting");
   // The resting state is one line of fact; only a working link earns the
-  // tall animated card.
+  // tall animated card. Waiting for a network is resting, not working: there
+  // is nothing to animate while the phone has no way out.
   const compact = !working && !staged;
 
   return (
@@ -69,6 +70,7 @@ export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHero
 
 function heroLine(link: LinkState, detail: string): string {
   if (link.phase === "failed") return link.error?.message ?? "连接失败";
+  if (link.phase === "offline") return "手机当前没有网络，恢复后会自动重连";
   if (link.phase === "idle") return detail;
   return linkSummary(link);
 }

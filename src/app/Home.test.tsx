@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Home, projectActivity, recentConversations } from "./Home";
-import { rememberConnection } from "../net/savedConnections";
+import { loadConnections, rememberConnection } from "../net/savedConnections";
 import type { LinkState } from "../net/link";
 import type { HomeTab } from "./swipe";
 import type { NeedsYouState } from "./useNeedsYou";
@@ -833,6 +833,62 @@ describe("Home", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("marks the list and claims the gesture while a row is lifted", () => {
+      vi.useFakeTimers();
+      route(() => new Response(null, { status: 204 }));
+      const rows = drawProjects();
+      const list = container.querySelector("ul.list") as HTMLElement;
+
+      expect(list.hasAttribute("data-dragging")).toBe(false);
+      hold(rowAt(rows, 0), 160, 10);
+
+      // `data-dragging` is what makes the entrance animation stand down: with
+      // it, the shift below is drawn; without it, the animation keeps
+      // `transform` and the drag looks dead.
+      expect(list.getAttribute("data-dragging")).toBe("true");
+      // The browser must not turn the drag into a scroll mid-gesture.
+      expect(rowAt(rows, 0).style.touchAction).toBe("none");
+
+      pointer(rowAt(rows, 0), "pointerup", 160, 10);
+
+      expect(list.hasAttribute("data-dragging")).toBe(false);
+      expect(rowAt(rows, 0).style.touchAction).toBe("");
+    });
+
+    it("does not read the release of a finished drag as a sideways swipe", async () => {
+      vi.useFakeTimers();
+      route(() => new Response(null, { status: 204 }));
+      const rows = drawProjects();
+      const shell = container.querySelector(".shell") as Element;
+
+      // A touch drag begins with `touchstart`, so the swipe tracker is armed
+      // before the hold succeeds.
+      act(() => {
+        shell.dispatchEvent(
+          Object.assign(new Event("touchstart", { bubbles: true }), {
+            touches: [{ clientX: 120, clientY: 400 }],
+          }),
+        );
+      });
+      hold(rowAt(rows, 0), 160, 10);
+      pointer(rowAt(rows, 0), "pointermove", 160, 110);
+      pointer(rowAt(rows, 0), "pointerup", 160, 110);
+      // The finger leaves the screen well to the right: a swipe between views
+      // if the gesture had been a page one, the end of a drop if it was a drag.
+      act(() => {
+        shell.dispatchEvent(
+          Object.assign(new Event("touchend", { bubbles: true }), {
+            changedTouches: [{ clientX: 300, clientY: 410 }],
+          }),
+        );
+      });
+      await settle();
+
+      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
+        "项目",
+      );
+    });
+
     it("does not pick up a folder the kernel does not remember", () => {
       vi.useFakeTimers();
       const rows = drawProjects({
@@ -998,5 +1054,54 @@ describe("Home connection bar", () => {
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
     act(() => button("管理连接").click());
     expect(onSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("reorders the saved computers with a held drag", () => {
+    vi.useFakeTimers();
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    rememberConnection("lan", "http://192.168.5.2:56789");
+    render({ link: connected() });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-drag-key]"));
+    rows.forEach((row, index) => {
+      row.getBoundingClientRect = () =>
+        ({
+          top: index * 60,
+          bottom: index * 60 + 60,
+          height: 60,
+          left: 0,
+          right: 320,
+          width: 320,
+          x: 0,
+          y: index * 60,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+    const first = rows[0] as HTMLElement;
+    expect(first.getAttribute("data-drag-key")).toBe("lan:http://192.168.9.9:51234");
+
+    hold(first, 160, 10);
+    pointer(first, "pointermove", 160, 110);
+    pointer(first, "pointerup", 160, 110);
+
+    // The drop is written to storage, so the order survives the sheet closing.
+    const saved = loadConnections();
+    expect(saved.map((row) => row.target)).toEqual([
+      "http://192.168.5.2:56789",
+      "http://192.168.9.9:51234",
+    ]);
+    // The rows must have actually moved on screen too, not just in storage.
+    const after = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-drag-key]"),
+    );
+    expect(after.map((node) => node.getAttribute("data-drag-key"))).toEqual([
+      "lan:http://192.168.5.2:56789",
+      "lan:http://192.168.9.9:51234",
+    ]);
+    expect(after.map((node) => node.getAttribute("data-drag-key"))).toEqual([
+      "lan:http://192.168.5.2:56789",
+      "lan:http://192.168.9.9:51234",
+    ]);
   });
 });

@@ -10,7 +10,13 @@
  * machine tries; the state only records where it got to.
  */
 
-export type LinkPhase = "idle" | "connecting" | "connected" | "reconnecting" | "failed";
+export type LinkPhase =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  | "failed";
 
 /** The visible stages of one attempt, in order. */
 export type LinkStep = "probe" | "switch" | "verify";
@@ -84,6 +90,8 @@ export function linkSummary(state: LinkState): string {
       return state.mode === "cloud" ? "云端已连接" : "局域网已连接";
     case "reconnecting":
       return state.attempt > 1 ? `正在重连（第 ${state.attempt} 次）` : "正在重连…";
+    case "offline":
+      return "等待网络";
     case "failed":
       return "连接失败";
   }
@@ -98,11 +106,32 @@ export function linkTone(state: LinkState): "ok" | "warn" | "bad" | "idle" | "bu
       return "busy";
     case "reconnecting":
       return "warn";
+    case "offline":
+      return "warn";
     case "failed":
       return "bad";
     case "idle":
       return "idle";
   }
+}
+
+/**
+ * What a failed attempt does next.
+ *
+ * The order matters: a phone with no network waits for the network before it
+ * considers whether the failure was retryable at all. Trying again while the
+ * system says there is no way out cannot succeed, and a chain of those is
+ * exactly the "still retrying long after the Wi-Fi died" this answers.
+ */
+export type AfterFailure = "wait-for-network" | "retry" | "fail";
+
+export function afterFailure(
+  error: LinkError,
+  options: { online: boolean; exhausted: boolean },
+): AfterFailure {
+  if (!options.online) return "wait-for-network";
+  if (!error.retryable || options.exhausted) return "fail";
+  return "retry";
 }
 
 /**

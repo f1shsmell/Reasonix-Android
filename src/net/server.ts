@@ -376,6 +376,24 @@ export async function firstAnswering(origins: string[], timeoutMs = 2_500): Prom
   return answers.find((entry) => entry.ok)?.origin ?? null;
 }
 
+/**
+ * Which of these addresses answer, probed together.
+ *
+ * The same one-shot sweep as `firstAnswering`, but it keeps the whole answer:
+ * the link machine walks its doors in the person's own order, and it needs to
+ * know which ones are worth an attempt rather than only the first. Probing in
+ * parallel is what keeps a long list from costing a timeout each.
+ */
+export async function answeringOrigins(
+  origins: string[],
+  timeoutMs = 2_500,
+): Promise<string[]> {
+  const answers = await Promise.all(
+    origins.map(async (origin) => ({ origin, ok: await originAnswers(origin, timeoutMs) })),
+  );
+  return answers.filter((entry) => entry.ok).map((entry) => entry.origin);
+}
+
 export type ServerLink =
   | { kind: "lan"; origin: string; pairCode?: string }
   | { kind: "cloud"; device: string };
