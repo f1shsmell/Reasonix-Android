@@ -39,7 +39,7 @@ import {
   ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
-import { disconnectProxy } from "../net/server";
+import { disconnectProxy, setNetworkPolicy } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
@@ -72,6 +72,8 @@ import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
 import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
+import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
+import type { NetPolicy } from "./netpref";
 import { Segmented } from "./Segmented";
 import { swipeDirection } from "./swipe";
 
@@ -173,6 +175,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [pane, setPane] = useState<Pane>("connect");
   /** The direction the pane arrived from, so the slide reads as movement. */
   const [paneDir, setPaneDir] = useState<"none" | "forward" | "back">("none");
+  /** How the proxy reaches a LAN computer while a VPN is active. */
+  const [netPolicy, setNetPolicyState] = useState<NetPolicy>(() => loadNetPolicy());
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -329,6 +333,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const pickFold = useCallback((mode: FoldMode) => {
     setFold(mode);
     saveFoldMode(mode);
+  }, []);
+
+  const pickNetPolicy = useCallback((policy: NetPolicy) => {
+    setNetPolicyState(policy);
+    saveNetPolicy(policy);
+    // The proxy is the enforcer; the local store only remembers the choice.
+    // An old native build has no route for this and the tap still sticks.
+    void setNetworkPolicy(policy).catch(() => {});
   }, []);
 
   const connect = useCallback(
@@ -917,6 +929,46 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             the one fact every control below is judged against, so it leads. */}
         {pane === "connect" ? (
           <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
+        ) : null}
+
+        {/* How this phone reaches the computer: which network is live, and
+            whether the proxy detours a VPN for LAN targets. The states the
+            old VPN note repeated in three places are drawn here once. */}
+        {pane === "connect" ? (
+          <>
+            <p className="group-label">网络</p>
+            <section className="group">
+              <div className="setting">
+                <span className="setting-main">
+                  <span className="setting-title">当前连接</span>
+                  <span className="setting-sub">
+                    {config?.mode === "relay"
+                      ? "云端 · Reasonix 账号中继"
+                      : config?.origin
+                        ? `局域网 · ${config.origin}`
+                        : "未连接"}
+                  </span>
+                </span>
+                <span className="setting-value">
+                  {config?.vpn ? "VPN 下" : config?.lan ? "Wi‑Fi/以太网" : "移动网络"}
+                </span>
+              </div>
+              <div className="setting">
+                <span className="setting-main">
+                  <span className="setting-title">代理策略</span>
+                  <Segmented
+                    ariaLabel="代理策略"
+                    value={netPolicy}
+                    options={NET_POLICY_CHOICES}
+                    onChange={pickNetPolicy}
+                  />
+                </span>
+              </div>
+            </section>
+            {config?.vpn ? (
+              <p className="group-note">检测到 VPN/代理，电脑不可达时可把策略改为「绕过代理」。</p>
+            ) : null}
+          </>
         ) : null}
 
         {pane === "connect" ? <MachinePanel base={machineBase} /> : null}

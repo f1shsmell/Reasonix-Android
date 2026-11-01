@@ -33,6 +33,11 @@ export interface ProxyConfig {
   vpn?: boolean;
   /** A non-VPN Wi-Fi or Ethernet interface is available for a LAN share. */
   lan?: boolean;
+  /**
+   * How the proxy reaches a LAN computer while a VPN is active. Absent on an
+   * old native build or in a browser, where the proxy itself does not exist.
+   */
+  netPolicy?: "auto" | "bypass" | "system";
   account: ProxyAccount;
 }
 
@@ -112,6 +117,22 @@ export async function refreshProxy(): Promise<ProxyConfig | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Tell the proxy how to reach a LAN computer while a VPN is active.
+ *
+ * The write is fire-and-forget on purpose: the proxy adopts what it receives
+ * and answers with the full config, but a phone that leaves this screen the
+ * moment it taps should not wait on the round trip. A refusal here is not
+ * shown — an old native build simply ignores the field, and the segmented
+ * control already says what it sent.
+ */
+export async function setNetworkPolicy(policy: "auto" | "bypass" | "system"): Promise<void> {
+  await request("/__reasonix/net-policy", {
+    method: "POST",
+    body: JSON.stringify({ policy }),
+  });
 }
 
 export async function startAccount(): Promise<DeviceGrant> {
