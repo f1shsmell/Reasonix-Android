@@ -21,6 +21,7 @@ import { clearDraft, loadDraft, saveDraft } from "./drafts";
 import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
+import { useStreamHaptics } from "./streamHaptics";
 import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
@@ -891,6 +892,9 @@ export function ChatScreen({
     () => buildDisplay(transcript.rows, transcript.running, fold),
     [transcript.rows, transcript.running, fold],
   );
+  // The pane is on screen; its answer ticking as it grows is the "still
+  // working" cue a locked pocket cannot show.
+  useStreamHaptics(transcript.rows);
 
   /**
    * Draw the tail of the conversation, and grow the window as the reader
