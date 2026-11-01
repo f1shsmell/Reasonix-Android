@@ -9,9 +9,9 @@ import type { PluginListenerHandle } from "@capacitor/core";
  * relay link uses, backed by OkHttp with the allowed Origin header.
  */
 interface RelaySocketPlugin {
-  connect(options: { url: string; protocols: string[]; origin?: string }): Promise<void>;
-  send(options: { data: string }): Promise<void>;
-  close(): Promise<void>;
+  connect(options: { url: string; protocols: string[]; origin?: string; tag?: number }): Promise<void>;
+  send(options: { data: string; tag?: number }): Promise<void>;
+  close(options: { tag?: number }): Promise<void>;
   addListener(
     event: string,
     handler: (data: Record<string, unknown>) => void,
@@ -26,9 +26,23 @@ interface SocketEvent {
   reason?: string;
   message?: string;
   status?: number;
+  /** Which connection an event belongs to; absent means no filtering. */
+  tag?: number;
 }
 
 type Listener = (event: SocketEvent) => void;
+
+/**
+ * Identifies each dial, so the plugin's events can be told apart: Capacitor
+ * broadcasts an event to every listener ever registered, and the Java side
+ * closes the previous socket when a new one dials, so a slow close from the
+ * old connection would otherwise arrive at the new one and read as its own
+ * failure — disarming its bridge or ending it before it opened.
+ */
+// Seeded from the clock so tags never repeat across a page reload: a socket
+// of the previous page can still be alive in the plugin, and a reused tag
+// would let its "replaced" close read as the new page's own.
+let nextTag = Date.now() % 0x3fffffff;
 
 export class NativeWebSocket {
   readyState = 0;
@@ -36,13 +50,22 @@ export class NativeWebSocket {
   private readonly listeners = new Map<string, Set<Listener>>();
   private handles: PluginListenerHandle[] = [];
   private closed = false;
+  /** Set once a close has reached the page, whichever path carried it. */
+  private finished = false;
+  private readonly tag = ++nextTag;
 
   constructor(url: string, protocols: string[]) {
     void this.start(url, protocols);
   }
 
   private async listen(event: string, handler: Listener): Promise<void> {
-    const handle = await plugin.addListener(event, (data) => handler(data as SocketEvent));
+    const tag = this.tag;
+    const handle = await plugin.addListener(event, (data) => {
+      // Events from other connections the plugin has opened are not ours;
+      // a plugin that does not tag (tests, older builds) sends none.
+      if (typeof data?.tag === "number" && data.tag !== tag) return;
+      handler(data as SocketEvent);
+    });
     this.handles.push(handle);
   }
 
@@ -55,6 +78,13 @@ export class NativeWebSocket {
       this.emit("message", { data: String(event.data ?? "") }),
     );
     await this.listen("close", (event) => {
+      // Plugin events are broadcast to every socket this plugin ever opened,
+      // and the Java side closes the previous socket when a new one dials. A
+      // close seen before this socket has opened belongs to that previous
+      // one; taking it as ours would pin `finished` and disarm the failure
+      // bridge before the connection ever came up.
+      if (this.readyState === 0 || this.finished) return;
+      this.finished = true;
       this.readyState = 3;
       this.emit("close", {
         code: Number(event.code ?? 1006),
@@ -62,20 +92,12 @@ export class NativeWebSocket {
       });
     });
     await this.listen("error", (event) => {
-      if (this.closed) return;
-      this.readyState = 3;
-      this.emit("error", {
-        message: String(event.message ?? "relay socket failed"),
-        status: Number(event.status ?? 0),
-      });
+      this.fail(String(event.message ?? "relay socket failed"), Number(event.status ?? 0));
     });
     try {
-      await plugin.connect({ url, protocols, origin: "https://reasonix.io" });
+      await plugin.connect({ url, protocols, origin: "https://reasonix.io", tag: this.tag });
     } catch (error) {
-      this.readyState = 3;
-      this.emit("error", {
-        message: error instanceof Error ? error.message : "relay socket failed",
-      });
+      this.fail(error instanceof Error ? error.message : "relay socket failed");
     }
   }
 
@@ -90,15 +112,34 @@ export class NativeWebSocket {
   }
 
   send(data: string): void {
-    void plugin.send({ data }).catch(() => {
-      this.emit("error", { message: "relay send failed" });
+    void plugin.send({ data, tag: this.tag }).catch(() => {
+      this.fail("relay send failed");
     });
   }
 
+  /**
+   * Report a failed socket the way a browser would: an error, then a close.
+   *
+   * OkHttp reports every transport failure — dial refused, send refused, a
+   * ping that drew no Pong — through one onFailure callback that carries no
+   * close of its own. The page speaks browser WebSocket semantics and only
+   * reconnects on close, so the close is emitted here; the guards keep a
+   * socket the plugin did close, or the page closed itself, from seeing a
+   * second one.
+   */
+  private fail(message: string, status = 0): void {
+    if (this.closed || this.finished) return;
+    this.finished = true;
+    this.readyState = 3;
+    this.emit("error", { message, status });
+    this.emit("close", { code: 1006, reason: "abnormal" });
+  }
+
   close(): void {
+    if (this.closed) return;
     this.closed = true;
     this.readyState = 2;
-    void plugin.close();
+    void plugin.close({ tag: this.tag });
     for (const handle of this.handles) void handle.remove();
     this.handles = [];
   }
