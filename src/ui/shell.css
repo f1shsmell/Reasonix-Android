@@ -837,6 +837,50 @@ pre.frame {
   color: var(--fg-dim);
 }
 
+/* ---- a row's folded children ---- */
+
+/* The fold is the row's sibling, so it sits outside the row's own button and
+   keeps its own tap target. `li + li` already draws the hairline between rows,
+   so the folded rows must not draw a second one on top of it. */
+.list li > .fold {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.list li > .fold[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.list li > .fold:active {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+}
+
+/* A folded row hangs under its conversation: inset so it reads as "inside this
+   row" rather than as another conversation at the same level. */
+.list li.folded > .session {
+  padding-left: 26px;
+}
+
+.list li.folded .session-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-dim);
+}
+
 
 .iconbtn {
   min-height: var(--tap);

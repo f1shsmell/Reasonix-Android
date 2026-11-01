@@ -317,4 +317,209 @@ describe("SessionList", () => {
     act(() => (container.querySelector('[aria-label="返回项目列表"]') as HTMLButtonElement).click());
     expect(onBack).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * The kernel folds a recovery copy or an earlier version under the
+   * conversation it came from. Drawn flat, a copy is a second row with the same
+   * title and the same turn count — what the phone used to show.
+   */
+  describe("folded rows", () => {
+    const foldedProject = (overrides: Partial<TreeProject> = {}) =>
+      project({
+        total: 1,
+        sessions: [
+          {
+            path: "/work/app/a.jsonl",
+            name: "a",
+            title: "review 一下这个 pr",
+            turns: 46,
+            lastActiveAt: Date.now() - 60_000,
+            copies: [
+              {
+                path: "/work/app/a-recovery-1.jsonl",
+                name: "a-recovery-1",
+                title: "review 一下这个 pr",
+                turns: 46,
+              },
+            ],
+            versions: [{ path: "/work/app/a-version-1.jsonl", name: "a-version-1", turns: 4 }],
+          },
+        ],
+        ...overrides,
+      });
+
+    it("draws one row and a count, not one row per transcript", async () => {
+      await render({ project: foldedProject() });
+
+      // The copy's title is the conversation's own, so a flat list shows it twice.
+      expect(container.querySelectorAll(".session")).toHaveLength(1);
+      const fold = container.querySelector(".fold") as HTMLElement;
+      expect(fold.textContent).toBe("+2");
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      expect(container.textContent).not.toContain("恢复副本");
+      expect(container.textContent).not.toContain("早先版本");
+    });
+
+    it("opens the fold without opening the conversation", async () => {
+      const onOpen = vi.fn();
+      await render({ project: foldedProject(), onOpen });
+
+      const fold = container.querySelector(".fold") as HTMLButtonElement;
+      await act(async () => {
+        fold.click();
+      });
+
+      expect(container.textContent).toContain("早先版本 · 4 轮");
+      expect(container.textContent).toContain("恢复副本");
+      expect(container.querySelector(".fold")?.textContent).toBe("−");
+      expect(container.querySelector(".fold")?.getAttribute("aria-expanded")).toBe("true");
+      // Tapping the fold is a decision about the list, never about a pane.
+      expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    // A control inside a control is announced as two buttons and the inner one
+    // cannot take its own tap on touch; the fold has to be the row's sibling.
+    it("keeps the fold out of the conversation's own button", async () => {
+      await render({ project: foldedProject() });
+
+      const row = container.querySelector(".session") as HTMLElement;
+      const fold = container.querySelector(".fold") as HTMLElement;
+      expect(fold.tagName).toBe("BUTTON");
+      expect(row.contains(fold)).toBe(false);
+      expect(fold.parentElement).toBe(row.parentElement);
+      expect(row.querySelectorAll("button, [role='button']")).toHaveLength(0);
+    });
+
+    it("labels an earlier version by its turns, and without turns when unknown", async () => {
+      await render({
+        project: foldedProject({
+          sessions: [
+            {
+              path: "/work/app/a.jsonl",
+              name: "a",
+              versions: [
+                { path: "/work/app/v1.jsonl", name: "v1", turns: 4 },
+                { path: "/work/app/v2.jsonl", name: "v2" },
+              ],
+            },
+          ],
+        }),
+      });
+
+      await act(async () => {
+        (container.querySelector(".fold") as HTMLElement).click();
+      });
+
+      expect(container.textContent).toContain("早先版本 · 4 轮");
+      // No turn count is not the same claim as zero turns.
+      expect(container.textContent).toContain("早先版本");
+      expect(container.textContent).not.toContain("早先版本 · 0 轮");
+    });
+
+    // The two lists are separate on the wire; one transcript named in both must
+    // not become two rows with the same React key.
+    it("draws a transcript once even when it is listed as both a version and a copy", async () => {
+      const shared = { path: "/work/app/same.jsonl", name: "same", turns: 3 };
+      await render({
+        project: foldedProject({
+          sessions: [
+            {
+              path: "/work/app/a.jsonl",
+              name: "a",
+              versions: [shared],
+              copies: [shared],
+            },
+          ],
+        }),
+      });
+
+      await act(async () => {
+        (container.querySelector(".fold") as HTMLElement).click();
+      });
+
+      expect(container.querySelector(".fold")?.textContent).toBe("−");
+      expect(container.querySelectorAll(".session")).toHaveLength(2);
+      expect(container.textContent).toContain("早先版本 · 3 轮");
+    });
+
+    it("opens a folded row as its own conversation", async () => {
+      const fetchMock = route(() => json({ id: "r9", base: "/rt/r9", root: "/work/app", name: "app" }));
+      const onOpen = vi.fn();
+      await render({ project: foldedProject(), onOpen });
+
+      await act(async () => {
+        (container.querySelector(".fold") as HTMLElement).click();
+      });
+      await act(async () => {
+        button("恢复副本").click();
+      });
+      await settle();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/runtimes",
+        expect.objectContaining({
+          body: JSON.stringify({ root: "/work/app", sessionPath: "/work/app/a-recovery-1.jsonl" }),
+        }),
+      );
+      expect(onOpen).toHaveBeenCalledWith("r9", "review 一下这个 pr");
+    });
+
+    // A tap that does nothing for the whole of a 15s request reads as broken.
+    it("marks the folded row that is opening", async () => {
+      let release: (() => void) | undefined;
+      route(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = () => resolve(json({ id: "r9", base: "/rt/r9", root: "/work/app", name: "app" }));
+          }),
+      );
+      await render({ project: foldedProject() });
+
+      await act(async () => {
+        (container.querySelector(".fold") as HTMLElement).click();
+      });
+      act(() => {
+        button("恢复副本").click();
+      });
+
+      const opening = Array.from(container.querySelectorAll("button.session")).find((candidate) =>
+        candidate.textContent?.includes("正在打开…"),
+      ) as HTMLButtonElement;
+      expect(opening).toBeDefined();
+      expect(opening.disabled).toBe(true);
+
+      await act(async () => {
+        release?.();
+      });
+      await settle();
+    });
+
+    it("warns that a delete keeps the copies holding content of their own", async () => {
+      vi.useFakeTimers();
+      await render({ project: foldedProject() });
+
+      const row = container.querySelector(".session") as HTMLElement;
+      hold(row, 100, 100);
+      pointer(row, "pointerup", 100, 100);
+      act(() => button("删除会话").click());
+
+      expect(container.textContent).toContain("还有 1 份恢复副本带着这个会话没有的内容");
+      expect(container.textContent).toContain("不能撤销");
+    });
+
+    it("keeps the plain delete warning for a row with nothing folded under it", async () => {
+      vi.useFakeTimers();
+      await render();
+
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("修一下登录"),
+      ) as HTMLElement;
+      hold(row, 100, 100);
+      pointer(row, "pointerup", 100, 100);
+      act(() => button("删除会话").click());
+
+      expect(container.textContent).not.toContain("份恢复副本");
+      expect(container.textContent).toContain("不能撤销");
+    });
+  });
 });

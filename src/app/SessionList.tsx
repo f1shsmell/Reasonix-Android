@@ -10,6 +10,12 @@
  * Rows whose `runtimeId` is set are the ones a pane is driving right now. They
  * are drawn as open rather than special-cased: the kernel answers the same
  * runtime for them, so the tap costs nothing.
+ *
+ * A row can also carry transcripts that stay under it — conflict-recovery
+ * copies and earlier versions — and the desktop folds those away behind a
+ * "+N" rather than listing them beside the conversation. The same fold here
+ * keeps one conversation from reading as two identical rows, which is exactly
+ * what a phone list made of bare titles cannot explain on its own.
  */
 
 import { useState } from "react";
@@ -17,7 +23,7 @@ import type { ConnectionSnapshot } from "../net/connection";
 import { openRuntime } from "../net/workspaces";
 import { removeSession, renameSession, setPinned } from "../net/pin";
 import type { TreeWrite } from "../net/pin";
-import type { TreeProject, TreeSession } from "../wire/tree";
+import type { TreeProject, TreeSession, TreeSessionChild } from "../wire/tree";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
 import { useLongPress } from "./longPress";
@@ -65,52 +71,170 @@ export function runtimeOpenMessage(code: string): string {
   }
 }
 
+/**
+ * What the fold holds, oldest reason first: an earlier version is this
+ * conversation before a rewind, a recovery copy is a second file a write
+ * conflict left behind. Both open as their own transcript, so they share a
+ * row shape and differ only in how they are named.
+ */
+interface Folded {
+  child: TreeSessionChild;
+  version: boolean;
+}
+
+/**
+ * Everything a row keeps under itself, in the order the fold shows it, keyed by
+ * path. The two lists are separate on the wire and nothing stops a kernel from
+ * naming one transcript in both, so a repeated path keeps its first place
+ * rather than rendering a second row with the same key.
+ */
+function foldedRows(session: TreeSession): Folded[] {
+  const seen = new Set<string>();
+  const out: Folded[] = [];
+  const add = (child: TreeSessionChild, version: boolean) => {
+    if (seen.has(child.path)) return;
+    seen.add(child.path);
+    out.push({ child, version });
+  };
+  for (const child of session.versions ?? []) add(child, true);
+  for (const child of session.copies ?? []) add(child, false);
+  return out;
+}
+
+/**
+ * The word beside a folded row. An earlier version says how long it ran — that
+ * is what tells two of them apart. A recovery copy does not: its turn count is
+ * the conversation's own and would read as the same conversation.
+ */
+function foldedLabel(row: Folded): string {
+  const turns = row.child.turns;
+  return row.version ? (turns ? `早先版本 · ${turns} 轮` : "早先版本") : "恢复副本";
+}
+
+/**
+ * Why a row carries copies, in the words the fold's own button can use, with
+ * the count so the button says what it will open.
+ */
+function foldedHint(session: TreeSession): string {
+  const versions = session.versions?.length ?? 0;
+  const copies = session.copies?.length ?? 0;
+  if (versions > 0 && copies > 0) return `${versions} 个早先版本、${copies} 份恢复副本`;
+  if (versions > 0) return `${versions} 个早先版本：编辑、重新生成或回退之前的对话`;
+  return `${copies} 份恢复副本：本次对话被外部程序改写时留下`;
+}
+
+/**
+ * What a delete of the parent row leaves behind: copies holding content the
+ * conversation itself lacks are kept by the kernel, so the warning has to say
+ * so before the tap, not after it. The recent list deletes through the same
+ * sheet, so it asks this too rather than guessing the row has no copies.
+ */
+export function deleteWarning(session: TreeSession): string {
+  const copies = session.copies?.length ?? 0;
+  const base = "删除后这个会话的转录会从电脑上移除，不能撤销。正在运行的会话不能删除。";
+  if (copies === 0) return base;
+  return `还有 ${copies} 份恢复副本带着这个会话没有的内容，删除这个会话会保留它们。${base}`;
+}
+
 function SessionRow({
   session,
   busy,
+  childBusy,
+  expanded,
   onOpen,
   onMenu,
+  onToggleFold,
+  onOpenChild,
 }: {
   session: TreeSession;
   busy: boolean;
+  /** The path of a folded row that is opening, if one is. */
+  childBusy: string;
+  expanded: boolean;
   onOpen: () => void;
   onMenu: () => void;
+  onToggleFold: () => void;
+  onOpenChild: (child: TreeSessionChild) => void;
 }) {
   const when = relativeTime(session.lastActiveAt);
   const press = useLongPress(onMenu);
+  const folded = foldedRows(session);
   return (
-    <li>
-      <button
-        type="button"
-        className="session"
-        onClick={onOpen}
-        disabled={busy}
-        aria-haspopup="menu"
-        onKeyDown={(event) => {
-          if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-          event.preventDefault();
-          onMenu();
-        }}
-        {...press}
-      >
-        <span className="row-main">
-          <span className="session-name">
-            {sessionTitle(session)}
-            {session.unread ? (
-              <span className="dot accent" role="img" aria-label="有新回答" title="有新回答" />
-            ) : null}
-            {session.runtimeId ? <span className="pill">运行中</span> : null}
-            {session.legacy ? <span className="pill">旧版</span> : null}
+    <>
+      <li>
+        <button
+          type="button"
+          className="session"
+          onClick={onOpen}
+          disabled={busy}
+          aria-haspopup="menu"
+          onKeyDown={(event) => {
+            if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+            event.preventDefault();
+            onMenu();
+          }}
+          {...press}
+        >
+          <span className="row-main">
+            <span className="session-name">
+              {sessionTitle(session)}
+              {session.unread ? (
+                <span className="dot accent" role="img" aria-label="有新回答" title="有新回答" />
+              ) : null}
+              {session.runtimeId ? <span className="pill">运行中</span> : null}
+              {session.legacy ? <span className="pill">旧版</span> : null}
+            </span>
+            <span className="session-meta">
+              {busy ? "正在打开…" : [when, session.turns ? `${session.turns} 轮` : ""].filter(Boolean).join(" · ")}
+            </span>
           </span>
-          <span className="session-meta">
-            {busy ? "正在打开…" : [when, session.turns ? `${session.turns} 轮` : ""].filter(Boolean).join(" · ")}
+          <span className="chev" aria-hidden="true">
+            ›
           </span>
-        </span>
-        <span className="chev" aria-hidden="true">
-          ›
-        </span>
-      </button>
-    </li>
+        </button>
+        {/* The fold is a sibling of the row, not a target inside it: a control
+            nested in a button is announced as two buttons and cannot be
+            reached by touch without stealing the row's own tap. */}
+        {folded.length > 0 ? (
+          <button
+            type="button"
+            className="fold"
+            aria-expanded={expanded}
+            aria-label={foldedHint(session)}
+            title={foldedHint(session)}
+            onClick={onToggleFold}
+          >
+            {expanded ? "−" : `+${folded.length}`}
+          </button>
+        ) : null}
+      </li>
+      {expanded
+        ? folded.map((row) => (
+            <li key={row.child.path} className="folded">
+              {/* A folded row opens and nothing else. Pin and rename are the
+                  conversation's own decisions and the kernel keys them to the
+                  parent, so offering them here would ask about a row the sheet
+                  cannot describe. */}
+              <button
+                type="button"
+                className="session"
+                onClick={() => onOpenChild(row.child)}
+                disabled={childBusy === row.child.path}
+              >
+                <span className="row-main">
+                  <span className="session-name">{foldedLabel(row)}</span>
+                  <span className="session-meta" title={row.child.title || row.child.name}>
+                    {childBusy === row.child.path ? "正在打开…" : row.child.title || row.child.name}
+                  </span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            </li>
+          ))
+        : null}
+    </>
   );
 }
 
@@ -125,8 +249,10 @@ export function SessionList({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [menu, setMenu] = useState<TreeSession | null>(null);
+  /** The rows whose fold is open, by transcript path. */
+  const [spread, setSpread] = useState<Set<string>>(new Set());
 
-  const open = async (session?: TreeSession) => {
+  const open = async (session?: TreeSession | TreeSessionChild) => {
     if (busy) return;
     const key = session?.path ?? "__new__";
     setBusy(key);
@@ -137,7 +263,7 @@ export function SessionList({
       setError(runtimeOpenMessage(result.code));
       return;
     }
-    onOpen(result.runtime.id, session ? sessionTitle(session) : "新会话");
+    onOpen(result.runtime.id, session ? session.title?.trim() || session.name : "新会话");
   };
 
   const togglePin = async (session: TreeSession): Promise<TreeWrite> => {
@@ -156,6 +282,15 @@ export function SessionList({
     const result = await removeSession(session.path);
     if (result.ok) onRefresh();
     return result;
+  };
+
+  const toggleFold = (path: string) => {
+    setSpread((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   };
 
   const sessions = project.sessions;
@@ -210,8 +345,12 @@ export function SessionList({
                 key={session.path}
                 session={session}
                 busy={busy === session.path}
+                childBusy={busy}
+                expanded={spread.has(session.path)}
                 onOpen={() => void open(session)}
                 onMenu={() => setMenu(session)}
+                onToggleFold={() => toggleFold(session.path)}
+                onOpenChild={(child) => void open(child)}
               />
             ))}
           </ul>
@@ -235,6 +374,7 @@ export function SessionList({
           when={relativeTime(menu.lastActiveAt)}
           pinned={menu.pinned === true}
           busy={busy === menu.path}
+          deleteWarning={deleteWarning(menu)}
           onClose={() => setMenu(null)}
           onOpen={() => {
             const session = menu;
