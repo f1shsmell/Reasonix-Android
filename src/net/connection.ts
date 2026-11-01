@@ -57,6 +57,24 @@ export class Connection {
   private activeBase: string | null = null;
   /** A slow refresh must not overwrite the answer of a newer one. */
   private refreshSeq = 0;
+  /**
+   * Failures in a row since the last successful read.
+   *
+   * A phone's worst network is not "offline": it is a Wi-Fi that drops one
+   * packet, a router that pauses for a second while a screen mounts, a
+   * `fetch` that times out at exactly 12 s. Treating the first of those as a
+   * lost connection is what made a working link flip to "reconnecting" when
+   * the person opened settings, so a transient failure is retried once
+   * before the snapshot is allowed to say the kernel is gone.
+   *
+   * Only a transport failure counts here. A refusal from the kernel — 401,
+   * 403, a 5xx, or a body that is not a runtime list — is an answer: it is
+   * published at once and clears the count, because the route is fine and the
+   * problem is something a retry of the *transport* will not fix.
+   */
+  private failures = 0;
+  /** How many failures in a row still count as noise rather than a loss. */
+  private static readonly TOLERATED_FAILURES = 2;
 
   /**
    * `lastEvent` belongs to the pane that was attached when it arrived. A new
@@ -79,47 +97,98 @@ export class Connection {
     return this.snapshot;
   }
 
+  /**
+   * Whether the last reads failed often enough to mean the route is gone.
+   *
+   * The link machine uses this instead of a single probe: a live link is only
+   * torn down when the transport has actually stopped answering twice in a
+   * row, which is what keeps a screen mounting from disconnecting a phone.
+   */
+  get lost(): boolean {
+    return this.failures >= Connection.TOLERATED_FAILURES;
+  }
+
+  /**
+   * Forget earlier failures because the route they were measured on is gone.
+   *
+   * The counter answers "has *this* route stopped answering", so a deliberate
+   * upstream change — a switch to another computer, a fresh pairing — starts
+   * from zero. Without this, one hiccup before the switch plus one hiccup on
+   * the new route would add up to a verdict about neither.
+   */
+  resetFailures(): void {
+    this.failures = 0;
+  }
+
   private publish(patch: Partial<ConnectionSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     for (const listener of this.listeners) listener(this.snapshot);
   }
 
-  /** Refresh the runtime list. This is the reachability probe as well. */
-  async refresh(): Promise<void> {
+  /**
+   * Refresh the runtime list, and answer whether *this* read reached the
+   * kernel.
+   *
+   * The return value is the fact; the snapshot is the display. They diverge on
+   * purpose: a tolerated hiccup keeps the last good `reach` so the chip does
+   * not flicker, but a caller that is *verifying* a door — "did the address I
+   * just switched to actually answer?" — must not read that kept value as
+   * evidence. `true` means this read answered `/runtimes`; `false` means it did
+   * not, whatever the snapshot still says.
+   */
+  async refresh(): Promise<boolean> {
     const seq = ++this.refreshSeq;
     const stale = () => seq !== this.refreshSeq;
     try {
       const response = await fetchWithTimeout("/runtimes", { credentials: "same-origin" }, 12_000);
-      if (stale()) return;
+      if (stale()) return false;
       if (response.status === 401 || response.status === 403) {
+        // The kernel answered. That is a connection, just an unauthorized one.
+        this.failures = 0;
         this.publish({ reach: { kind: "unauthorized" }, runtimes: [] });
-        return;
+        return false;
       }
       if (!response.ok) {
+        // The kernel answered with a refusal. That is not a lost route, so it
+        // does not count toward `lost`, but it is not a usable read either.
+        this.failures = 0;
         this.publish({ reach: { kind: "unreachable", detail: `HTTP ${response.status}` } });
-        return;
+        return false;
       }
       const body: unknown = await response.json();
-      if (stale()) return;
+      if (stale()) return false;
       if (!Array.isArray(body)) {
+        this.failures = 0;
         this.publish({ reach: { kind: "unreachable", detail: "invalid /runtimes response" } });
-        return;
+        return false;
       }
       const runtimes = body.filter(isRuntimeView);
       if (body.length > 0 && runtimes.length === 0) {
+        this.failures = 0;
         this.publish({ reach: { kind: "unreachable", detail: "invalid /runtimes response" } });
-        return;
+        return false;
       }
+      this.failures = 0;
       this.publish({ reach: { kind: "ok" }, runtimes });
       this.reattachIfBaseMoved();
+      return true;
     } catch (error) {
-      if (stale()) return;
+      if (stale()) return false;
+      this.failures += 1;
+      // One lost request is not a lost computer. Keep the last good answer on
+      // screen and let the next probe decide; only a second failure in a row
+      // is allowed to say the kernel is unreachable. A link that was already
+      // unreachable is republished so a screen waiting on the change still
+      // hears about it.
+      const tolerated = this.failures < Connection.TOLERATED_FAILURES;
+      if (tolerated && this.snapshot.reach.kind === "ok") return false;
       this.publish({
         reach: {
           kind: "unreachable",
           detail: error instanceof Error ? error.message : "network error",
         },
       });
+      return false;
     }
   }
 

@@ -42,6 +42,15 @@ const fleetWatcher = new Fleet();
 
 type Boot = "loading" | "connect" | "ready";
 
+/**
+ * How often a live link is checked while the app is on screen.
+ *
+ * Slow on purpose: this is a safety net for a route that died while nobody
+ * was looking, not a heartbeat. Every check is one `/runtimes` read against
+ * the kernel, and the retry path already runs when the person acts.
+ */
+const LINK_WATCH_MS = 30_000;
+
 /** Every LAN address worth trying, the proxy's own first, duplicates removed. */
 function lanDoors(config: ProxyConfig | null): string[] {
   const saved = loadConnections()
@@ -540,6 +549,17 @@ export function App() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [boot, link.kick, pending.refresh, reloadTree]);
+
+  // A live link is checked on a slow timer, and only a route that has really
+  // stopped answering (two lost reads in a row) is reopened. Without this,
+  // making a screen mounting harmless would also make a dead route invisible:
+  // the chip would keep saying 已连接 while the list could not refresh.
+  useEffect(() => {
+    if (boot !== "ready") return;
+    if (link.state.phase !== "connected") return;
+    const timer = window.setInterval(() => link.watch(), LINK_WATCH_MS);
+    return () => window.clearInterval(timer);
+  }, [boot, link.state.phase, link.watch]);
 
   // The system's own answer about this phone's network. Losing it stops the
   // retry timer instead of letting it spin against a network that is not

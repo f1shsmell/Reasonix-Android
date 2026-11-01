@@ -21,6 +21,148 @@ describe("Connection", () => {
     if (reach.kind === "unreachable") expect(reach.detail).toContain("refused");
   });
 
+  it("does not call a live link dead after one lost request", async () => {
+    // A Wi-Fi that drops one packet must not flip the chip to "reconnecting":
+    // this is the path that ran on every foreground and every settings visit.
+    const ok = () =>
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = new Connection();
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("ok");
+
+    await connection.refresh();
+    // One failure: the last good answer stays, and so does the runtime list.
+    expect(connection.current.reach.kind).toBe("ok");
+    expect(connection.current.runtimes.map((runtime) => runtime.id)).toEqual(["r1"]);
+
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("ok");
+  });
+
+  it("reports unreachable once two requests in a row are lost", async () => {
+    const ok = () =>
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce(new Error("timeout"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = new Connection();
+    await connection.refresh();
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("ok");
+
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("unreachable");
+  });
+
+  it("forgets earlier failures after a success", async () => {
+    // The count is "in a row", not "ever": a link that recovers and then loses
+    // one request is back to being tolerated, not one step from dead.
+    const ok = () =>
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValueOnce(new Error("timeout"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = new Connection();
+    await connection.refresh();
+    await connection.refresh();
+    await connection.refresh();
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("ok");
+  });
+
+  it("still reports a refusal at once, because that is an answer", async () => {
+    // 401 is the kernel talking, not the network dropping; waiting for a
+    // second read would delay the "配对失效" message the person needs.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 })),
+    );
+    const connection = new Connection();
+    await connection.refresh();
+    expect(connection.current.reach.kind).toBe("unauthorized");
+  });
+
+  it("answers whether this read reached the kernel, not what the chip shows", async () => {
+    // The return value and the snapshot diverge on purpose: a caller that is
+    // verifying a door must not read a kept "ok" as evidence.
+    const ok = () =>
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(ok())
+      .mockRejectedValueOnce(new Error("timeout"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connection = new Connection();
+    await expect(connection.refresh()).resolves.toBe(true);
+
+    // The snapshot still says ok, but the read itself did not answer.
+    await expect(connection.refresh()).resolves.toBe(false);
+    expect(connection.current.reach.kind).toBe("ok");
+  });
+
+  it("counts a refusal as a reset, not as a lost route", async () => {
+    // Two refusals in a row must never add up to `lost`: the kernel is
+    // answering, so the watch timer must not start reconnecting.
+    const refused = () => new Response(null, { status: 503 });
+    vi.stubGlobal("fetch", vi.fn(refused));
+    const connection = new Connection();
+    await connection.refresh();
+    await connection.refresh();
+    expect(connection.lost).toBe(false);
+  });
+
+  it("reports lost once the tolerated failures run out", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const connection = new Connection();
+    await connection.refresh();
+    expect(connection.lost).toBe(false);
+    await connection.refresh();
+    expect(connection.lost).toBe(true);
+  });
+
+  it("forgets the count when the route is replaced", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const connection = new Connection();
+    await connection.refresh();
+    expect(connection.lost).toBe(false);
+
+    // A deliberate switch starts from zero: the earlier hiccup was measured
+    // on a route this phone no longer uses.
+    connection.resetFailures();
+    expect(connection.lost).toBe(false);
+    await connection.refresh();
+    expect(connection.lost).toBe(false);
+  });
+
   it("keeps the runtime list it was given", async () => {
     const runtimes = [{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }];
     vi.stubGlobal(
