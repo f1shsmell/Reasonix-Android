@@ -11,7 +11,7 @@
  * root, which the device gate already allows.
  */
 
-import type { TreeProject, TreeSession } from "../wire/tree";
+import type { TreeProject, TreeSession, TreeSessionChild } from "../wire/tree";
 import { fetchWithTimeout } from "./http";
 
 /** Rows per project. The kernel caps a window at 300. */
@@ -50,7 +50,32 @@ function session(value: unknown): TreeSession | null {
   if (typeof row.lastActiveAt === "number" && row.lastActiveAt > 0) out.lastActiveAt = row.lastActiveAt;
   if (row.unread === true) out.unread = true;
   if (row.legacy === true) out.legacy = true;
+  const copies = children(row.copies);
+  if (copies.length > 0) out.copies = copies;
+  const versions = children(row.versions);
+  if (versions.length > 0) out.versions = versions;
   return out;
+}
+
+/**
+ * The rows a conversation carries under it. They are read by the same rules as
+ * a top-level row, minus the parts that describe a pane or a list position: a
+ * folded copy is never the row a window picked, so it has no `runtimeId`,
+ * `archived` or `pinned` of its own. A row without a path cannot be opened and
+ * is dropped rather than drawn as a dead line.
+ */
+function children(value: unknown): TreeSessionChild[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const path = string(row.path);
+    if (!path) return [];
+    const out: TreeSessionChild = { path, name: string(row.name) || path };
+    if (typeof row.title === "string" && row.title) out.title = row.title;
+    if (typeof row.turns === "number") out.turns = row.turns;
+    return [out];
+  });
 }
 
 function project(value: unknown): TreeProject | null {

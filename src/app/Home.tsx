@@ -37,7 +37,7 @@ import { RMark } from "./RMark";
 import { StudioIcon } from "./StudioIcon";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
-import { runtimeOpenMessage, sessionTitle } from "./SessionList";
+import { deleteWarning, runtimeOpenMessage, sessionTitle } from "./SessionList";
 import type { NeedsYouState } from "./useNeedsYou";
 import type { TreeState } from "./useTree";
 import { openRuntime } from "../net/workspaces";
@@ -1095,6 +1095,7 @@ export function Home({
           when={relativeTime(menu.session.lastActiveAt)}
           pinned={menu.session.pinned === true}
           busy={busy === menu.session.path}
+          deleteWarning={deleteWarning(menu.session)}
           onClose={() => setMenu(null)}
           onOpen={() => {
             const row = menu;

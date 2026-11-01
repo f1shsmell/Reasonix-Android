@@ -8,6 +8,20 @@
  * the kernel may keep growing rows.
  */
 
+/**
+ * A conversation that stays under another one: a recovery copy the kernel kept
+ * when two writers disagreed, or this conversation as it stood before a rewind
+ * cut it. Each is a whole transcript and opens like a row of its own; the only
+ * difference is that the list folds it away until asked for.
+ */
+export interface TreeSessionChild {
+  path: string;
+  name: string;
+  /** The generated title, when the copy inherited one. */
+  title?: string;
+  turns?: number;
+}
+
 /** One conversation inside a project. */
 export interface TreeSession {
   /** Transcript path; this is what opens the conversation. */
@@ -26,6 +40,15 @@ export interface TreeSession {
   /** A turn finished since the person last looked. */
   unread?: boolean;
   legacy?: boolean;
+  /**
+   * Conflict-recovery copies of this same conversation, newest first. The
+   * kernel folds a copy that holds nothing this row lacks; one that holds
+   * content of its own is sent here rather than hidden, so a plain delete can
+   * still warn about it.
+   */
+  copies?: TreeSessionChild[];
+  /** This conversation as it stood before a rewind cut it, newest first. */
+  versions?: TreeSessionChild[];
 }
 
 /** One folder: the unit a phone shows first. */

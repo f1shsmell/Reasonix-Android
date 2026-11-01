@@ -20,6 +20,12 @@ export interface SessionSheetProps {
   pinned: boolean;
   /** The row is opening a pane; opening again would race it. */
   busy?: boolean;
+  /**
+   * What the delete step says before it runs. A row that carries recovery
+   * copies needs a different sentence: the kernel keeps the copies that hold
+   * content of their own, so "removed from this computer" would be a lie.
+   */
+  deleteWarning?: string;
   onClose: () => void;
   onOpen: () => void;
   onTogglePin: () => Promise<TreeWrite>;
@@ -35,6 +41,7 @@ export function SessionSheet({
   when,
   pinned,
   busy = false,
+  deleteWarning = "删除后这个会话的转录会从电脑上移除，不能撤销。正在运行的会话不能删除。",
   onClose,
   onOpen,
   onTogglePin,
@@ -153,9 +160,7 @@ export function SessionSheet({
 
         {mode === "delete" ? (
           <>
-            <p className="sheet-warning">
-              删除后这个会话的转录会从电脑上移除，不能撤销。正在运行的会话不能删除。
-            </p>
+            <p className="sheet-warning">{deleteWarning}</p>
             <div className="sheet-foot">
               <button type="button" onClick={() => setMode("actions")} disabled={working}>
                 取消
