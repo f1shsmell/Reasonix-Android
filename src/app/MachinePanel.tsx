@@ -52,12 +52,7 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
 
   if (empty) {
     return (
-      <div className="notice error">
-        <div>读不到这台机器的状态。</div>
-        <button type="button" onClick={load}>
-          重试
-        </button>
-      </div>
+      <p className="group-note">连上电脑后，这里显示它的用量、工具边界与版本。</p>
     );
   }
 
@@ -67,7 +62,7 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
 
   return (
     <>
-      <p className="group-label">这台机器</p>
+      <p className="group-label">这台电脑</p>
       <section className="group">
         {usage ? (
           <div className="setting">
@@ -142,9 +137,7 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
           </div>
         ) : null}
       </section>
-      <p className="group-note">
-        只读；这些都是桌面端的决定，修改仍在电脑上完成。机器级写入不会从手机发起。
-      </p>
+      <p className="group-note">只读；修改仍在电脑上完成。</p>
     </>
   );
 }

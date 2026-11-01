@@ -113,7 +113,7 @@ function signInFailureText(failure: unknown): string {
 /** The three settings panes, in swipe order. */
 const PANE_OPTIONS = [
   { value: "connect", label: "电脑" },
-  { value: "machine", label: "机器" },
+  { value: "account", label: "账号" },
   { value: "prefs", label: "偏好" },
 ] as const;
 
@@ -382,7 +382,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           if (!(await restore(next))) onFailed?.(failure);
           setError(
             `连上了地址，但读不到会话：${failure.message}` +
-              (previous?.vpn ? " 检测到 VPN/代理，请在代理里放行局域网或暂时关闭。" : ""),
+              (previous?.vpn ? " 检测到 VPN/代理，可在「电脑」页改代理策略。" : ""),
           );
           return false;
         }
@@ -450,8 +450,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         } else if (failureCode === "device.pair_unreachable" || failureCode === "proxy.upstream_unreachable") {
           // A network failure does not spend the code; keep it for the retry.
           setError(
-            "到不了这台电脑：确认手机和电脑在同一 Wi-Fi，并使用二维码里的地址。" +
-              (previous?.vpn ? " 检测到 VPN/代理，请在代理里放行局域网或暂时关闭。" : ""),
+            "到不了这台电脑：确认在同一 Wi-Fi，且用二维码里的地址。" +
+              (previous?.vpn ? " 检测到 VPN/代理，可在「电脑」页改代理策略。" : ""),
           );
         } else {
           setError(`没连上：${failureCode}`);
@@ -468,13 +468,16 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     async (deviceId: string) => {
       const target = devices.find((device) => device.id === deviceId);
       if (target && Array.isArray(target.capabilities) && !target.capabilities.includes("desktop")) {
-        setError("这台电脑没有开启「互联网远程访问」。请在电脑 Studio 的「设备访问」里打开互联网连接后再试。");
+        setError("这台电脑未开启「互联网远程访问」，去电脑 Studio 的「设备访问」打开后再试。");
         return;
       }
       setBusy("正在连接云端");
       setError("");
       setRetrust(null);
       setPending({ kind: "cloud", name: target?.name ?? target?.id ?? deviceId });
+      // The link's progress and its errors are drawn on the computer pane;
+      // the tap happened on the account pane, so follow the attempt back.
+      setPane("connect");
       let link: Awaited<ReturnType<typeof connectRelay>> | null = null;
       try {
         link = await connectRelay(deviceId, { confirm: confirmTrust });
@@ -765,6 +768,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   /**
    * Drop the active upstream without touching the saved rows: the phone goes
    * offline by choice, and reconnecting is a tap on a remembered computer.
+   */
+  /**
+   * Drop the active upstream without touching the saved rows: the phone goes
+   * offline by choice, and reconnecting is a tap on a remembered computer.
    *
    * The proxy is asked first. Tearing the web-side relay down before the
    * POST answers would kill a live connection on a failure — an old shell
@@ -885,7 +892,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           )}
           <div className="settings-title">
             <h1>设置</h1>
-            <span>连接、机器与偏好</span>
+            <span>连接、账号与偏好</span>
           </div>
           {onClose ? (
             <button type="button" className="linkbtn" onClick={onClose}>
@@ -912,7 +919,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
         ) : null}
 
-        {pane === "machine" ? <MachinePanel base={machineBase} /> : null}
+        {pane === "connect" ? <MachinePanel base={machineBase} /> : null}
 
         {/* Places this phone has already connected to. The current one is
             marked; the rest are one tap away, with a way to forget a computer
@@ -969,7 +976,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               })}
             </section>
             <p className="group-note">
-              回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换；× 会移除记录，云端电脑同时忘记已确认的身份。
+              点一行切换；× 移除记录。
             </p>
             {config?.origin || config?.mode === "relay" ? (
               <button type="button" className="setting action danger" onClick={() => void disconnect()} disabled={busy !== ""}>
@@ -1005,13 +1012,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </button>
         </section>
         <p className="group-note">
-          浏览器能连、App 不能时：在电脑上点「换一个」，把新链接复制到手机（先别在浏览器里打开），再点「粘贴链接」。
+          浏览器能连、App 不能时：在电脑上点「换一个」，把新链接复制到这里。
         </p>
-        {config?.vpn ? (
-          <p className="group-note">
-            检测到 VPN/代理。局域网连接会优先走 Wi-Fi/以太网；如果电脑仍不可达，请在代理里放行局域网，或暂时关闭代理。
-          </p>
-        ) : null}
 
         <details className="group manual-group">
           <summary className="setting manual-summary">
@@ -1058,7 +1060,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </button>
         </details>
         <p className="group-note">
-          只有已知完整地址时才需要手动填写；配对码 5 分钟内有效，且只能用一次。
+          配对码 5 分钟内有效，只能用一次。
         </p>
 
         {busy && busy !== "正在连接" && busy !== "正在打开相机" ? (
@@ -1087,9 +1089,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         <details className="group-note">
           <summary>局域网还是连不上？</summary>
           <div>
-            用电脑「设备访问」里的局域网二维码，地址通常是 http://电脑IP:随机端口，不要手填
-            8791（那是 Studio 主服务端口）。手机浏览器也打不开二维码链接时，检查电脑防火墙是否放行该端口、手机和电脑是否在同一
-            Wi-Fi、路由器是否开启了 AP 隔离或 VPN。
+            用电脑「设备访问」里的局域网二维码，不要手填 8791（那是 Studio 主端口）。仍不通时检查电脑防火墙、
+            是否同一 Wi-Fi、路由器是否开了 AP 隔离或 VPN。
           </div>
         </details>
           </>
@@ -1118,9 +1119,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             />
           </div>
         </section>
-        <p className="group-note">
-          只影响这台手机；桌面端的外观是它自己的设置。{FOLD_NOTE}
-        </p>
+        <p className="group-note">只影响这台手机。{FOLD_NOTE}</p>
 
         {background ? (
           <>
@@ -1154,8 +1153,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               </button>
             </section>
             <p className="group-note">
-              运行中的会话由前台服务照看；系统收紧后台时，通知权限和电池优化都放开才能及时提醒。
-              在系统通知设置里把「需要你处理」频道设为重要，锁屏才会有横幅。
+              两项都放开，锁屏提醒才及时；通知设置里把「需要你处理」频道设为重要。
             </p>
           </>
         ) : null}
@@ -1169,14 +1167,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <div className="setting">
             <span className="setting-main">
               <span className="setting-title">协议</span>
-              <span className="setting-sub">客户端只读它认识的字段，桌面端可以独立升级</span>
+              <span className="setting-sub">客户端只读它认识的字段</span>
             </span>
           </div>
         </section>
           </>
         ) : null}
 
-        {pane === "connect" ? (
+        {pane === "account" ? (
           <>
         <p className="group-label">Reasonix 账号</p>
         <section className="group">
@@ -1209,9 +1207,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </div>
         ) : null}
         <p className="group-note">
-          {account.signedIn
-            ? "云端连接不需要两台设备在同一网络。"
-            : "登录后可在不同网络下使用云端连接；局域网扫码不需要账号。"}
+          {account.signedIn ? "云端连接不受网络限制。" : "登录后可在不同网络下用云端连接；局域网扫码不需要账号。"}
         </p>
 
         {grant ? (
@@ -1310,7 +1306,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                 );
               })}
             </section>
-            <p className="group-note">同一账号下开启了远程访问的电脑。</p>
+        <p className="group-note">同一账号下开启了远程访问的电脑。</p>
           </>
         ) : null}
           </>

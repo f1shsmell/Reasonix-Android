@@ -254,7 +254,7 @@ describe("ConnectScreen", () => {
       expect(activePane()).toBe("电脑");
 
       swipeOn(root, [300, 300], [120, 310]);
-      expect(activePane()).toBe("机器");
+      expect(activePane()).toBe("账号");
 
       swipeOn(root, [120, 300], [300, 310]);
       expect(activePane()).toBe("电脑");
@@ -331,6 +331,7 @@ describe("ConnectScreen", () => {
     );
     vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
     await renderScreen();
+    await press("账号");
 
     await pressRow("DESKTOP", "windows");
 
@@ -348,6 +349,7 @@ describe("ConnectScreen", () => {
     );
     vi.mocked(listRemoteDevices).mockResolvedValue([device({ capabilities: [] })]);
     await renderScreen();
+    await press("账号");
 
     const deviceRow = row("DESKTOP", "windows", "未开启远程访问");
     expect(deviceRow.disabled).toBe(true);
@@ -361,6 +363,7 @@ describe("ConnectScreen", () => {
     vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
     vi.mocked(connectRelay).mockRejectedValue(new Error("relay down"));
     await renderScreen();
+    await press("账号");
 
     await pressRow("DESKTOP", "windows");
 
@@ -372,6 +375,7 @@ describe("ConnectScreen", () => {
       config({ account: { signedIn: true, user: { label: "me" } } }),
     );
     await renderScreen();
+    await press("账号");
 
     await press("退出登录");
 
@@ -562,6 +566,7 @@ describe("ConnectScreen account sign-in", () => {
         }),
     );
     await renderScreen();
+    await press("账号");
 
     await press("登录 Reasonix 账号");
 
@@ -583,6 +588,7 @@ describe("ConnectScreen account sign-in", () => {
   it("signs in with the account form and approves the code", async () => {
     vi.mocked(startAccount).mockResolvedValue(grant());
     await renderScreen();
+    await press("账号");
 
     await press("登录 Reasonix 账号");
     await typeInto('input[type="email"]', "me@example.com");
@@ -599,6 +605,7 @@ describe("ConnectScreen account sign-in", () => {
     vi.mocked(startAccount).mockResolvedValue(grant());
     vi.mocked(signInAccount).mockRejectedValue(new ProxyError(401, "invalid_credentials"));
     await renderScreen();
+    await press("账号");
 
     await press("登录 Reasonix 账号");
     await typeInto('input[type="email"]', "me@example.com");
@@ -613,6 +620,7 @@ describe("ConnectScreen account sign-in", () => {
   it("explains a timeout next to the login button, not above the fold", async () => {
     vi.mocked(startAccount).mockRejectedValue(new RequestTimeout(25_000));
     await renderScreen();
+    await press("账号");
 
     await press("登录 Reasonix 账号");
 
@@ -625,6 +633,7 @@ describe("ConnectScreen account sign-in", () => {
   it("names the service when the phone cannot reach it", async () => {
     vi.mocked(startAccount).mockRejectedValue(new ProxyError(502, "proxy.upstream_unreachable"));
     await renderScreen();
+    await press("账号");
 
     await press("登录 Reasonix 账号");
 
@@ -656,6 +665,7 @@ describe("ConnectScreen hero", () => {
     vi.mocked(listRemoteDevices).mockResolvedValue([device()]);
     vi.mocked(connectRelay).mockImplementation(() => new Promise(() => {}));
     await renderScreen();
+    await press("账号");
 
     await pressRow("DESKTOP", "windows");
 
@@ -711,10 +721,16 @@ describe("ConnectScreen first trust", () => {
     });
   }
 
+  /** Cloud devices live on the account pane; every test below starts there. */
+  async function renderAccount(): Promise<void> {
+    await renderScreen();
+    await press("账号");
+  }
+
   it("shows the fingerprint before the first cloud connection", async () => {
     signedInWithDevice();
     awaitingTrust();
-    await renderScreen();
+    await renderAccount();
 
     await pressRow("DESKTOP", "windows");
 
@@ -731,7 +747,7 @@ describe("ConnectScreen first trust", () => {
   it("leaves the relay alone when the person declines", async () => {
     signedInWithDevice();
     awaitingTrust();
-    await renderScreen();
+    await renderAccount();
 
     await pressRow("DESKTOP", "windows");
     await press("取消");
@@ -748,7 +764,7 @@ describe("ConnectScreen first trust", () => {
     vi.mocked(connectRelay).mockRejectedValue(
       new RelayError("trust_changed", "这台电脑的身份指纹和上次不同，连接已拒绝。"),
     );
-    await renderScreen();
+    await renderAccount();
 
     await pressRow("DESKTOP", "windows");
     await settle();
@@ -767,7 +783,7 @@ describe("ConnectScreen first trust", () => {
       if (!accepted) throw new RelayError("trust_cancelled", "已取消确认这台电脑的身份。");
       return { close: vi.fn() } as unknown as Awaited<ReturnType<typeof connectRelay>>;
     });
-    await renderScreen();
+    await renderAccount();
 
     await pressRow("DESKTOP", "windows");
     await settle();
@@ -787,7 +803,7 @@ describe("ConnectScreen first trust", () => {
   it("resolves a pending prompt when the screen goes away", async () => {
     signedInWithDevice();
     awaitingTrust();
-    await renderScreen();
+    await renderAccount();
 
     await pressRow("DESKTOP", "windows");
     expect(container.querySelector(".trust-sheet")).not.toBeNull();
