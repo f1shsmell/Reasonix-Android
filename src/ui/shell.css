@@ -515,21 +515,38 @@ pre.frame {
 }
 
 /* The lifted row is drawn as a fixed ghost; its slot stays in the flow so the
-   rows below can move aside without the list jumping. */
-.list[data-dragging] > li {
+   rows below can move aside without the list jumping.
+
+   These rules are keyed on the attributes `useRowDrag` writes rather than on a
+   list class, because the same gesture drives three different containers: the
+   project `ul.list`, the switch sheet's `ul.sheet-actions` and the settings
+   `section.group`. Scoping them to `.list` left the two newer surfaces with no
+   ghost slot, no shift and no drop line.
+
+   `animation: none` is not decoration: the rows carry an entrance animation
+   with `fill-mode: both`, and an animation keeps ownership of `transform` and
+   `opacity` even after it ends. Without this the shift the finger asks for is
+   drawn from an inline style the animation silently overrides, so a drag moved
+   the data and nothing on screen.
+
+   `touch-action: none` keeps the browser from turning the gesture into a pan
+   mid-drag, which is what a `pointercancel` on Android would be. */
+[data-dragging] > * {
+  animation: none;
+  touch-action: none;
   transition: transform 180ms var(--ease-out);
   will-change: transform;
 }
 
-.list li.dragging {
+.dragging {
   opacity: 0;
 }
 
-.list li[data-drop="before"] {
+[data-drop="before"] {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-.list li[data-drop="after"] {
+[data-drop="after"] {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
@@ -560,7 +577,7 @@ pre.frame {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .list[data-dragging] > li {
+  [data-dragging] > * {
     transition: none;
   }
 }

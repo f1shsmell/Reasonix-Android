@@ -23,6 +23,17 @@ export interface SavedConnection {
   name: string;
   /** Unix milliseconds of the last successful connect. */
   usedAt: number;
+  /**
+   * Where this row sits in the order the app tries its doors.
+   *
+   * Explicit rather than "newest first" because the order is a decision: a
+   * phone that lost its Wi-Fi should walk the person's own list — home, then
+   * office, then the account — instead of spending its attempts on whichever
+   * computer happened to be used most recently. Rows written before this
+   * existed are migrated once, from `usedAt`, so an upgrade keeps a sensible
+   * order instead of inventing one.
+   */
+  order: number;
 }
 
 const KEY = "reasonix.connections.v1";
@@ -79,33 +90,87 @@ function read(): SavedConnection[] {
       if (!target) continue;
       const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : target;
       const usedAt = typeof row.usedAt === "number" && Number.isFinite(row.usedAt) ? row.usedAt : 0;
+      // `order` arrived after the first releases. A row without one is placed
+      // by recency below, which is exactly what this list meant before it.
+      const order =
+        typeof row.order === "number" && Number.isFinite(row.order) ? row.order : null;
       if (rows.some((candidate) => candidate.kind === kind && candidate.target === target)) continue;
-      rows.push({ kind, target, name, usedAt });
+      rows.push({ kind, target, name, usedAt, order: order ?? Number.POSITIVE_INFINITY });
     }
-    return rows.sort((a, b) => b.usedAt - a.usedAt).slice(0, LIMIT);
+    // Rows that carry an explicit order come first, in it; the ones an older
+    // build wrote follow by recency, so an upgrade keeps its old list. `order`
+    // is then renumbered densely, which is what the drop handler writes back.
+    return rows
+      .sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return b.usedAt - a.usedAt;
+      })
+      .slice(0, LIMIT)
+      .map((row, index) => ({ ...row, order: index }));
   } catch {
     return [];
   }
 }
 
+/** Store rows and hand back the normalised list the caller should draw. */
 function write(rows: SavedConnection[]): SavedConnection[] {
+  const next = rows.map((row, index) => ({ ...row, order: index }));
   try {
-    localStorage.setItem(KEY, JSON.stringify(rows));
+    localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
     // A blocked storage API costs a re-scan, not a connection.
   }
-  return rows;
+  return next;
 }
 
 export function loadConnections(): SavedConnection[] {
   return read();
 }
 
+/** A row's identity: what a reorder moves, and what a saved list keys on. */
+export function connectionKey(kind: SavedConnectionKind, target: string): string {
+  return `${kind}:${normalizeTarget(kind, target) || target.trim()}`;
+}
+
 /**
- * Record a successful connection, newest first.
+ * The list with one row moved to `index`, the way a drop describes it.
  *
- * The same target moves to the front instead of appearing twice; a later name
- * (an account's computer name arriving after the id) replaces the old one.
+ * `index` is a slot in the *current* list — the same number `insertAt` answers
+ * — so moving a row down by one has to land before the row it passed rather
+ * than after it. A drop that changes nothing answers the same array, which is
+ * what keeps a settled drag from writing storage.
+ */
+export function reorderConnections(
+  rows: SavedConnection[],
+  key: string,
+  index: number,
+): SavedConnection[] {
+  const from = rows.findIndex((row) => connectionKey(row.kind, row.target) === key);
+  if (from < 0) return rows;
+  const clamped = Math.max(0, Math.min(index, rows.length));
+  const at = from < clamped ? clamped - 1 : clamped;
+  if (at === from) return rows;
+  const next = [...rows];
+  const [moving] = next.splice(from, 1);
+  if (!moving) return rows;
+  next.splice(at, 0, moving);
+  return next.map((row, position) => ({ ...row, order: position }));
+}
+
+/** Move one saved row and keep the new order. */
+export function moveConnection(key: string, index: number): SavedConnection[] {
+  const rows = read();
+  const next = reorderConnections(rows, key, index);
+  return next === rows ? rows : write(next);
+}
+
+/**
+ * Record a successful connection.
+ *
+ * A target already in the list keeps its place: the order is the person's, and
+ * reconnecting to a computer must not quietly move it. A new target joins at
+ * the end, where the next drop can put it, instead of jumping the queue of a
+ * list someone arranged on purpose. Only the name and the time are refreshed.
  */
 export function rememberConnection(
   kind: SavedConnectionKind,
@@ -115,9 +180,22 @@ export function rememberConnection(
   const normalized = normalizeTarget(kind, target);
   if (!normalized) return read();
   const label = name?.trim() || (kind === "lan" ? originName(normalized) : normalized);
-  const next = read().filter((row) => !(row.kind === kind && row.target === normalized));
-  next.unshift({ kind, target: normalized, name: label, usedAt: Date.now() });
-  return write(next.slice(0, LIMIT));
+  const rows = read();
+  const existing = rows.find((row) => row.kind === kind && row.target === normalized);
+  if (existing) {
+    return write(
+      rows.map((row) =>
+        row === existing ? { ...row, name: label, usedAt: Date.now() } : row,
+      ),
+    );
+  }
+  // A full list drops its last row rather than refusing the computer just
+  // reached; the person can reorder or forget to make room deliberately.
+  const kept = rows.length >= LIMIT ? rows.slice(0, LIMIT - 1) : rows;
+  return write([
+    ...kept,
+    { kind, target: normalized, name: label, usedAt: Date.now(), order: kept.length },
+  ]);
 }
 
 export function forgetConnection(kind: SavedConnectionKind, target: string): SavedConnection[] {
@@ -130,7 +208,17 @@ export function forgetCloudConnections(): SavedConnection[] {
   return write(read().filter((row) => row.kind !== "cloud"));
 }
 
-/** The most recent target of one kind, or "" when none was recorded. */
+/**
+ * The target of one kind that was connected most recently.
+ *
+ * Recency, not list position: this is the "last computer this phone used"
+ * hint, which a reorder must not change.
+ */
 export function latestConnection(kind: SavedConnectionKind): SavedConnection | null {
-  return read().find((row) => row.kind === kind) ?? null;
+  const rows = read().filter((row) => row.kind === kind);
+  let best: SavedConnection | null = null;
+  for (const row of rows) {
+    if (best === null || row.usedAt > best.usedAt) best = row;
+  }
+  return best;
 }

@@ -50,13 +50,16 @@ import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
 import { clearRelayDevice } from "../net/relayStore";
 import {
+  connectionKey,
   forgetCloudConnections,
   forgetConnection,
   loadConnections,
+  moveConnection,
   normalizeTarget,
   rememberConnection,
 } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
+import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
 import { RequestTimeout } from "../net/http";
 import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
@@ -214,6 +217,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
    * field or on a sheet belongs to that control, not to the page.
    */
   const onPaneTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    // A fresh gesture is never the tail of a drag, so the flag a finished drag
+    // leaves behind is cleared here rather than inside the hook.
+    savedDrag.swallowSwipe.current = false;
     const start = event.touches[0];
     if (!start) return;
     const target = event.target as Element | null;
@@ -227,6 +233,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const onPaneTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
     const start = paneTouch.current;
     paneTouch.current = null;
+    // A drag that reordered the saved list ends with the same `touchend` a
+    // sideways pane swipe would: letting it through would switch panes while
+    // the person was arranging their computers.
+    if (savedDrag.swallowSwipe.current) {
+      savedDrag.swallowSwipe.current = false;
+      return;
+    }
     if (!start || start.owned) return;
     const end = event.changedTouches[0];
     if (!end) return;
@@ -871,6 +884,21 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
       : entry.name;
   const currentEntry = saved.find((entry) => current(entry)) ?? null;
+
+  /**
+   * The saved list is also the retry order, so it is rearranged here as well
+   * as in 切换连接. Both write the same record; whichever is open shows the
+   * order the next reconnect will walk.
+   */
+  const savedDrag = useRowDrag<HTMLElement>({
+    rows: saved.map((entry) => ({
+      key: connectionKey(entry.kind, entry.target),
+      movable: true,
+    })),
+    enabled: busy === "" && pane === "connect",
+    scrollerSelector: ".connect",
+    place: (key, index) => setSaved(moveConnection(key, index)),
+  });
   const relayName =
     config?.mode === "relay" && config.relayDevice
       ? devices.find((device) => device.id === config.relayDevice)?.name
@@ -987,14 +1015,24 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         {pane === "connect" && saved.length > 0 ? (
           <>
             <p className="group-label">已连接的电脑</p>
-            <section className="group">
-              {saved.map((entry) => {
+            <section
+              className="group"
+              ref={savedDrag.listRef}
+              data-dragging={savedDrag.state ? "true" : undefined}
+            >
+              {saved.map((entry, index) => {
                 const label = labelOf(entry);
                 const here = current(entry);
+                const key = connectionKey(entry.kind, entry.target);
+                const shift = dragShift(savedDrag.state, index);
                 return (
                   <div
-                    className="setting saved-row"
-                    key={`${entry.kind}:${entry.target}`}
+                    className={`setting saved-row${savedDrag.state?.key === key ? " dragging" : ""}`}
+                    key={key}
+                    data-drag-key={key}
+                    data-drop={dropEdge(savedDrag.state, index, saved.length)}
+                    style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
+                    {...savedDrag.row(key)}
                   >
                     <button
                       type="button"
@@ -1039,7 +1077,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               })}
             </section>
             <p className="group-note">
-              点一行切换；× 移除记录。离开后自动改用云端。
+              点一行切换；按住一行拖动可调整重连顺序；× 移除记录。离开后自动改用云端。
             </p>
             {config?.origin || config?.mode === "relay" ? (
               <button type="button" className="setting action danger" onClick={() => void disconnect()} disabled={busy !== ""}>

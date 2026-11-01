@@ -1,17 +1,20 @@
 /**
- * Reordering the project list by holding a row and dragging it.
+ * Reordering a list by holding a row and dragging it.
  *
  * The dragged row lifts into a fixed ghost that follows the finger, while the
- * rows between its old and new slots move aside. The drop is still a preview:
- * the kernel owns the order, and the caller re-reads after the write. A press
- * that moves before the hold expires is a scroll and cancels the drag.
+ * rows between its old and new slots move aside. A press that moves before the
+ * hold expires is a scroll and cancels the drag.
+ *
+ * The hook knows nothing about what it is ordering: a row is a key, and a drop
+ * is a slot index. The project list turns that into the kernel's "put this
+ * before that" write; the connection list turns it into a stored rank.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { dropBefore, insertAt, type OrderRow } from "./projectOrder";
+import { insertAt } from "./projectOrder";
 
-/** How long a project row rests before it is picked up. */
+/** How long a row rests before it is picked up. */
 export const DRAG_HOLD_MS = 400;
 
 /** How far a finger may drift before the press is a scroll. */
@@ -26,20 +29,39 @@ const EDGE_SPEED = 6;
 /** The drop animation's length; the preview stays this long before settling. */
 const DROP_MS = 180;
 
-export interface ProjectDragState {
-  root: string;
+/** The attribute a row carries so the hook can find it and measure it. */
+export const DRAG_KEY_ATTRIBUTE = "data-drag-key";
+
+export interface RowDragState {
+  key: string;
   from: number;
   insertAt: number;
   /** The lifted row's height, used to shift its neighbours. */
   height: number;
 }
 
-export interface ProjectDragHandlers {
+export interface RowDragHandlers {
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerCancel: () => void;
   onClickCapture: (event: React.MouseEvent<HTMLElement>) => void;
+}
+
+/** One row the hook may pick up. */
+export interface DragRow {
+  key: string;
+  /** A row that is shown but must not move (a folder the kernel does not own). */
+  movable: boolean;
+}
+
+export interface RowDrag<T extends HTMLElement = HTMLElement> {
+  state: RowDragState | null;
+  listRef: RefObject<T | null>;
+  /** Props for one row; the row's own tap still opens it. */
+  row: (key: string) => RowDragHandlers;
+  /** Set while a drag is in progress, so a page swipe leaves it alone. */
+  swallowSwipe: RefObject<boolean>;
 }
 
 interface Bounds {
@@ -48,7 +70,7 @@ interface Bounds {
 }
 
 interface Live {
-  root: string;
+  key: string;
   node: HTMLElement;
   pointerId: number;
   startX: number;
@@ -67,13 +89,52 @@ interface Live {
   ghost: HTMLElement | null;
 }
 
-export interface ProjectDrag {
-  state: ProjectDragState | null;
-  listRef: RefObject<HTMLUListElement | null>;
-  /** Props for one project row; the row's own tap still opens it. */
-  row: (root: string) => ProjectDragHandlers;
-  /** Set while a drag is in progress, so the tab swipe leaves it alone. */
-  swallowSwipe: RefObject<boolean>;
+export interface RowDragOptions {
+  rows: DragRow[];
+  enabled: boolean;
+  /**
+   * The row landed in slot `index` of the list as it was drawn.
+   *
+   * Called once per completed drop, after the ghost has settled; the caller
+   * owns the write and the re-read.
+   */
+  place: (key: string, index: number) => void;
+  /** The element that scrolls the list, for edge auto-scroll. */
+  scrollerSelector?: string;
+  /**
+   * The caller's swipe-suppression flag, when more than one drag shares a
+   * gesture owner.
+   *
+   * A sheet rendered inside a page that also swipes would otherwise need to
+   * copy the flag out of this hook on every render, and would still lose the
+   * race: `pointerup` sets it and the page's `touchend` reads it a frame
+   * later. Handing the ref in lets both see the same boolean.
+   */
+  swallowSwipe?: RefObject<boolean>;
+}
+
+/** How far a row moves aside to open the gap under the finger. */
+export function dragShift(state: RowDragState | null, index: number): number {
+  if (state === null || index === state.from) return 0;
+  if (state.from < state.insertAt && index > state.from && index < state.insertAt) {
+    return -state.height;
+  }
+  if (state.insertAt < state.from && index >= state.insertAt && index < state.from) {
+    return state.height;
+  }
+  return 0;
+}
+
+/** Which row carries the line showing where the dragged row would land. */
+export function dropEdge(
+  state: RowDragState | null,
+  index: number,
+  count: number,
+): "before" | "after" | undefined {
+  if (state === null) return undefined;
+  if (state.insertAt === index) return "before";
+  if (state.insertAt >= count && index === count - 1) return "after";
+  return undefined;
 }
 
 /** Move the lifted row without re-rendering the list on every frame. */
@@ -83,11 +144,15 @@ function placeGhost(current: Live, offsetY: number): void {
   }
 }
 
+function rowNodes(list: HTMLElement | null): HTMLElement[] {
+  if (!list) return [];
+  return Array.from(list.querySelectorAll<HTMLElement>(`[${DRAG_KEY_ATTRIBUTE}]`));
+}
+
 /** The viewport top of the gap the row would land in. */
-function gapTop(current: Live, list: HTMLUListElement | null): number {
+function gapTop(current: Live, list: HTMLElement | null): number {
   if (!list) return current.startTop;
-  const nodes = Array.from(list.querySelectorAll<HTMLElement>("[data-project-root]"));
-  const boxes = nodes.map((node) => node.getBoundingClientRect());
+  const boxes = rowNodes(list).map((node) => node.getBoundingClientRect());
   if (current.insertAt >= boxes.length) {
     return boxes[boxes.length - 1]?.bottom ?? current.startTop;
   }
@@ -97,16 +162,19 @@ function gapTop(current: Live, list: HTMLUListElement | null): number {
   return target.top - current.height;
 }
 
-export function useProjectDrag(
-  rows: OrderRow[],
-  enabled: boolean,
-  place: (root: string, before: string) => void,
-): ProjectDrag {
-  const listRef = useRef<HTMLUListElement | null>(null);
+export function useRowDrag<T extends HTMLElement = HTMLElement>({
+  rows,
+  enabled,
+  place,
+  scrollerSelector = ".body",
+  swallowSwipe: sharedSwipe,
+}: RowDragOptions): RowDrag<T> {
+  const listRef = useRef<T | null>(null);
   const live = useRef<Live | null>(null);
   const swallowClick = useRef(false);
-  const swallowSwipe = useRef(false);
-  const [state, setState] = useState<ProjectDragState | null>(null);
+  const ownSwipe = useRef(false);
+  const swallowSwipe = sharedSwipe ?? ownSwipe;
+  const [state, setState] = useState<RowDragState | null>(null);
 
   const measure = useCallback((current: Live, y: number): number => {
     const list = listRef.current;
@@ -128,7 +196,11 @@ export function useProjectDrag(
     }
     if (current?.ghost?.parentNode) current.ghost.parentNode.removeChild(current.ghost);
     listRef.current?.removeAttribute("data-dragging");
-    swallowSwipe.current = false;
+    // `swallowSwipe` is deliberately left set: a touch drag ends with a
+    // `touchend` after this `pointerup`, and clearing the flag here would let
+    // that release be read as a sideways swipe between the home views. The
+    // consumer clears it when it eats the gesture, and a fresh `touchstart`
+    // clears it anyway, so a mouse drag cannot leave it stuck.
     setState(null);
   }, []);
 
@@ -141,7 +213,7 @@ export function useProjectDrag(
         settle();
         return;
       }
-      const nodes = Array.from(list.querySelectorAll<HTMLElement>("[data-project-root]"));
+      const nodes = rowNodes(list);
       const from = nodes.indexOf(current.node);
       const rect = current.node.getBoundingClientRect();
       if (from < 0) {
@@ -164,18 +236,31 @@ export function useProjectDrag(
       } catch {
         // A synthetic or already-released pointer cannot be captured.
       }
-      const scroller = list.closest<HTMLElement>(".body");
+      // The browser decides between a pan and a drag from the gesture's first
+      // frames, so the row has to claim it the moment the hold succeeds: an
+      // inline `touch-action` applies to the rest of this gesture, where a
+      // stylesheet rule keyed on the drag state would arrive a frame too late.
+      const claimed = current.node.style.touchAction;
+      current.node.style.touchAction = "none";
+      const scroller = list.closest<HTMLElement>(scrollerSelector);
       if (scroller) {
         const prevent = (event: TouchEvent) => {
           if (event.cancelable) event.preventDefault();
         };
         scroller.addEventListener("touchmove", prevent, { passive: false });
-        current.release = () => scroller.removeEventListener("touchmove", prevent);
+        current.release = () => {
+          scroller.removeEventListener("touchmove", prevent);
+          current.node.style.touchAction = claimed;
+        };
+      } else {
+        current.release = () => {
+          current.node.style.touchAction = claimed;
+        };
       }
 
       const ghost = current.node.cloneNode(true) as HTMLElement;
       ghost.classList.remove("dragging");
-      ghost.removeAttribute("data-project-root");
+      ghost.removeAttribute(DRAG_KEY_ATTRIBUTE);
       ghost.removeAttribute("data-drop");
       ghost.setAttribute("aria-hidden", "true");
       ghost.classList.add("drag-ghost");
@@ -192,19 +277,19 @@ export function useProjectDrag(
       list.setAttribute("data-dragging", "true");
       placeGhost(current, 0);
       if (typeof navigator.vibrate === "function") navigator.vibrate(10);
-      setState({ root: current.root, from, insertAt: current.insertAt, height: rect.height });
+      setState({ key: current.key, from, insertAt: current.insertAt, height: rect.height });
     },
-    [settle],
+    [scrollerSelector, settle],
   );
 
   const row = useCallback(
-    (root: string): ProjectDragHandlers => ({
+    (key: string): RowDragHandlers => ({
       onPointerDown: (event) => {
         if (!enabled || live.current) return;
-        if (!rows.find((candidate) => candidate.root === root)?.remembered) return;
+        if (!rows.find((candidate) => candidate.key === key)?.movable) return;
         swallowClick.current = false;
         const current: Live = {
-          root,
+          key,
           node: event.currentTarget,
           pointerId: event.pointerId,
           startX: event.clientX,
@@ -228,7 +313,7 @@ export function useProjectDrag(
       },
       onPointerMove: (event) => {
         const current = live.current;
-        if (!current || current.root !== root || event.pointerId !== current.pointerId) return;
+        if (!current || current.key !== key || event.pointerId !== current.pointerId) return;
         current.y = event.clientY;
         if (current.dropping) return;
         if (!current.armed) {
@@ -241,16 +326,20 @@ export function useProjectDrag(
         const at = measure(current, event.clientY);
         if (at === current.insertAt) return;
         current.insertAt = at;
-        setState({ root, from: current.from, insertAt: at, height: current.height });
+        setState({ key, from: current.from, insertAt: at, height: current.height });
       },
       onPointerUp: (event) => {
         const current = live.current;
-        if (!current || current.root !== root || event.pointerId !== current.pointerId) return;
+        if (!current || current.key !== key || event.pointerId !== current.pointerId) return;
         if (current.dropping) return;
         const armed = current.armed;
         const at = current.insertAt;
-        const before = dropBefore(rows, root, at);
-        if (!armed || before === null) {
+        // A slot equal to the row's own, or the one just after it, describes
+        // the position it already occupies: nothing moved, so nothing is
+        // written and the ghost settles straight away instead of playing a
+        // drop animation that would land back on the same row.
+        const unchanged = at === current.from || at === current.from + 1;
+        if (!armed || unchanged) {
           settle();
           return;
         }
@@ -265,13 +354,13 @@ export function useProjectDrag(
           ghost.style.opacity = "0.82";
         }
         if (typeof navigator.vibrate === "function") navigator.vibrate(8);
-        place(root, before);
+        place(key, at);
         window.setTimeout(() => {
           if (live.current === current) settle();
         }, DROP_MS);
       },
       onPointerCancel: () => {
-        if (live.current?.root === root) settle();
+        if (live.current?.key === key) settle();
       },
       onClickCapture: (event) => {
         if (!swallowClick.current) return;
@@ -287,7 +376,7 @@ export function useProjectDrag(
   useEffect(() => {
     if (!dragging) return;
     if (typeof requestAnimationFrame !== "function") return;
-    const scroller = listRef.current?.closest<HTMLElement>(".body");
+    const scroller = listRef.current?.closest<HTMLElement>(scrollerSelector);
     if (!scroller) return;
     let frame = 0;
     const tick = () => {
@@ -304,7 +393,7 @@ export function useProjectDrag(
             const at = measure(current, current.y);
             if (at !== current.insertAt) {
               current.insertAt = at;
-              setState({ root: current.root, from: current.from, insertAt: at, height: current.height });
+              setState({ key: current.key, from: current.from, insertAt: at, height: current.height });
             }
           }
         }
@@ -313,7 +402,7 @@ export function useProjectDrag(
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [dragging, measure]);
+  }, [dragging, measure, scrollerSelector]);
 
   return { state, listRef, row, swallowSwipe };
 }

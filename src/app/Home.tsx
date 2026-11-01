@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
@@ -21,14 +22,15 @@ import { placeProject, removeSession, renameSession, setPinned, treeWriteMessage
 import type { TreeWrite } from "../net/pin";
 import { linkSummary, linkTone } from "../net/link";
 import type { LinkState } from "../net/link";
-import { loadConnections } from "../net/savedConnections";
+import { connectionKey, loadConnections, moveConnection } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
 import { originKey, peerTone } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { insideHorizontalScroller, swipeTo } from "./swipe";
 import type { HomeTab } from "./swipe";
-import { useProjectDrag } from "./useProjectDrag";
-import type { ProjectDragHandlers, ProjectDragState } from "./useProjectDrag";
+import { dropBefore } from "./projectOrder";
+import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
+import type { RowDragHandlers } from "./useRowDrag";
 import { useLongPress } from "./longPress";
 import { useBackCloser } from "./backStack";
 import { SessionSheet } from "./SessionSheet";
@@ -149,30 +151,6 @@ function summary(project: TreeProject): string {
   parts.push(project.total > 0 ? `${project.total} 个会话` : "还没有会话");
   if (project.missing) parts.push("文件夹不见了");
   return parts.join(" · ");
-}
-
-/** Which row carries the line showing where a dragged project would land. */
-function dropEdge(
-  state: ProjectDragState | null,
-  index: number,
-  count: number,
-): "before" | "after" | undefined {
-  if (state === null) return undefined;
-  if (state.insertAt === index) return "before";
-  if (state.insertAt >= count && index === count - 1) return "after";
-  return undefined;
-}
-
-/** How far a row moves aside to open the gap under the finger. */
-function dragShift(state: ProjectDragState | null, index: number): number {
-  if (state === null || index === state.from) return 0;
-  if (state.from < state.insertAt && index > state.from && index < state.insertAt) {
-    return -state.height;
-  }
-  if (state.insertAt < state.from && index >= state.insertAt && index < state.from) {
-    return state.height;
-  }
-  return 0;
 }
 
 /**
@@ -404,6 +382,8 @@ function SwitchSheet({
   onSwitch,
   onRetry,
   onManage,
+  onReorder,
+  onDragRef,
 }: {
   link: LinkState;
   saved: SavedConnection[];
@@ -413,9 +393,31 @@ function SwitchSheet({
   onSwitch: (entry: SavedConnection) => void;
   onRetry: () => void;
   onManage: () => void;
+  /** A drop that changed the order, already written to storage. */
+  onReorder: (rows: SavedConnection[]) => void;
+  /**
+   * The shell's swipe-suppression flag, shared so a drag in this sheet does
+   * not also change the view behind it.
+   */
+  onDragRef: RefObject<boolean>;
 }) {
   const busy = link.phase === "connecting" || link.phase === "reconnecting";
   useBackCloser(true, onClose);
+  // The sheet is the scroller: it caps its own height rather than sitting in
+  // the page body, so a drag near its edge has to scroll it.
+  const drag = useRowDrag<HTMLUListElement>({
+    rows: saved.map((entry) => ({
+      key: connectionKey(entry.kind, entry.target),
+      movable: true,
+    })),
+    enabled: !busy,
+    scrollerSelector: ".sheet",
+    // The sheet is rendered inside Home's shell, whose own swipe handler
+    // decides tab changes. Sharing the parent's flag is what keeps a reorder
+    // drag from also flipping the view behind the sheet.
+    swallowSwipe: onDragRef,
+    place: (key, index) => onReorder(moveConnection(key, index)),
+  });
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -439,8 +441,13 @@ function SwitchSheet({
           </div>
         ) : null}
         {saved.length > 0 ? (
-          <ul className="sheet-actions switch-list">
-            {saved.map((entry) => {
+          <ul
+            className="sheet-actions switch-list"
+            ref={drag.listRef}
+            data-dragging={drag.state ? "true" : undefined}
+          >
+            {saved.map((entry, index) => {
+              const key = connectionKey(entry.kind, entry.target);
               const here = link.phase === "connected" && link.target === entry.target;
               const opening = busy && link.target === entry.target;
               const peer = fleet?.peers.find(
@@ -455,8 +462,16 @@ function SwitchSheet({
               const stateText = peer
                 ? { online: "在线", offline: "不可达", unauthorized: "配对失效", unwatchable: "不可监控", unknown: "" }[peer.state]
                 : "";
+              const shift = dragShift(drag.state, index);
               return (
-                <li key={`${entry.kind}:${entry.target}`}>
+                <li
+                  key={key}
+                  data-drag-key={key}
+                  data-drop={dropEdge(drag.state, index, saved.length)}
+                  className={drag.state?.key === key ? "dragging" : undefined}
+                  style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
+                  {...drag.row(key)}
+                >
                   <button
                     type="button"
                     className="switch-row"
@@ -484,10 +499,20 @@ function SwitchSheet({
         ) : (
           <p className="meta">还没有连接过的电脑。</p>
         )}
+        {saved.length > 1 ? <p className="group-note">按住一行拖动可以调整重连顺序。</p> : null}
         <div className="switch-foot">
           {link.phase === "failed" || link.phase === "reconnecting" ? (
             <button type="button" className="chip" onClick={onRetry}>
               重试连接
+            </button>
+          ) : null}
+          {link.phase === "offline" ? (
+            // The wait is usually the network's, not the link's, so the retry
+            // is offered as a fallback rather than the main action: a phone
+            // that regained Wi-Fi while the app was paused can miss the event
+            // that would have woken this machine by itself.
+            <button type="button" className="chip" onClick={onRetry}>
+              仍然重试
             </button>
           ) : null}
           <button type="button" className="chip accent" onClick={onManage}>
@@ -575,13 +600,14 @@ function ProjectItem({
   drop: "before" | "after" | undefined;
   dragging: boolean;
   shift: number;
-  drag: ProjectDragHandlers;
+  drag: RowDragHandlers;
   onOpen: () => void;
 }) {
   const when = relativeTime(projectActivity(project));
   return (
     <li
       data-project-root={project.root}
+      data-drag-key={project.root}
       data-drop={drop}
       className={dragging ? "dragging" : undefined}
       style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
@@ -805,6 +831,14 @@ export function Home({
    * re-render the list.
    */
   const touch = useRef<{ x: number; y: number; owned: boolean } | null>(null);
+  /**
+   * Set while the switch sheet is reordering its rows.
+   *
+   * The sheet renders inside this shell, so its drag and this screen's
+   * sideways swipe end on the same `touchend`. The ref is handed to the sheet
+   * rather than copied out of it, so both read the same flag.
+   */
+  const switchDrag = useRef(false);
   /** The view that was showing before this one, for the slide direction. */
   const previousTab = useRef(tab);
   const direction = tab === previousTab.current ? "none" : tab === "projects" ? "forward" : "back";
@@ -879,11 +913,26 @@ export function Home({
     onRefresh();
   };
 
-  const drag = useProjectDrag(
-    shownProjects.map((project) => ({ root: project.root, remembered: project.remembered === true })),
-    !needle && !moveBusy,
-    (root, before) => void placeProjectAt(root, before),
-  );
+  const drag = useRowDrag<HTMLUListElement>({
+    rows: shownProjects.map((project) => ({
+      key: project.root,
+      movable: project.remembered === true,
+    })),
+    enabled: !needle && !moveBusy,
+    // The kernel's write is "put this root before that one", so a slot from
+    // the drop is translated here rather than stored as a position.
+    place: (root, index) => {
+      const before = dropBefore(
+        shownProjects.map((project) => ({
+          root: project.root,
+          remembered: project.remembered === true,
+        })),
+        root,
+        index,
+      );
+      if (before !== null) void placeProjectAt(root, before);
+    },
+  });
 
   const empty = needle
     ? false
@@ -901,6 +950,7 @@ export function Home({
    */
   const onTouchStart = (event: React.TouchEvent) => {
     drag.swallowSwipe.current = false;
+    switchDrag.current = false;
     const start = event.touches[0];
     if (!start) return;
     const target = event.target as Element | null;
@@ -918,8 +968,13 @@ export function Home({
   const onTouchEnd = (event: React.TouchEvent) => {
     const start = touch.current;
     touch.current = null;
-    if (drag.swallowSwipe.current) {
+    // A drag that reordered either list ends with the same `touchend` a
+    // sideways swipe would. The switch sheet lives inside this shell and runs
+    // its own `useRowDrag`, so its flag has to be consulted here too; the
+    // sheet clears it itself when it eats the gesture.
+    if (drag.swallowSwipe.current || switchDrag.current) {
       drag.swallowSwipe.current = false;
+      switchDrag.current = false;
       return;
     }
     if (!start || start.owned) return;
@@ -1068,7 +1123,7 @@ export function Home({
                 key={project.root}
                 project={project}
                 drop={dropEdge(drag.state, index, shownProjects.length)}
-                dragging={drag.state?.root === project.root}
+                dragging={drag.state?.key === project.root}
                 shift={dragShift(drag.state, index)}
                 drag={drag.row(project.root)}
                 onOpen={() => onOpenProject(project.root)}
@@ -1140,6 +1195,8 @@ export function Home({
             onSwitchConnection(entry);
           }}
           onRetry={onRetryLink}
+          onReorder={setSaved}
+          onDragRef={switchDrag}
           onManage={() => {
             setSwitchSheet(false);
             onSettings?.();

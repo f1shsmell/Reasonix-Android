@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Capacitor } from "@capacitor/core";
 import { App } from "./App";
 import {
+  answeringOrigins,
   configureProxy,
   firstAnswering,
   fleetRead,
@@ -61,6 +62,7 @@ const appMock = vi.hoisted(() => ({
   back: null as (() => void) | null,
   exitApp: vi.fn(),
   launchUrl: null as string | null,
+  network: null as ((status: { connected: boolean }) => void) | null,
 }));
 vi.mock("@capacitor/app", () => ({
   App: {
@@ -75,7 +77,13 @@ vi.mock("@capacitor/app", () => ({
   },
 }));
 vi.mock("@capacitor/network", () => ({
-  Network: { addListener: vi.fn(async () => ({ remove: vi.fn() })) },
+  Network: {
+    getStatus: vi.fn(async () => ({ connected: true })),
+    addListener: vi.fn(async (event: string, handler: (status: { connected: boolean }) => void) => {
+      if (event === "networkStatusChange") appMock.network = handler;
+      return { remove: vi.fn() };
+    }),
+  },
 }));
 vi.mock("../net/token", () => ({ bootstrap: vi.fn(async () => {}) }));
 const relayStoreMock = vi.hoisted(() => ({
@@ -104,6 +112,7 @@ vi.mock("../net/server", () => ({
   configureProxy: vi.fn(),
   markRelay: vi.fn(),
   firstAnswering: vi.fn(),
+  answeringOrigins: vi.fn(),
   probeUpstream: vi.fn(),
   loadFleet: vi.fn(async () => null),
   saveFleet: vi.fn(async () => {}),
@@ -202,6 +211,7 @@ beforeEach(() => {
   appMock.back = null;
   appMock.exitApp.mockClear();
   appMock.launchUrl = null;
+  appMock.network = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   connectionMock.current = {
@@ -214,6 +224,7 @@ beforeEach(() => {
   vi.mocked(refreshProxy).mockResolvedValue(lanConfig());
   vi.mocked(configureProxy).mockResolvedValue(lanConfig());
   vi.mocked(firstAnswering).mockResolvedValue(null);
+  vi.mocked(answeringOrigins).mockResolvedValue([]);
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
   vi.mocked(loadFleet).mockReset();
   vi.mocked(loadFleet).mockResolvedValue(null);
@@ -300,6 +311,49 @@ describe("App", () => {
     expect(text()).toContain("boot");
   });
 
+  it("keeps walking to a later door when an earlier one refuses", async () => {
+    // Two saved LAN computers. The first answers the reachability probe but
+    // refuses when the proxy actually switches to it; the second is fine. The
+    // attempt must not stop at the refusal — that was the whole bug this
+    // rework fixes.
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    rememberConnection("lan", "http://192.168.5.2:56789");
+    vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(refreshProxy).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(answeringOrigins).mockResolvedValue([
+      "http://192.168.9.9:51234",
+      "http://192.168.5.2:56789",
+    ]);
+    vi.mocked(configureProxy).mockImplementation(async (origin: string) => {
+      if (origin === "http://192.168.9.9:51234") throw new Error("refused");
+      return lanConfig();
+    });
+    await renderApp();
+
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.9.9:51234");
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+  });
+
+  it("does not open a cloud door while the account is signed out", async () => {
+    rememberConnection("cloud", "dev-1", "工作室的电脑");
+    vi.mocked(readProxyConfig).mockResolvedValue({
+      ...lanConfig(),
+      origin: "",
+      candidates: [],
+      account: { signedIn: false },
+    });
+    vi.mocked(refreshProxy).mockResolvedValue({
+      ...lanConfig(),
+      origin: "",
+      candidates: [],
+      account: { signedIn: false },
+    });
+    await renderApp();
+
+    expect(ensureRelay).not.toHaveBeenCalled();
+  });
+
   it("opens a relay and reaches the home screen when the saved mode is relay", async () => {
     vi.mocked(readProxyConfig).mockResolvedValue({
       ...lanConfig(),
@@ -329,6 +383,7 @@ describe("App", () => {
     vi.mocked(readProxyConfig).mockResolvedValue(relayed);
     vi.mocked(refreshProxy).mockResolvedValue(relayed);
     vi.mocked(firstAnswering).mockResolvedValue("http://192.168.5.2:56789");
+    vi.mocked(answeringOrigins).mockResolvedValue(["http://192.168.5.2:56789"]);
     await renderApp();
 
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
@@ -340,6 +395,7 @@ describe("App", () => {
     vi.mocked(readProxyConfig).mockResolvedValue(relayed);
     vi.mocked(refreshProxy).mockResolvedValue(relayed);
     vi.mocked(firstAnswering).mockResolvedValue(null);
+    vi.mocked(answeringOrigins).mockResolvedValue([]);
     await renderApp();
 
     expect(configureProxy).not.toHaveBeenCalled();
@@ -375,6 +431,49 @@ describe("App", () => {
     expect(container.querySelector(".linkbar")?.textContent).toContain("连接失败");
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
     expect(container.textContent).toContain("配对或登录已失效");
+  });
+
+  it("waits for the network instead of retrying into a dead one", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(refreshProxy).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(firstAnswering).mockResolvedValue(null);
+    vi.mocked(answeringOrigins).mockResolvedValue([]);
+    await renderApp();
+
+    // The first attempt failed and scheduled a retry; losing the network now
+    // must replace that wait with the offline state.
+    act(() => appMock.network?.({ connected: false }));
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("等待网络");
+  });
+
+  it("walks the saved doors again as soon as the network is back", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(refreshProxy).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
+    vi.mocked(firstAnswering).mockResolvedValue(null);
+    vi.mocked(answeringOrigins).mockResolvedValue([]);
+    await renderApp();
+    act(() => appMock.network?.({ connected: false }));
+    expect(container.querySelector(".linkbar")?.textContent).toContain("等待网络");
+
+    vi.mocked(answeringOrigins).mockResolvedValue(["http://192.168.9.9:51234"]);
+    vi.mocked(configureProxy).mockResolvedValue({
+      ...lanConfig(),
+      origin: "http://192.168.9.9:51234",
+      candidates: ["http://192.168.9.9:51234"],
+    });
+    await act(async () => {
+      appMock.network?.({ connected: true });
+      await Promise.resolve();
+    });
+    await settle();
+
+    // The saved list is the retry order: the address it holds is the one the
+    // machine opens once the phone has a network again.
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.9.9:51234");
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
   });
 
   it("opens the conversation a decision notification names", async () => {

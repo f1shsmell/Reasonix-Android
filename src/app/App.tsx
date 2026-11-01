@@ -369,6 +369,7 @@ export function App() {
       boot === "loading" ||
       link.state.phase === "connecting" ||
       link.state.phase === "reconnecting" ||
+      link.state.phase === "offline" ||
       (boot === "ready" && link.state.phase === "idle");
     if (parsed.peer && settling) {
       setPendingLink(raw);
@@ -401,7 +402,6 @@ export function App() {
           kind: "lan",
           target: parsed.peer,
           name: entry?.name ?? parsed.peerName ?? parsed.peer,
-          usedAt: 0,
         });
         if (!result.ok) {
           setActionError("没能切到那台电脑，稍后再试。");
@@ -424,6 +424,7 @@ export function App() {
       boot === "loading" ||
       link.state.phase === "connecting" ||
       link.state.phase === "reconnecting" ||
+      link.state.phase === "offline" ||
       (boot === "ready" && link.state.phase === "idle");
     if (settling) return;
     setPendingLink(null);
@@ -496,7 +497,6 @@ export function App() {
         kind: peer.kind,
         target: peer.target,
         name: peer.name,
-        usedAt: 0,
       });
       if (!result.ok) {
         setActionError("没能连上这台电脑，请稍后再试。");
@@ -541,15 +541,34 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [boot, link.kick, pending.refresh, reloadTree]);
 
-  // The proxy retries the remembered origins on a network change; the link
-  // machine then checks the other transport if nothing answered.
+  // The system's own answer about this phone's network. Losing it stops the
+  // retry timer instead of letting it spin against a network that is not
+  // there; regaining it starts a fresh walk over the saved doors, in order.
+  // The proxy also retries the remembered origins on a network change, and
+  // the link machine then checks the other transport if nothing answered.
+  //
+  // The listener is not the only source. Android can deliver the transition
+  // while the app is paused, or not at all, so the current status is also
+  // asked for once at boot and again whenever the app returns to the
+  // foreground: a phone whose Wi-Fi came back while the screen was off would
+  // otherwise sit in 等待网络 until a settings-screen switch.
   useEffect(() => {
     if (boot !== "ready" || !Capacitor.isNativePlatform()) return;
     let cancelled = false;
     let remove: (() => void) | undefined;
+    const ask = () => {
+      void Network.getStatus()
+        .then((status) => {
+          if (!cancelled) link.noteNetwork(status.connected);
+        })
+        .catch(() => {
+          // A phone that cannot answer is treated as reachable: the attempt
+          // itself is the better test, and this must not invent an outage.
+        });
+    };
+    ask();
     void Network.addListener("networkStatusChange", (status) => {
-      if (!status.connected) return;
-      link.kick();
+      link.noteNetwork(status.connected);
     }).then((handle) => {
       if (cancelled) {
         void handle.remove();
@@ -559,11 +578,16 @@ export function App() {
         void handle.remove();
       };
     });
+    document.addEventListener("visibilitychange", onVisible);
+    function onVisible() {
+      if (document.visibilityState === "visible") ask();
+    }
     return () => {
       cancelled = true;
       remove?.();
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [boot, link.kick]);
+  }, [boot, link.noteNetwork]);
 
   // Android's back gesture leaves a single-page app rather than going back a
   // screen, so the screen it should have gone back to is stated here. On the

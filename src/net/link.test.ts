@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Backoff,
+  afterFailure,
   connectingLink,
   idleLink,
   linkFailure,
@@ -63,6 +64,32 @@ describe("linkFailure", () => {
     const error = linkFailure("client.offline", "connect ECONNREFUSED");
     expect(error.code).toBe("client.offline");
     expect(error.detail).toBe("connect ECONNREFUSED");
+  });
+});
+
+describe("afterFailure", () => {
+  const offline = linkFailure("client.offline");
+
+  it("waits for the network before it even looks at the failure", () => {
+    // A phone with no network cannot succeed at any door, retryable or not.
+    expect(afterFailure(offline, { online: false, exhausted: false })).toBe("wait-for-network");
+    expect(afterFailure(linkFailure("device.unauthorized"), { online: false, exhausted: true })).toBe(
+      "wait-for-network",
+    );
+  });
+
+  it("retries a network failure while the phone has a network", () => {
+    expect(afterFailure(offline, { online: true, exhausted: false })).toBe("retry");
+  });
+
+  it("fails once the backoff has spent its attempts", () => {
+    expect(afterFailure(offline, { online: true, exhausted: true })).toBe("fail");
+  });
+
+  it("does not retry an authorization failure on a working network", () => {
+    expect(
+      afterFailure(linkFailure("device.unauthorized"), { online: true, exhausted: false }),
+    ).toBe("fail");
   });
 });
 

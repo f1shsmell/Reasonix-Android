@@ -224,12 +224,16 @@ tree, followed by a re-read — never a local reorder:
 - The kernel does **not** sort pinned rows first, so `recentConversations`
   applies a stable partition: pinned rows lead, each group keeps its recency.
 - Project order is dragged, not stepped. A still press picks a row up
-  (`src/app/useProjectDrag.ts`), `src/app/projectOrder.ts` turns the gap under
-  the finger into "before this root" (`""` for the end), and
-  `POST /tree/workspaces/move {path, before}` places it — the same placement the
-  desktop's drag makes. Rows are not draggable while a search filters the list,
-  because the first row of a result is not the first project, and a folder the
-  kernel does not remember cannot be picked up at all.
+  (`src/app/useRowDrag.ts`, shared with the saved-connection lists),
+  `src/app/projectOrder.ts` turns the gap under the finger into "before this
+  root" (`""` for the end), and `POST /tree/workspaces/move {path, before}`
+  places it — the same placement the desktop's drag makes. Rows are not
+  draggable while a search filters the list, because the first row of a result
+  is not the first project, and a folder the kernel does not remember cannot be
+  picked up at all. While a row is lifted the list carries `data-dragging`,
+  which stands the rows' entrance animation down: that animation uses
+  `fill-mode: both` and would otherwise keep `transform` and `opacity` from the
+  inline style the drag writes.
 
 ## Swiping between the two views
 
@@ -499,20 +503,32 @@ them on first boot.
 
 The link itself is a state machine (`src/net/link.ts`, `src/app/useLink.ts`):
 `connecting` reports which of 探测地址 → 切换上游 → 读取会话 is running,
-`connected` only after `probeUpstream` answers `/runtimes`, and a failed attempt
-either schedules a retry with 1–30 s full-jitter backoff (eight attempts) or
-fails with a typed error. Authorization failures are not retried; network ones
-are. A network change, the app returning to the foreground, and the Home retry
-button are all `kick()`s: they cut a backoff wait short, and never start a
+`connected` only after `probeUpstream` answers `/runtimes`. One attempt walks
+**every** door in the saved list's order (`orderedDoors`): the LAN addresses and
+the account devices are one sequence, so "home, then the office, then the
+account" is something the person arranges by dragging, not a rule the app
+invents. A door that refuses or does not answer does not end the attempt — the
+walk continues, and only the last error is reported. Addresses the proxy knows
+but the app never recorded follow the saved ones.
+
+A failed walk either schedules a retry with 1–30 s full-jitter backoff (eight
+attempts) or fails with a typed error; `afterFailure` decides, and it asks
+about the network first: while the system reports no network the machine waits
+in `offline` with no timer at all, and the network coming back resets the
+backoff and starts a fresh walk. Authorization failures are not retried; network
+ones are. A network change, the app returning to the foreground, and the Home
+retry button are all `kick()`s: they cut a backoff wait short, and never start a
 second machine. A manual switch from the saved list bumps a generation token so
 a stale attempt cannot overwrite its result. ConnectScreen performs the same
 `/runtimes` check before it calls `onConnected`, so saving an address is no
 longer mistaken for connecting to a computer.
 
 Home carries the link as a row under the title bar: dot + computer name + state
-(`已连接` / `正在重连（第 n 次）` / `连接失败`). Tapping it opens 切换连接 with the
-saved computers, the current marker, and the two actions that belong there —
-重试连接 and 管理连接 (the settings screen).
+(`已连接` / `正在重连（第 n 次）` / `等待网络` / `连接失败`). Tapping it opens 切换连接
+with the saved computers — the same list, draggable here and in settings, whose
+order *is* the retry order — the current marker, and the two actions that belong
+there: 重试连接 and 管理连接 (the settings screen). While the phone has no network
+the sheet says 等网络恢复后自动重连 instead of offering a retry that cannot work.
 
 The LAN listener picks a free port unless `[serve].share_port` is set; its QR
 code carries `http://<ip>:<port>/#pair=<code>`. `/pair` does not exist on 8791

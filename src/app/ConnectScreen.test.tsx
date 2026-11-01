@@ -30,7 +30,7 @@ import {
   openBatterySettings,
   openNotificationSettings,
 } from "../native/turn";
-import { rememberConnection } from "../net/savedConnections";
+import { loadConnections, rememberConnection } from "../net/savedConnections";
 import { idleLink } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 
@@ -238,6 +238,23 @@ function swipeOn(node: Element, from: [number, number], to: [number, number]): v
     const end = new Event("touchend", { bubbles: true });
     Object.assign(end, { changedTouches: [{ clientX: to[0], clientY: to[1] }] });
     node.dispatchEvent(end);
+  });
+}
+
+/** jsdom has no PointerEvent; React only reads the fields the row uses. */
+function pointer(node: Element, type: string, x: number, y: number): void {
+  act(() => {
+    node.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y }),
+    );
+  });
+}
+
+/** A still press long enough for the row to be picked up. */
+function hold(node: Element, x: number, y: number): void {
+  pointer(node, "pointerdown", x, y);
+  act(() => {
+    vi.advanceTimersByTime(500);
   });
 }
 
@@ -499,7 +516,6 @@ describe("ConnectScreen saved connections", () => {
     await renderScreen();
 
     await pressRow("192.168.9.9:51234");
-
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.9.9:51234", undefined);
     expect(onConnected).toHaveBeenCalledTimes(1);
   });
@@ -534,6 +550,44 @@ describe("ConnectScreen saved connections", () => {
     // A browser dev session has no interfaces to judge, so no row claims to
     // be the direct one.
     expect(container.textContent).not.toContain("可直连");
+  });
+
+  it("reorders the saved computers with a held drag", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+    vi.useFakeTimers();
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-drag-key]"));
+    rows.forEach((node, index) => {
+      node.getBoundingClientRect = () =>
+        ({
+          top: index * 60,
+          bottom: index * 60 + 60,
+          height: 60,
+          left: 0,
+          right: 320,
+          width: 320,
+          x: 0,
+          y: index * 60,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+    // The row saved before the screen opened keeps the first slot; the
+    // proxy's own origin was appended when the screen read it.
+    expect(rows[0]?.getAttribute("data-drag-key")).toBe("lan:http://192.168.9.9:51234");
+    const moving = rows[1] as HTMLElement;
+
+    hold(moving, 160, 70);
+    pointer(moving, "pointermove", 160, 10);
+    pointer(moving, "pointerup", 160, 10);
+    vi.useRealTimers();
+
+    // The order is the retry order, so it has to reach storage rather than
+    // live only in the screen that drew it.
+    expect(loadConnections().map((entry) => entry.target)).toEqual([
+      "http://192.168.5.2:56789",
+      "http://192.168.9.9:51234",
+    ]);
   });
 
   it("forgets a saved computer without touching the rest", async () => {
