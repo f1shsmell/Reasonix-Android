@@ -9,6 +9,7 @@ import {
   approveDevice,
   clearRelay,
   configureProxy,
+  disconnectProxy,
   listRemoteDevices,
   markRelay,
   probeUpstream,
@@ -80,6 +81,7 @@ vi.mock("../net/server", () => ({
   listRemoteDevices: vi.fn(),
   markRelay: vi.fn(),
   clearRelay: vi.fn(),
+  disconnectProxy: vi.fn(),
   signOutAccount: vi.fn(),
   signInAccount: vi.fn(),
   approveDevice: vi.fn(),
@@ -376,6 +378,23 @@ describe("ConnectScreen", () => {
     expect(signOutAccount).toHaveBeenCalled();
     expect(clearRelayDevice).toHaveBeenCalled();
     expect(clearRelay).toHaveBeenCalled();
+  });
+
+  it("disconnects on purpose and drops the shown upstream", async () => {
+    vi.mocked(disconnectProxy).mockResolvedValue(
+      config({ origin: "", candidates: ["http://192.168.5.2:56789"] }),
+    );
+    await renderScreen();
+
+    await press("断开连接");
+
+    expect(disconnectProxy).toHaveBeenCalledTimes(1);
+    // The saved row survives (reconnect is one tap), the danger button is
+    // gone with the upstream, and the manual form no longer carries the
+    // old origin.
+    expect(container.textContent).not.toContain("断开连接");
+    const origin = container.querySelector(".manual-group input") as HTMLInputElement;
+    expect(origin.value).toBe("");
   });
 
   it("offers a back control only when it has somewhere to go", async () => {

@@ -81,6 +81,9 @@ vi.mock("../net/token", () => ({ bootstrap: vi.fn(async () => {}) }));
 const relayStoreMock = vi.hoisted(() => ({
   loadRelayDevice: vi.fn<() => string | null>(() => null),
   saveRelayDevice: vi.fn(),
+  loadStandDown: vi.fn<() => boolean>(() => false),
+  saveStandDown: vi.fn(),
+  clearStandDown: vi.fn(),
 }));
 vi.mock("../net/relayStore", () => relayStoreMock);
 vi.mock("../net/relay", () => ({
