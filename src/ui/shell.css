@@ -1,9 +1,14 @@
+/* The system bars are padded from whichever source reports a real inset:
+   `env()` where the WebView answers it, and Capacitor's injected
+   `--safe-area-inset-*` where it does not (Android WebView returns zeroes on
+   many devices). The injected variables only exist while
+   `plugins.SystemBars.insetsHandling` stays "css" — see capacitor.config.ts. */
 .shell {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px));
+  padding-bottom: max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px));
 }
 
 .bar {
@@ -12,7 +17,10 @@
   gap: 6px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(var(--bg-rgb), 0.76);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg) 76%, transparent);
+  }
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
@@ -65,7 +73,10 @@
   padding: 0 16px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
+  background: rgba(var(--bg-raised-rgb), 0.86);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 86%, transparent);
+  }
   color: var(--fg);
   font: inherit;
   font-size: 15px;
@@ -82,7 +93,10 @@
 }
 
 .search:focus {
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  }
   background: var(--bg-raised);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -97,7 +111,10 @@
   padding: var(--seg-pad);
   border: 1px solid var(--line);
   border-radius: 999px;
+  background: rgba(var(--bg-raised-rgb), 0.7);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+  }
   isolation: isolate;
 }
 
@@ -177,7 +194,10 @@
   border: 0;
   border-bottom: 1px solid var(--line-soft);
   border-radius: 0;
+  background: rgba(var(--bg-raised-rgb), 0.84);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+  }
   color: var(--fg);
   text-align: left;
 }
@@ -223,7 +243,10 @@
    computer that has something blocked or running; quiet ones stay hidden. */
 .fleet {
   border-bottom: 1px solid var(--line-soft);
+  background: rgba(var(--bg-raised-rgb), 0.84);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 84%, transparent);
+  }
 }
 
 .fleet-row {
@@ -401,7 +424,10 @@
 
 .session:active:not(:disabled),
 .project:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 .empty {
@@ -542,7 +568,10 @@ pre.frame {
 /* A pinned row keeps the list's background but says so with a tint, so the
    block at the top does not read as a different kind of list. */
 .list li.pinned > .session {
+  background: rgba(var(--accent-rgb), 0.06);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
 }
 
 /* ---- needs you ---- */
@@ -590,9 +619,17 @@ pre.frame {
   background:
     linear-gradient(
       155deg,
-      color-mix(in srgb, var(--warn) 7%, var(--bg-raised)),
+      var(--warn),
       var(--bg-raised) 58%
     );
+  @supports (color: color-mix(in srgb, red, blue)) {
+    background:
+      linear-gradient(
+        155deg,
+        color-mix(in srgb, var(--warn) 7%, var(--bg-raised)),
+        var(--bg-raised) 58%
+      );
+  }
   box-shadow: var(--shadow-1);
   transition:
     transform var(--dur-1) var(--ease-out),
@@ -608,9 +645,17 @@ pre.frame {
   background:
     linear-gradient(
       155deg,
-      color-mix(in srgb, var(--accent) 9%, var(--bg-raised)),
+      var(--accent),
       var(--bg-raised) 58%
     );
+  @supports (color: color-mix(in srgb, red, blue)) {
+    background:
+      linear-gradient(
+        155deg,
+        color-mix(in srgb, var(--accent) 9%, var(--bg-raised)),
+        var(--bg-raised) 58%
+      );
+  }
 }
 
 .card-need[data-kind="running"] .need-verb {
@@ -644,7 +689,10 @@ pre.frame {
   flex: none;
   padding: 0 6px;
   border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
   color: var(--accent);
   font-size: 10px;
   font-weight: 650;
@@ -773,7 +821,10 @@ pre.frame {
   color: #fff;
   font-weight: 600;
   flex: none;
+  box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
+  @supports (color: color-mix(in srgb, red, blue)) {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 28%, transparent);
+  }
 }
 
 .primary:active:not(:disabled) {
@@ -783,6 +834,50 @@ pre.frame {
 
 .more {
   width: 100%;
+  color: var(--fg-dim);
+}
+
+/* ---- a row's folded children ---- */
+
+/* The fold is the row's sibling, so it sits outside the row's own button and
+   keeps its own tap target. `li + li` already draws the hairline between rows,
+   so the folded rows must not draw a second one on top of it. */
+.list li > .fold {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.list li > .fold[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.list li > .fold:active {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+}
+
+/* A folded row hangs under its conversation: inset so it reads as "inside this
+   row" rather than as another conversation at the same level. */
+.list li.folded > .session {
+  padding-left: 26px;
+}
+
+.list li.folded .session-name {
+  font-size: 14px;
+  font-weight: 500;
   color: var(--fg-dim);
 }
 
@@ -841,7 +936,7 @@ pre.frame {
   width: 100%;
   max-height: 76vh;
   overflow-y: auto;
-  padding: 20px 16px calc(18px + env(safe-area-inset-bottom));
+  padding: 20px 16px calc(18px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -970,7 +1065,10 @@ pre.frame {
 }
 
 .sheet-input:focus {
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -997,8 +1095,14 @@ pre.frame {
 }
 
 .danger.solid {
+  border-color: var(--line);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--bad) 42%, var(--line));
+  }
+  background: var(--bg-raised);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bad) 12%, var(--bg-raised));
+  }
   color: var(--bad);
   font-weight: 600;
 }
@@ -1028,7 +1132,10 @@ pre.frame {
 }
 
 .sheet-actions button:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.05);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
 }
 
 .sheet-actions button[aria-pressed="true"] {
@@ -1069,7 +1176,10 @@ pre.frame {
 
 .dispatch-project.on {
   border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+  @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
   color: var(--accent);
   font-weight: 600;
 }
@@ -1094,7 +1204,10 @@ pre.frame {
 
 .dispatch-prompt:focus {
   outline: none;
+  border-color: var(--accent);
+  @supports (color: color-mix(in srgb, red, blue)) {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1119,7 +1232,10 @@ pre.frame {
   color: #fff;
   font: inherit;
   font-weight: 600;
+  box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
+  @supports (color: color-mix(in srgb, red, blue)) {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 28%, transparent);
+  }
 }
 
 .dispatch-send:active:not(:disabled) {

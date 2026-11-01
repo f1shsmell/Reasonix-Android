@@ -25,6 +25,23 @@ export interface ProxyAccount {
 export interface ProxyConfig {
   origin: string;
   candidates: string[];
+  /**
+   * The same addresses in the order the proxy would try them: the ones on a
+   * Wi-Fi/Ethernet interface this phone is attached to come first.
+   *
+   * Kept beside `candidates` rather than replacing it, because a phone that
+   * left that network still has to see every door it remembers. A browser dev
+   * session has no proxy and therefore no order.
+   */
+  preferred?: string[];
+  /**
+   * The subset of `candidates` reachable without a tunnel.
+   *
+   * Separate from `preferred` on purpose: that one is a full ordering, so
+   * every address is in it. Only this says which doors are neighbours of the
+   * phone's own Wi-Fi.
+   */
+  direct?: string[];
   paired: boolean;
   /** `relay` means kernel requests go through the account relay, not a LAN origin. */
   mode?: "lan" | "relay";

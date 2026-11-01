@@ -13,16 +13,34 @@
  * any local copy stale, so the read always runs and overwrites what was shown.
  * The OS clearing WebView storage costs speed, not correctness: every failure
  * here resolves to "nothing cached" and the screen falls back to the read.
+ *
+ * ## Why entries carry two keys
+ *
+ * A pane id (`runtimeId`) is minted by the kernel on every `POST /runtimes`,
+ * so it changes each time the same conversation is opened again — the one case
+ * a cold-start cache exists for. A `sessionPath` names the stored transcript
+ * and survives reopen, which is why the reading position and the draft store
+ * already key on it.
+ *
+ * Neither key is available at every moment: `sessionPath` only arrives with
+ * the runtime list, and a brand-new conversation has no stored transcript at
+ * all. So an entry is written under every key the caller knows and read back
+ * under whichever key it has, which is what keeps the two paths from missing
+ * each other.
  */
 
 import type { Row } from "./transcript";
 
-/** Rows kept per conversation: enough to repaint, little enough to write fast. */
-const MAX_ROWS = 400;
+/**
+ * Rows kept per conversation. Raised from 400 because an entry is now reached
+ * by two keys: a conversation opened on a cold start has to repaint from the
+ * copy the previous pane wrote, and 400 rows covered roughly one long turn.
+ */
+const MAX_ROWS = 800;
 /** A serialized entry above this is skipped: writing it would stall more than it saves. */
-const MAX_BYTES = 1_500_000;
+const MAX_BYTES = 2_500_000;
 /** Entries kept at all; the oldest are pruned whenever a write happens. */
-const MAX_ENTRIES = 40;
+const MAX_ENTRIES = 60;
 /** Writes coalesce: a streaming turn replaces the rows many times a second. */
 const WRITE_DELAY_MS = 800;
 
@@ -31,10 +49,22 @@ const DB_VERSION = 1;
 const STORE = "transcripts";
 
 interface Entry {
-  /** Duplicated inside the value so pruning can read keys and ages in one call. */
-  id: string;
+  /** Every key this entry is filed under; pruning reads them in one call. */
+  ids: string[];
   rows: Row[];
   savedAt: number;
+}
+
+/** The keys a conversation can be reached by. Empty strings are dropped. */
+export type CacheKeys = readonly (string | undefined)[];
+
+function usableKeys(keys: CacheKeys): string[] {
+  const seen = new Set<string>();
+  for (const key of keys) {
+    const trimmed = key?.trim();
+    if (trimmed) seen.add(trimmed);
+  }
+  return [...seen];
 }
 
 /**
@@ -77,27 +107,52 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
+/** Remember an entry under all its keys, so either path finds it later. */
+function remember(entry: Entry): void {
+  for (const id of entry.ids) memory.set(id, entry);
+}
+
+function forget(ids: readonly string[]): void {
+  for (const id of ids) memory.delete(id);
+}
+
 /**
  * The rows last drawn for this conversation, or null.
  *
- * Memory answers first; IndexedDB covers the cold start and then feeds memory,
- * so one read per conversation ever reaches disk.
+ * Any of the caller's keys may hit: memory first, then IndexedDB, and a disk
+ * hit feeds memory under every key the entry carries so one read per
+ * conversation ever reaches disk.
  */
-export async function loadCachedRows(runtimeId: string): Promise<Row[] | null> {
-  const fresh = memory.get(runtimeId);
-  if (fresh) return fresh.rows;
+export async function loadCachedRows(keys: CacheKeys): Promise<Row[] | null> {
+  const wanted = usableKeys(keys);
+  if (wanted.length === 0) return null;
+  for (const id of wanted) {
+    const fresh = memory.get(id);
+    if (fresh) return fresh.rows;
+  }
   const db = await openDb();
   if (!db) return null;
   return new Promise((resolve) => {
     try {
-      const request = db.transaction(STORE, "readonly").objectStore(STORE).get(runtimeId);
-      request.onsuccess = () => {
-        const entry = request.result as Entry | undefined;
-        const rows = entry && Array.isArray(entry.rows) && entry.rows.length > 0 ? entry.rows : null;
-        if (rows && entry) memory.set(runtimeId, { id: runtimeId, rows, savedAt: entry.savedAt });
+      const store = db.transaction(STORE, "readonly").objectStore(STORE);
+      let settled = false;
+      const finish = (rows: Row[] | null, entry?: Entry) => {
+        if (settled) return;
+        settled = true;
+        if (rows && entry) remember(entry);
         resolve(rows);
       };
-      request.onerror = () => resolve(null);
+      for (const id of wanted) {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const entry = request.result as Entry | undefined;
+          const rows = entry && Array.isArray(entry.rows) && entry.rows.length > 0 ? entry.rows : null;
+          if (rows && entry) finish(rows, entry);
+        };
+        request.onerror = () => finish(null);
+      }
+      // Every key missed, or the store answered nothing at all.
+      if (!settled) finish(null);
     } catch {
       resolve(null);
     }
@@ -112,44 +167,63 @@ export async function loadCachedRows(runtimeId: string): Promise<Row[] | null> {
  * once per coalesced timer, and an oversized transcript is skipped rather
  * than written.
  */
-export function scheduleSaveRows(runtimeId: string, rows: Row[]): void {
+export function scheduleSaveRows(keys: CacheKeys, rows: Row[]): void {
   if (rows.length === 0) return;
+  const ids = usableKeys(keys);
+  if (ids.length === 0) return;
   const kept = rows.length > MAX_ROWS ? rows.slice(rows.length - MAX_ROWS) : rows;
-  pending.set(runtimeId, kept);
-  memory.set(runtimeId, { id: runtimeId, rows: kept, savedAt: Date.now() });
-  if (timers.has(runtimeId)) return;
+  const entry: Entry = { ids, rows: kept, savedAt: Date.now() };
+  // Coalesce under the first key; the flush re-reads the pending entry so the
+  // newest rows win regardless of which key scheduled it.
+  const primary = ids[0];
+  if (primary === undefined) return;
+  pending.set(primary, kept);
+  remember(entry);
+  if (timers.has(primary)) return;
   timers.set(
-    runtimeId,
+    primary,
     window.setTimeout(() => {
-      timers.delete(runtimeId);
-      void flushRows(runtimeId);
+      timers.delete(primary);
+      void flushRows(primary);
     }, WRITE_DELAY_MS),
   );
 }
 
-async function flushRows(runtimeId: string): Promise<void> {
-  const rows = pending.get(runtimeId);
-  pending.delete(runtimeId);
+async function flushRows(primary: string): Promise<void> {
+  const rows = pending.get(primary);
+  pending.delete(primary);
   if (!rows || rows.length === 0) return;
+  // The entry in memory carries every key; the pending map only knows the one
+  // that scheduled the flush, so recover the rest from there.
+  const known = memory.get(primary);
+  const ids = known?.ids ?? [primary];
   if (JSON.stringify(rows).length > MAX_BYTES) {
-    memory.delete(runtimeId);
-    await dropCachedRows(runtimeId);
+    forget(ids);
+    await dropCachedRows(ids);
     return;
   }
   const db = await openDb();
   if (!db) return;
   try {
     const store = db.transaction(STORE, "readwrite").objectStore(STORE);
-    store.put({ id: runtimeId, rows, savedAt: Date.now() }, runtimeId);
+    const entry: Entry = { ids, rows, savedAt: Date.now() };
+    for (const id of ids) store.put(entry, id);
     const all = store.getAll();
     all.onsuccess = () => {
       const entries = (all.result ?? []) as Entry[];
-      if (entries.length <= MAX_ENTRIES) return;
-      const stale = entries
-        .sort((a, b) => a.savedAt - b.savedAt)
-        .slice(0, entries.length - MAX_ENTRIES);
-      for (const entry of stale) {
-        if (entry.id && entry.id !== runtimeId) store.delete(entry.id);
+      // An entry reachable by two keys appears twice; prune by identity, not
+      // by count, or the second copy would delete the first.
+      const unique = new Map<string, Entry>();
+      for (const candidate of entries) {
+        const key = candidate.ids?.[0] ?? "";
+        const prior = unique.get(key);
+        if (!prior || prior.savedAt < candidate.savedAt) unique.set(key, candidate);
+      }
+      const ordered = [...unique.values()].sort((a, b) => a.savedAt - b.savedAt);
+      if (ordered.length <= MAX_ENTRIES) return;
+      for (const stale of ordered.slice(0, ordered.length - MAX_ENTRIES)) {
+        if (stale.ids.includes(primary)) continue;
+        for (const id of stale.ids) store.delete(id);
       }
     };
     // A failed or aborted transaction costs this one write, not correctness.
@@ -159,19 +233,24 @@ async function flushRows(runtimeId: string): Promise<void> {
 }
 
 /** Forget this conversation's copy — the caller has reason to distrust it. */
-export function dropCachedRows(runtimeId: string): void {
-  memory.delete(runtimeId);
-  pending.delete(runtimeId);
-  const timer = timers.get(runtimeId);
-  if (timer !== undefined) {
-    window.clearTimeout(timer);
-    timers.delete(runtimeId);
+export function dropCachedRows(keys: CacheKeys): void {
+  const ids = usableKeys(keys);
+  if (ids.length === 0) return;
+  forget(ids);
+  for (const id of ids) {
+    pending.delete(id);
+    const timer = timers.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timers.delete(id);
+    }
   }
   void (async () => {
     const db = await openDb();
     if (!db) return;
     try {
-      db.transaction(STORE, "readwrite").objectStore(STORE).delete(runtimeId);
+      const store = db.transaction(STORE, "readwrite").objectStore(STORE);
+      for (const id of ids) store.delete(id);
     } catch {
       // Ignore: a leftover entry is stale data the next read corrects.
     }

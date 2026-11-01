@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { inboxMessage, loadInbox, receiptText, sendToInbox } from "./inbox";
+import { inboxMessage, loadInbox, loadInboxItem, receiptText, sendToInbox } from "./inbox";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -137,6 +137,143 @@ describe("loadInbox", () => {
   it("reports being offline", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
     await expect(loadInbox("/rt/r1")).resolves.toEqual({ ok: false, code: "client.offline" });
+  });
+
+  it("keeps the metadata the list row needs to say when and how big", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          revision: 1,
+          paused: false,
+          items: [
+            {
+              id: "a",
+              intent: "followup",
+              state: "blocked",
+              preview: "看日志",
+              blockCode: "steer_unapplied",
+              blockReason: "the turn moved on",
+              createdAt: "2026-10-31T01:00:00Z",
+              byteSize: 2048,
+              refs: [
+                { kind: "clean_git", path: "src/a.ts", displayPath: "src/a.ts", bytes: 12 },
+                { path: "/tmp/no-kind" },
+                { kind: "external", path: "/tmp/x" },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await loadInbox("/rt/r1");
+
+    expect(result.ok && result.snapshot.items[0]).toEqual({
+      id: "a",
+      intent: "followup",
+      state: "blocked",
+      preview: "看日志",
+      blockCode: "steer_unapplied",
+      blockReason: "the turn moved on",
+      createdAt: "2026-10-31T01:00:00Z",
+      byteSize: 2048,
+      // A ref with no kind is dropped rather than drawn as a blank line.
+      refs: [
+        { kind: "clean_git", path: "src/a.ts", displayPath: "src/a.ts", bytes: 12 },
+        { kind: "external", path: "/tmp/x" },
+      ],
+    });
+  });
+});
+
+describe("loadInboxItem", () => {
+  it("reads the full body the list only previewed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      json({
+        meta: { id: "a", intent: "followup", state: "queued", preview: "看日志" },
+        envelope: {
+          displayText: "看日志 /review",
+          rawText: "看日志 /review",
+          submitText: "看日志",
+          refs: [{ kind: "clean_git", path: "src/a.ts", displayPath: "src/a.ts" }],
+          frozenImages: ["data:image/png;base64,AAA"],
+          referenceErrors: ["src/gone.ts 已经不在了"],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loadInboxItem("/rt/r1", "a");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/rt/r1/inbox/items/a",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      detail: {
+        item: { id: "a", intent: "followup", state: "queued", preview: "看日志" },
+        displayText: "看日志 /review",
+        submitText: "看日志",
+        refs: [{ kind: "clean_git", path: "src/a.ts", displayPath: "src/a.ts" }],
+        images: ["data:image/png;base64,AAA"],
+        referenceErrors: ["src/gone.ts 已经不在了"],
+      },
+    });
+  });
+
+  it("falls back to whichever spelling an older writer stored", async () => {
+    // A schema-v1 item has no displayText; the sheet must still show its text.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          meta: { id: "a", intent: "followup", state: "queued", preview: "旧" },
+          envelope: { submitText: "旧的内容" },
+        }),
+      ),
+    );
+
+    const result = await loadInboxItem("/rt/r1", "a");
+
+    expect(result.ok && result.detail.displayText).toBe("旧的内容");
+    expect(result.ok && result.detail.submitText).toBe("旧的内容");
+    // The two are the same string here, so the sheet draws one body, not two.
+    expect(result.ok && result.detail.images).toBeUndefined();
+    expect(result.ok && result.detail.refs).toBeUndefined();
+  });
+
+  it("refuses a body it cannot identify", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ meta: { state: "queued" }, envelope: {} })),
+    );
+    await expect(loadInboxItem("/rt/r1", "a")).resolves.toEqual({
+      ok: false,
+      code: "inbox.shape",
+    });
+  });
+
+  it("carries the kernel's refusal through", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ code: "inbox.not_found" }, 409)),
+    );
+    await expect(loadInboxItem("/rt/r1", "gone")).resolves.toEqual({
+      ok: false,
+      code: "inbox.not_found",
+    });
+  });
+
+  it("does not ask for an item it cannot name", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadInboxItem("/rt/r1", "")).resolves.toEqual({
+      ok: false,
+      code: "inbox.shape",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

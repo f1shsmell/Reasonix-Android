@@ -42,6 +42,7 @@ import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
 import { CheckpointsSheet } from "./CheckpointsSheet";
+import { QueueSheet } from "./QueueSheet";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -64,6 +65,26 @@ export interface ChatScreenProps {
 function shortRef(ref: string): string {
   const at = ref.lastIndexOf("/");
   return at >= 0 ? ref.slice(at + 1) : ref;
+}
+
+/**
+ * Why the history read failed, in the terms that decide what to do next.
+ *
+ * The distinction that matters is whether retrying can help: a deadline on a
+ * long conversation will pass on a second try once the kernel has it parsed,
+ * while a 404 will not. The raw code is appended so a bug report can name it.
+ */
+function historyHint(code: string): string {
+  switch (code) {
+    case "client.timeout":
+      return "（读取超时：会话很长，再试一次通常能读到。client.timeout）";
+    case "client.offline":
+      return "（连不上电脑。client.offline）";
+    case "history.shape":
+      return "（电脑返回了无法识别的记录。history.shape）";
+    default:
+      return `（${code}）`;
+  }
 }
 
 function imageMessage(code: string): string {
@@ -182,6 +203,7 @@ function HeadMenu({
   onModel,
   onApproval,
   onCheckpoints,
+  onQueue,
 }: {
   model: string;
   approval: string;
@@ -190,6 +212,7 @@ function HeadMenu({
   onModel: () => void;
   onApproval: () => void;
   onCheckpoints: () => void;
+  onQueue: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -224,6 +247,12 @@ function HeadMenu({
             <button type="button" onClick={onApproval}>
               <span>工具批准</span>
               <small>{approvalLabel(approval) || "读不到当前模式"}</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onQueue}>
+              <span>排队</span>
+              <small>这一轮结束后要发的消息</small>
             </button>
           </li>
           <li>
@@ -360,6 +389,33 @@ function keepUnconfirmed(row: Row): boolean {
 }
 
 /**
+ * Cached rows history has already superseded, by id.
+ *
+ * A bubble that was still streaming when the pane was last closed is the
+ * ghost: the cache flushed it mid-turn, the kernel has since finished the
+ * turn, and the history read now carries the finished message. Keeping the
+ * streaming copy as "unconfirmed" draws the same answer twice — seen on a
+ * device once history loaded reliably enough for the replace path to run.
+ *
+ * A turn that is genuinely still running has no finished copy in history
+ * (`/history` carries settled messages only), so a prefix match is what
+ * separates the ghost from a turn to be continued: streamed deltas only ever
+ * append, so the streamed text is a prefix of the finished one. At most one
+ * turn streams at a time, so the scan is one pass for a single candidate.
+ */
+function ghostedByHistory(current: Row[], history: Row[]): Set<string> {
+  const ghosts = new Set<string>();
+  for (const row of current) {
+    if (row.kind !== "assistant" || !row.streaming) continue;
+    const streamed = row.text;
+    if (history.some((h) => h.kind === "assistant" && h.text.startsWith(streamed))) {
+      ghosts.add(row.id);
+    }
+  }
+  return ghosts;
+}
+
+/**
  * The transcript on screen: the stored conversation, then the live stream.
  *
  * Both are needed and neither stands alone. The kernel answers a first
@@ -374,19 +430,65 @@ function keepUnconfirmed(row: Row): boolean {
  * rows paints first, and the read — still the authority — replaces it when it
  * lands.
  */
+/**
+ * What the history read left behind.
+ *
+ * `failed` carries the code from `loadHistory`. A bare "没读到历史" told the
+ * person nothing and told us nothing either: a deadline, a 404 and a socket
+ * that died all looked alike. The code is how a bug report says which.
+ */
+type HistoryState =
+  | { kind: "loading" }
+  | { kind: "loaded" }
+  | { kind: "failed"; code: string };
+
+/** After a failed older-page read, wait this long before asking again. */
+const OLDER_RETRY_COOLDOWN_MS = 10_000;
+
 function useTranscript(
   snapshot: ConnectionSnapshot,
   runtimeId: string,
   base: string | undefined,
+  sessionPath: string | undefined,
 ): {
   transcript: Transcript;
-  history: "loading" | "loaded" | "failed";
+  history: HistoryState;
   reload: () => void;
   setTranscript: React.Dispatch<React.SetStateAction<Transcript>>;
+  /** Read the page before the oldest rows on screen; guarded against re-entry. */
+  loadOlder: () => void;
+  /** The newest page's cursor state: whether older messages exist to read. */
+  cursor: { hasMoreBefore: boolean; nextCursor?: string };
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
-  const [history, setHistory] = useState<"loading" | "loaded" | "failed">("loading");
+  const [history, setHistory] = useState<HistoryState>({ kind: "loading" });
   const [reloadToken, setReloadToken] = useState(0);
+  /**
+   * Reading older pages, one at a time. `hasMoreBefore`/`nextCursor` come
+   * from the newest page the kernel served; when the window renderer needs
+   * more history than that page holds, `loadOlder` walks the cursor back.
+   * An in-flight page read is not re-fired by further scroll events, and a
+   * conversation with no cursor set reads no older pages at all.
+   */
+  const [cursor, setCursor] = useState<{ hasMoreBefore: boolean; nextCursor?: string }>({
+    hasMoreBefore: false,
+  });
+  const olderLoading = useRef(false);
+  /** The same cursor state, readable inside loadOlder without stale closures. */
+  const cursorRef = useRef(cursor);
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
+  /**
+   * The same history state, readable inside loadOlder. A cursor read may
+   * only fire once this conversation's newest page has actually landed: a
+   * failed or still-loading read means the cursor on screen is stale or
+   * foreign, and walking it would prepend another conversation's messages.
+   */
+  const historyRef = useRef(history);
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
   const loadedBase = useRef<string | null>(null);
   /**
    * The two cache handshakes. `hydrated` says the cached rows are already on
@@ -404,12 +506,17 @@ function useTranscript(
   // Paint the cached conversation before the history read lands. The read
   // still runs — the cache is the speed, the kernel is the truth — so a stale
   // copy survives at most until the response arrives.
+  //
+  // This deliberately does not wait for `base`: `base` only arrives with
+  // `GET /runtimes`, and on a slow network that request is the slowest thing
+  // on the screen. Gating the cache on it made the accelerator sit behind the
+  // very wait it exists to hide. `runtimeId` is known the moment the screen
+  // mounts, and the session path joins it once the runtime list lands.
   useEffect(() => {
-    if (!base) return;
     let cancelled = false;
     hydrated.current = false;
     historyDone.current = false;
-    void loadCachedRows(runtimeId).then((cached) => {
+    void loadCachedRows([sessionPath, runtimeId]).then((cached) => {
       if (cancelled || !cached || historyDone.current) return;
       hydrated.current = true;
       setTranscript((current) =>
@@ -419,7 +526,7 @@ function useTranscript(
     return () => {
       cancelled = true;
     };
-  }, [base, runtimeId]);
+  }, [sessionPath, runtimeId]);
 
   useEffect(() => {
     if (!base) return;
@@ -429,32 +536,49 @@ function useTranscript(
     if (switched) {
       hydrated.current = false;
       historyDone.current = false;
+      // The cursor belongs to the previous conversation's newest page. A page
+      // read against the old base would prepend the old conversation's
+      // messages onto this one, so it dies here before any scroll can fire it.
+      // The cooldown dies with it: a fresh conversation deserves a fresh try.
+      olderLoading.current = false;
+      olderFailedUntil.current = 0;
+      setCursor({ hasMoreBefore: false });
       setTranscript(emptyTranscript);
-      setHistory("loading");
+      setHistory({ kind: "loading" });
     }
     void loadHistory(base).then((result) => {
       if (cancelled) return;
       historyDone.current = true;
       if (!result.ok) {
-        setHistory("failed");
+        setHistory({ kind: "failed", code: result.code });
         return;
       }
+      const fresh = result.read.rows;
+      // The newest page decides whether older ones exist and where they start.
+      setCursor({
+        hasMoreBefore: result.read.hasMoreBefore,
+        ...(result.read.nextCursor ? { nextCursor: result.read.nextCursor } : {}),
+      });
       if (switched) {
         if (hydrated.current) {
           // The cache is on screen: the read replaces it, keeping only what
           // the kernel does not know about yet. A prefix merge would stack the
-          // same conversation twice.
-          setTranscript((current) => ({
-            ...current,
-            rows: [
-              ...result.rows,
-              ...current.rows.filter(keepUnconfirmed),
-            ],
-          }));
+          // same conversation twice, and a cached bubble history has already
+          // finished is the ghost the phone drew twice.
+          setTranscript((current) => {
+            const ghosts = ghostedByHistory(current.rows, fresh);
+            return {
+              ...current,
+              rows: [
+                ...fresh,
+                ...current.rows.filter((row) => !ghosts.has(row.id) && keepUnconfirmed(row)),
+              ],
+            };
+          });
         } else {
           // Prefix the snapshot: a frame that landed while the read was in
           // flight must not be thrown away or moved above its own turn.
-          setTranscript((current) => ({ ...current, rows: [...result.rows, ...current.rows] }));
+          setTranscript((current) => ({ ...current, rows: [...fresh, ...current.rows] }));
         }
       } else {
         // A gap reload is a replacement, not a prefix. A row still streaming
@@ -464,13 +588,13 @@ function useTranscript(
         setTranscript((current) => ({
           ...current,
           rows: [
-            ...result.rows,
+            ...fresh,
             ...current.rows.filter(keepUnconfirmed),
           ],
           gap: false,
         }));
       }
-      setHistory("loaded");
+      setHistory({ kind: "loaded" });
     });
     return () => {
       cancelled = true;
@@ -488,13 +612,64 @@ function useTranscript(
   // conversation, and caching it would redraw the hole tomorrow.
   useEffect(() => {
     if (transcript.gap === true) {
-      dropCachedRows(runtimeId);
+      dropCachedRows([sessionPath, runtimeId]);
       return;
     }
-    scheduleSaveRows(runtimeId, transcript.rows);
-  }, [runtimeId, transcript.rows]);
+    scheduleSaveRows([sessionPath, runtimeId], transcript.rows);
+  }, [sessionPath, runtimeId, transcript.rows]);
 
-  return { transcript, history, reload, setTranscript };
+  /**
+   * Read the page before the current oldest one.
+   *
+   * Fired by the window renderer when the reader's scroll reaches into the
+   * spacer and the newest page does not cover the request. Guarded three
+   * ways: one read at a time, no cursor means nothing older to ask for, and
+   * a read whose rows all land anyway is rare enough not to need a dedupe
+   * (the cursor is opaque and moves backward monotonically).
+   */
+  const olderFailedUntil = useRef(0);
+  const loadOlder = useCallback(() => {
+    const state = cursorRef.current;
+    if (olderLoading.current || !state.hasMoreBefore || !state.nextCursor) return;
+    // Only walk a cursor this conversation's newest page produced. A failed
+    // or in-flight history read leaves whatever cursor was last on screen —
+    // possibly the previous conversation's, if a switch is still settling —
+    // and a read against it would prepend foreign messages onto this pane.
+    if (historyRef.current.kind !== "loaded") return;
+    // A read that just failed stays failed for a while: the trigger effect
+    // re-runs on every scroll frame, and a kernel that is timing out would
+    // otherwise take a request per frame, silently.
+    if (olderFailedUntil.current > Date.now()) return;
+    if (!base) return;
+    olderLoading.current = true;
+    void loadHistory(base, state.nextCursor)
+      .then((result) => {
+        if (!result.ok) {
+          olderFailedUntil.current = Date.now() + OLDER_RETRY_COOLDOWN_MS;
+          return;
+        }
+        const older = result.read.rows;
+        setCursor({
+          hasMoreBefore: result.read.hasMoreBefore,
+          ...(result.read.nextCursor ? { nextCursor: result.read.nextCursor } : {}),
+        });
+        // Prepend in place: older messages are strictly before everything the
+        // pane holds, and the window's own widen keeps the reader's position.
+        // Rows already held are dropped rather than drawn twice — a retried
+        // cursor or an overlapping page boundary would otherwise put two
+        // copies of one message under each other.
+        setTranscript((current) => {
+          const known = new Set(current.rows.map((row) => row.id));
+          const fresh = older.filter((row) => !known.has(row.id));
+          return { ...current, rows: [...fresh, ...current.rows] };
+        });
+      })
+      .finally(() => {
+        olderLoading.current = false;
+      });
+  }, [base]);
+
+  return { transcript, history, reload, setTranscript, loadOlder, cursor };
 }
 
 /**
@@ -587,10 +762,11 @@ export function ChatScreen({
   mode,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  const { transcript, history, reload, setTranscript } = useTranscript(
+  const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
     snapshot,
     runtimeId,
     runtime?.base,
+    runtime?.sessionPath,
   );
   const { todos, state: todosState } = useTodos(runtime?.base, snapshot.lastEvent);
   /** The stored transcript's identity; a pane id is only the fallback. */
@@ -624,6 +800,8 @@ export function ChatScreen({
   const [approval, setApproval] = useState("");
   /** What the kernel said about the last message sent into a running turn. */
   const [inboxNote, setInboxNote] = useState("");
+  /** Whether the queued messages are on screen. */
+  const [queueSheet, setQueueSheet] = useState(false);
   /** Plan mode as the kernel reports it; undefined until the first read. */
   const [plan, setPlan] = useState<boolean | undefined>(undefined);
   /** The model `/status` names, until a live turn names one in the transcript. */
@@ -703,6 +881,100 @@ export function ChatScreen({
     });
   }, [transcript.running, title, runtime?.name, runtime?.base, runtime?.root, runtimeId, mode]);
 
+  const streaming = transcript.running;
+  const display = useMemo(
+    () => buildDisplay(transcript.rows, transcript.running, fold),
+    [transcript.rows, transcript.running, fold],
+  );
+
+  /**
+   * Draw the tail of the conversation, and grow the window as the reader
+   * scrolls up.
+   *
+   * A long session read whole puts thousands of nodes into the DOM at once,
+   * and every streaming delta then re-renders all of them — the stutter when
+   * flicking through an old pane. The window starts at the newest
+   * `INITIAL_TAIL` entries, which is what a pane opens to, and every upward
+   * scroll that reaches near the top adds `GROW_BY` more below the spacer.
+   * Collapsing back down again on a downward scroll would re-parse rows the
+   * reader already paid for and make the top flicker, so the window only
+   * ever grows for the life of the pane.
+   *
+   * Growing prepends entries above the current scroll position, which would
+   * otherwise shove the pane's content down. The ref remembers the height
+   * before React commits the new entries and the layout effect restores the
+   * delta, so the reader's thumb position stays on the same content.
+   *
+   * The spacer is `min-height` on purpose: when the window already covers
+   * everything it must not force a scrollable height of its own.
+   */
+  const INITIAL_TAIL = 30;
+  const GROW_BY = 40;
+  const [windowEnd, setWindowEnd] = useState(INITIAL_TAIL);
+  const firstVisible = Math.max(0, display.length - windowEnd);
+  const visible = display.slice(firstVisible);
+  const topSpacer = useRef<HTMLDivElement | null>(null);
+  /** scrollHeight captured before a widen commits; the restore adds the delta. */
+  const widenFromRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setWindowEnd(INITIAL_TAIL);
+  }, [runtimeId]);
+
+  const growWindow = useCallback(() => {
+    setWindowEnd((end) => {
+      if (end >= display.length) return end;
+      const list = listRef.current;
+      if (list) widenFromRef.current = list.scrollHeight;
+      return Math.min(display.length, end + GROW_BY);
+    });
+  }, [display.length]);
+
+  // The window can only widen over rows the pane already holds. When the
+  // newest page did not carry the whole conversation, growing into the spacer
+  // is also the moment to ask the kernel for the page before this one — the
+  // load is guarded in useTranscript, so scroll events cannot stack it. The
+  // height goes into widenFromRef now: when the older rows commit, the same
+  // restore that covers a widen keeps the thumb on the same content.
+  const olderTrigger = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    widenFromRef.current = list.scrollHeight;
+    loadOlder();
+  }, [loadOlder]);
+
+  useEffect(() => {
+    if (firstVisible > 0 || !cursor.hasMoreBefore) return;
+    const list = listRef.current;
+    if (!list) return;
+    if (list.scrollTop < 400) olderTrigger();
+  }, [firstVisible, cursor.hasMoreBefore, olderTrigger]);
+
+  // Older-page rows land above the window, so the window must grow by the
+  // same count or the slice would keep showing only the newest rows and the
+  // freshly-read page would sit invisible above it. Live rows append below
+  // and leave the window alone — they only ever change this when a stale
+  // widenFromRef from a failed older read is consumed, which costs one entry.
+  const prevDisplayLen = useRef(display.length);
+  useLayoutEffect(() => {
+    const added = display.length - prevDisplayLen.current;
+    prevDisplayLen.current = display.length;
+    if (added <= 0 || widenFromRef.current === null) return;
+    setWindowEnd((end) => Math.min(display.length, end + added));
+  }, [display.length]);
+
+  // A widen prepends entries above the reader's thumb. Restoring the height
+  // delta in the same layout pass as the commit keeps the thumb on the same
+  // content — no jump, no flicker.
+  useLayoutEffect(() => {
+    const from = widenFromRef.current;
+    widenFromRef.current = null;
+    if (from === null) return;
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollTop += list.scrollHeight - from;
+  }, [windowEnd]);
+
   const scrollToBottom = useCallback((smooth: boolean) => {
     const list = listRef.current;
     if (!list) return;
@@ -721,7 +993,7 @@ export function ChatScreen({
   // first time has no position and follows the newest row.
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (!list || restoredReading.current || history !== "loaded") return;
+    if (!list || restoredReading.current || history.kind !== "loaded") return;
     restoredReading.current = true;
     const saved = loadReading(readingId);
     if (saved && !saved.atBottom) {
@@ -749,8 +1021,11 @@ export function ChatScreen({
     if (!list) return;
     const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
     setAtBottom(gap < 48);
+    // Near the top with more above the window: widen it. The 400px lead is
+    // enough that the widen lands before the reader hits the spacer.
+    if (list.scrollTop < 400) growWindow();
     persistReading();
-  }, [persistReading]);
+  }, [persistReading, growWindow]);
 
   // Leaving flushes the last position; a screen that never finished reading
   // history keeps the position it had rather than overwriting it with zero.
@@ -1106,7 +1381,24 @@ export function ChatScreen({
     [runtime, setTranscript],
   );
 
+  // `runtimes` is empty until `GET /runtimes` answers, so a missing runtime is
+  // two different states: still asking, or the pane really is gone. Reporting
+  // the second while in the first is what a slow network showed — "会话不存在"
+  // over a conversation that was merely waiting on the list.
+  //
+  // The cached rows draw here rather than below: they were read from
+  // `runtimeId` alone, which is exactly why they exist before the runtime
+  // does. This branch must stay before every hook below it, so the row list is
+  // rendered without the machinery that needs a `base`.
   if (!runtime) {
+    // `unknown` is the state before the first `/runtimes` answer lands, so it
+    // is "still asking", not "settled". Only a real answer — ok, refused, or
+    // failed — lets us say the pane is gone.
+    const settled =
+      snapshot.reach.kind === "ok" ||
+      snapshot.reach.kind === "unauthorized" ||
+      snapshot.reach.kind === "unreachable";
+    const cached = transcript.rows.length > 0;
     return (
       <div className="chat">
         <div className="chat-head">
@@ -1114,24 +1406,33 @@ export function ChatScreen({
             ←
           </button>
           <div className="title">
-            <strong>会话不存在</strong>
+            <strong>{settled ? "会话不存在" : "正在打开"}</strong>
           </div>
         </div>
         <div className="centered">
           <div>
-            <strong>这个会话已经关掉了</strong>
-            它可能被桌面端关闭，或者连接换了。
+            {settled ? (
+              <>
+                <strong>这个会话已经关掉了</strong>
+                它可能被桌面端关闭，或者连接换了。
+              </>
+            ) : cached ? (
+              <>
+                <strong>正在读取这个会话</strong>
+                已缓存 {transcript.rows.length} 条，连接恢复后显示。
+              </>
+            ) : (
+              <>
+                <strong>正在读取这个会话</strong>
+                网络慢的时候要等一会儿，已经看过的内容会先显示。
+              </>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  const streaming = transcript.running;
-  const display = useMemo(
-    () => buildDisplay(transcript.rows, transcript.running, fold),
-    [transcript.rows, transcript.running, fold],
-  );
   const openProcess = (entry: { steps: ProcessStep[] }) =>
     setProcess({ title: `已处理 ${entry.steps.length} 个操作`, steps: entry.steps });
 
@@ -1182,15 +1483,16 @@ export function ChatScreen({
         {transcript.rows.length === 0 ? (
           <div className="centered">
             <div>
-              {history === "loading" ? (
+              {history.kind === "loading" ? (
                 <>
                   <strong>正在读这个会话</strong>
                   桌面上跑过的内容会先补上。
                 </>
-              ) : history === "failed" ? (
+              ) : history.kind === "failed" ? (
                 <>
                   <strong>没读到历史</strong>
                   新的消息照常显示，往回翻的内容暂时看不到。
+                  <span className="hint">{historyHint(history.code)}</span>
                 </>
               ) : (
                 <>
@@ -1201,28 +1503,38 @@ export function ChatScreen({
             </div>
           </div>
         ) : (
-          display.map((entry) =>
-            entry.kind === "steps" ? (
-              entry.live ? (
-                entry.steps.map((step) => (
-                  <ActivityRow
-                    key={step.id}
-                    step={step}
-                    onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
+          <>
+            {firstVisible > 0 || cursor.hasMoreBefore ? (
+              <div
+                ref={topSpacer}
+                className="window-gap"
+                style={{ minHeight: 80 }}
+                aria-hidden="true"
+              />
+            ) : null}
+            {visible.map((entry) =>
+              entry.kind === "steps" ? (
+                entry.live ? (
+                  entry.steps.map((step) => (
+                    <ActivityRow
+                      key={step.id}
+                      step={step}
+                      onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
+                    />
+                  ))
+                ) : (
+                  <ProcessSummary
+                    key={entry.id}
+                    steps={entry.steps}
+                    running={entry.running}
+                    onOpen={() => openProcess(entry)}
                   />
-                ))
+                )
               ) : (
-                <ProcessSummary
-                  key={entry.id}
-                  steps={entry.steps}
-                  running={entry.running}
-                  onOpen={() => openProcess(entry)}
-                />
-              )
-            ) : (
-              <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
-            ),
-          )
+                <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
+              ),
+            )}
+          </>
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
           <div className="notice error">
@@ -1297,7 +1609,14 @@ export function ChatScreen({
         </div>
       ) : inboxNote ? (
         <div className="inbox-note" role="status">
-          <span>{inboxNote}</span>
+          <button
+            type="button"
+            className="inbox-note-open"
+            onClick={() => setQueueSheet(true)}
+            aria-label="查看排队列表"
+          >
+            {inboxNote}
+          </button>
           <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
             ×
           </button>
@@ -1479,6 +1798,10 @@ export function ChatScreen({
             setHeadMenu(false);
             setCheckpointsSheet(true);
           }}
+          onQueue={() => {
+            setHeadMenu(false);
+            setQueueSheet(true);
+          }}
         />
       ) : null}
 
@@ -1500,6 +1823,10 @@ export function ChatScreen({
           onClose={() => setCheckpointsSheet(false)}
           onRewound={() => reload()}
         />
+      ) : null}
+
+      {queueSheet && runtime ? (
+        <QueueSheet base={runtime.base} onClose={() => setQueueSheet(false)} />
       ) : null}
 
       {process ? (

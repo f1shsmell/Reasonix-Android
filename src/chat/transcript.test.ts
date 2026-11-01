@@ -241,6 +241,51 @@ describe("transcript", () => {
     expect(row?.kind === "ask" && row.pending).toBe(true);
   });
 
+  it("does not draw a reconnection's replayed ask twice", () => {
+    // The kernel's prompt delivery is at-least-once: the original frame rides
+    // the replay log on resume, every (re)connection is handed a snapshot of
+    // what the run is blocked on, and each SSE reconnect takes both again.
+    // Three deliveries of one ask mean one card.
+    const ask = { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] };
+    const result = feed([
+      { kind: "ask_request", ask },
+      { kind: "ask_request", ask },
+    ]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.kind).toBe("ask");
+    // An unchanged copy changes nothing, so the frame costs no re-render.
+    const again = reduce(result, { kind: "ask_request", ask });
+    expect(again).toBe(result);
+  });
+
+  it("does not reopen an answered question when its snapshot arrives again", () => {
+    // The shape behind the three identical cards: the phone answers (or a
+    // receipt closes the row), then the next reconnect re-sends the same ask.
+    // The row's answer state is already earned; a replay must not undo it.
+    const ask = { id: "a1", questions: [{ id: "q1", prompt: "p", options: [] }] };
+    const result = feed([
+      { kind: "ask_request", ask },
+      { kind: "notice", decisionReceipt: { id: "a1", kind: "ask", outcome: "answered" } },
+      { kind: "ask_request", ask },
+    ]);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row?.kind === "ask" && row.pending).toBe(false);
+  });
+
+  it("upserts a replayed approval instead of stacking it", () => {
+    // Approvals ride the same replay path as asks: resume plus the per-
+    // connection snapshot can deliver one prompt more than once.
+    const approval = { id: "p1", tool: "bash", subject: "run ls" };
+    const result = feed([
+      { kind: "approval_request", approval },
+      { kind: "approval_request", approval },
+    ]);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row?.kind === "approval" && row.pending).toBe(true);
+  });
+
   it("does not let a question outlive the turn that asked it", () => {
     // A lost receipt would otherwise leave a prompt that can never be answered.
     const result = feed([

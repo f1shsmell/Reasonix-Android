@@ -12,8 +12,12 @@
  * two folds share the row types and nothing else.
  */
 
-import type { HistoryMessage, HistoryToolCall } from "../wire/history";
-import { fetchWithTimeout } from "./http";
+import type {
+  HistoryMessage,
+  HistoryToolCall,
+  HistoryToolContext,
+} from "../wire/history";
+import { RequestTimeout, fetchWithTimeout } from "./http";
 import type { Row, ToolRow } from "../chat/transcript";
 
 /** Control sequences are not text; a transcript that shows them is broken. */
@@ -58,11 +62,31 @@ function toolRow(call: HistoryToolCall, id: string): ToolRow {
  * - A tool result is joined to its call by id, not by position. A call whose
  *   result is missing keeps its card; a result whose call is missing gets one
  *   of its own rather than being lost.
+ *
+ * A page of a paged conversation breaks that second rule on its own: the
+ * newest page can hold a result whose call sits pages earlier. The kernel
+ * ships those calls in `toolContext`, and each is drawn here as its own card
+ * so the result has somewhere to land. The card's id is the one the call's
+ * own message would generate, so when an older page later brings that
+ * message in, the prepend dedupe drops the duplicate and one card remains.
  */
-export function foldHistory(messages: HistoryMessage[]): Row[] {
+export function foldHistory(
+  messages: HistoryMessage[],
+  toolContext?: HistoryToolContext[],
+): Row[] {
   const rows: Row[] = [];
   // Where each call's card landed, so its result can fill it in.
   const calls = new Map<string, number>();
+
+  // Calls whose messages sit outside this page. They render before the page's
+  // own rows — their msgIndex is strictly earlier — in context order.
+  const inPage = new Set(messages.map((message) => message.msgIndex));
+  for (const ctx of toolContext ?? []) {
+    if (!ctx || typeof ctx.messageIndex !== "number" || !ctx.call?.id) continue;
+    if (inPage.has(ctx.messageIndex)) continue;
+    calls.set(ctx.call.id, rows.length);
+    rows.push(toolRow(ctx.call, historyId(ctx.messageIndex, (ctx.ordinal ?? 0) + 1)));
+  }
 
   for (const message of messages) {
     const index = message.msgIndex;
@@ -151,16 +175,176 @@ export function foldHistory(messages: HistoryMessage[]): Row[] {
  * transcript with a working composer is better than no screen at all. The
  * caller is told which happened.
  */
-export async function loadHistory(
-  base: string,
-): Promise<{ ok: true; rows: Row[] } | { ok: false; code: string }> {
+/**
+ * Reading the stored conversation.
+ *
+ * The primary path is `GET /history/page` — the kernel serves the newest
+ * window (limit 1-500) with `hasMoreBefore`, `nextCursor`, `snapshot` and
+ * `total`, reads it off disk per page and never rebuilds the whole message
+ * list. Measured against a 7.4 MB session on a v2.56 kernel: 270ms cold /
+ * 7ms warm with a 135 KB body, against 2.7 MB for the whole read. On the
+ * mesh-VPN link where the whole read times out, the body size — not the
+ * server — was always the bottleneck, so the page is what makes long
+ * conversations open at all.
+ *
+ * Two fallbacks keep older kernels and moving sessions working:
+ * - 409 `history.snapshot_changed` on a cursor read means the conversation
+ *   moved between requests; the newest page is fetched again, which is the
+ *   answer the reader wants anyway.
+ * - 404 means a kernel without the page route; the whole `/history` read
+ *   stays as the fallback with its own long deadline (the body is the whole
+ *   transcript, and the proxy gives up at 60s — going past that would only
+ *   change which side abandons first).
+ */
+export const HISTORY_PAGE_SIZE = 200;
+export const HISTORY_PAGE_TIMEOUT_MS = 30_000;
+export const HISTORY_TIMEOUT_MS = 55_000;
+
+/** What one read of the stored conversation produced. */
+export interface HistoryRead {
+  rows: Row[];
+  /** The kernel's count of messages in the whole conversation. */
+  total: number;
+  /** True when older messages exist behind `nextCursor`. */
+  hasMoreBefore: boolean;
+  /** Pass back to `loadHistory` to read the page before this one. */
+  nextCursor?: string;
+  /** The snapshot this page was cut from; a mismatched older page is stale. */
+  snapshot?: string;
+  /** Index of this page's first message in the whole conversation. */
+  start?: number;
+  /** Index one past this page's last message. */
+  end?: number;
+  /** False when a kernel without `/history/page` served the whole transcript. */
+  paged: boolean;
+}
+
+type HistoryResult = { ok: true; read: HistoryRead } | { ok: false; code: string };
+
+/**
+ * Shape-check one page the way the desktop's own reader does.
+ *
+ * A page whose bookkeeping disagrees with itself — `hasMoreBefore` without a
+ * cursor, bounds outside `total`, `hasMoreBefore` claiming more when `start`
+ * says this was the first — is not a page to fold, it is a kernel bug to
+ * surface as `history.shape`. Folding it silently would wedge the cursor
+ * walk: the next request would re-read the same window forever.
+ */
+function checkedPage(page: {
+  messages?: unknown;
+  total?: unknown;
+  hasMoreBefore?: unknown;
+  nextCursor?: unknown;
+  snapshot?: unknown;
+  start?: unknown;
+  end?: unknown;
+  toolContext?: unknown;
+}): {
+  messages: HistoryMessage[];
+  total: number;
+  hasMoreBefore: boolean;
+  nextCursor?: string;
+  snapshot?: string;
+  start?: number;
+  end?: number;
+  toolContext?: HistoryToolContext[];
+} | null {
+  if (!page || !Array.isArray(page.messages)) return null;
+  const total = page.total as number;
+  if (!Number.isSafeInteger(total) || total < 0) return null;
+  const hasMoreBefore = page.hasMoreBefore === true;
+  if (hasMoreBefore && typeof page.nextCursor !== "string") return null;
+  if (page.start !== undefined || page.end !== undefined) {
+    const start = page.start as number;
+    const end = page.end as number;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null;
+    if (start < 0 || end < start || total < end) return null;
+    if (hasMoreBefore !== start > 0) return null;
+  }
+  return {
+    messages: page.messages,
+    total,
+    hasMoreBefore,
+    ...(typeof page.nextCursor === "string" && page.nextCursor
+      ? { nextCursor: page.nextCursor }
+      : {}),
+    ...(typeof page.snapshot === "string" && page.snapshot
+      ? { snapshot: page.snapshot }
+      : {}),
+    ...(Number.isSafeInteger(page.start) ? { start: page.start as number } : {}),
+    ...(Number.isSafeInteger(page.end) ? { end: page.end as number } : {}),
+    // Calls whose messages sit outside the page; the fold guards each entry's
+    // own shape, so a list here is accepted as carried.
+    ...(Array.isArray(page.toolContext)
+      ? { toolContext: page.toolContext as HistoryToolContext[] }
+      : {}),
+  };
+}
+
+async function readPage(base: string, cursor?: string): Promise<HistoryResult> {
+  const query = cursor
+    ? `limit=${HISTORY_PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`
+    : `limit=${HISTORY_PAGE_SIZE}`;
+  const response = await fetchWithTimeout(
+    `${base}/history/page?${query}`,
+    { credentials: "same-origin" },
+    HISTORY_PAGE_TIMEOUT_MS,
+  );
+  if (response.status === 409) return { ok: false, code: "history.snapshot_changed" };
+  if (!response.ok) return { ok: false, code: `http.${response.status}` };
+  const page = checkedPage((await response.json()) as Record<string, unknown>);
+  if (!page) return { ok: false, code: "history.shape" };
+  return {
+    ok: true,
+    read: {
+      rows: foldHistory(page.messages, page.toolContext),
+      total: page.total,
+      hasMoreBefore: page.hasMoreBefore,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      ...(page.snapshot ? { snapshot: page.snapshot } : {}),
+      ...(page.start !== undefined ? { start: page.start } : {}),
+      ...(page.end !== undefined ? { end: page.end } : {}),
+      paged: true,
+    },
+  };
+}
+
+/** The whole-transcript read, for kernels that predate `/history/page`. */
+async function readWhole(base: string): Promise<HistoryResult> {
+  const response = await fetchWithTimeout(
+    `${base}/history`,
+    { credentials: "same-origin" },
+    HISTORY_TIMEOUT_MS,
+  );
+  if (!response.ok) return { ok: false, code: `http.${response.status}` };
+  const messages = (await response.json()) as HistoryMessage[];
+  if (!Array.isArray(messages)) return { ok: false, code: "history.shape" };
+  return {
+    ok: true,
+    read: {
+      rows: foldHistory(messages),
+      total: messages.length,
+      hasMoreBefore: false,
+      paged: false,
+    },
+  };
+}
+
+export async function loadHistory(base: string, cursor?: string): Promise<HistoryResult> {
   try {
-    const response = await fetchWithTimeout(`${base}/history`, { credentials: "same-origin" }, 15_000);
-    if (!response.ok) return { ok: false, code: `http.${response.status}` };
-    const messages = (await response.json()) as HistoryMessage[];
-    if (!Array.isArray(messages)) return { ok: false, code: "history.shape" };
-    return { ok: true, rows: foldHistory(messages) };
-  } catch {
+    const first = await readPage(base, cursor);
+    if (first.ok || first.code !== "history.snapshot_changed") {
+      if (first.ok || first.code !== "http.404") return first;
+      return await readWhole(base);
+    }
+    // The conversation moved while this cursor was in flight. The newest
+    // page is what the reader needs; a second 409 cannot happen — only a
+    // cursor read checks the snapshot against it.
+    return await readPage(base);
+  } catch (error) {
+    // A deadline and a dead socket both used to read as `client.offline`,
+    // which hid the one that this screen can actually do something about.
+    if (error instanceof RequestTimeout) return { ok: false, code: "client.timeout" };
     return { ok: false, code: "client.offline" };
   }
 }

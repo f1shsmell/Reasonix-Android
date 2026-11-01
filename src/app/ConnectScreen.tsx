@@ -858,6 +858,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   );
 
   const known = config?.origin ?? "";
+  /**
+   * The addresses this phone can reach without going through a tunnel.
+   *
+   * A computer exposing both its Wi-Fi address and a mesh-VPN one is two rows
+   * in the list above, and they are not equally good. Naming the direct one
+   * is what lets a person pick it on purpose instead of by experiment.
+   */
+  const direct = config?.direct ?? [];
   const labelOf = (entry: SavedConnection): string =>
     entry.kind === "cloud"
       ? (devices.find((device) => device.id === entry.target)?.name ?? entry.name)
@@ -1002,6 +1010,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                         </span>
                         <span className="setting-sub">
                           {entry.kind === "lan" ? `局域网 · ${entry.target}` : "云端 · Reasonix 账号"}
+                          {entry.kind === "lan" && direct.includes(entry.target)
+                            ? " · 可直连"
+                            : ""}
                         </span>
                       </span>
                       <span className="chev" aria-hidden="true">
@@ -1028,7 +1039,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               })}
             </section>
             <p className="group-note">
-              点一行切换；× 移除记录。
+              点一行切换；× 移除记录。离开后自动改用云端。
             </p>
             {config?.origin || config?.mode === "relay" ? (
               <button type="button" className="setting action danger" onClick={() => void disconnect()} disabled={busy !== ""}>

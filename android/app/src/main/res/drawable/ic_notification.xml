@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification mark: the same cat R the launcher icon uses, sized to
+     fill the slot a status bar gives it.
+
+     A notification small icon is an alpha mask. The system tints it with the
+     bar's own foreground colour, so only the shape survives: it is drawn in
+     white because the value is ignored, and any colour or gradient here would
+     be flattened to the same silhouette anyway.
+
+     No <group> transform. An earlier revision wrapped the artwork in
+     translate+scale, which is valid VectorDrawable and renders in a browser,
+     but the notification path does not use the same renderer: the system
+     rasterises this drawable through its own icon pipeline. The 0.099311
+     scale put every coordinate far outside the 24-unit viewport before the
+     matrix applied, and on a device the icon came out unchanged - the
+     silhouette never reached the bar. The transform is baked into the path
+     data instead: every coordinate is absolute and already inside 0..24, so
+     there is nothing left to interpret.
+
+     Size: the drawn bbox is 19.30 x 21.80dp, centred on (12, 12). Android
+     clips a notification icon to a 22dp safe area, so this fills it with
+     1.10dp of margin top and bottom (and 2.35dp left and right, because the
+     glyph is narrower than it is tall). Pushing it to a full 22dp left the
+     bottom at 0.999dp, close enough to the clip to shave the foot of the leg
+     on some renderers, so it stops just short. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12.995 11.273C13.202 11.448 13.489 11.513 13.784 11.378C13.901 11.325 13.979 11.189 13.93 11.056C13.541 9.992 12.443 9.215 12.006 9.816C11.952 9.89 11.954 9.985 11.995 10.044C12.026 10.09 12.091 10.1 12.175 10.083C12.441 10.028 12.773 10.214 12.741 10.511C12.709 10.82 12.771 11.086 12.996 11.274ZM19.403 13.208C20.408 12.084 21.038 10.724 21.257 9.228C21.758 5.958 20.134 2.971 17.075 1.706C16 1.274 14.895 1.09 13.723 1.101L2.351 1.104L2.351 22.895Q7.942 22.891 7.942 22.891L7.942 15.227C7.757 15.158 7.629 15.101 7.629 15.101C6.413 14.546 5.484 13.582 4.973 12.376C4.322 10.835 4.522 9.108 5.547 7.795C6.568 6.52 7.962 6.115 9.56 6.338C10.151 6.421 10.782 5.728 11.984 5.861C12.064 5.87 12.146 5.93 12.153 5.978C12.181 6.142 11.717 6.23 11.717 6.678C11.717 6.867 11.801 7.085 11.98 7.21C12.592 7.64 13.123 8.123 13.678 8.623C13.948 8.865 14.863 9.547 15.095 8.992C15.231 8.668 15.321 8.329 15.411 7.984C15.456 7.813 15.361 7.712 15.223 7.631C14.28 7.071 13.924 5.907 14.293 4.876C14.328 4.776 14.421 4.728 14.499 4.725C14.816 4.711 14.647 5.299 15.431 5.54C16.175 5.769 16.196 6.387 16.558 6.141C17.4 5.567 17.704 6.037 18.486 5.301C18.566 5.225 18.704 5.219 18.787 5.278C18.839 5.314 18.884 5.406 18.88 5.514C18.857 6.136 18.615 6.73 18.19 7.187C17.386 8.05 16.711 7.636 16.667 8.241C16.539 10.015 15.959 11.786 14.7 13.074C14.659 13.115 14.635 13.174 14.642 13.214C14.649 13.255 14.699 13.296 14.753 13.314L15.814 13.675C15.964 13.725 16.072 13.86 16.053 14.003C16.037 14.128 15.937 14.239 15.794 14.286C15.016 14.544 14.179 14.499 13.387 14.26C12.338 15.142 11.049 15.598 9.645 15.544L11.684 18.358L15.01 22.9L21.649 22.891L16.02 15.29C17.33 14.904 18.481 14.211 19.403 13.211ZM6.098 9.54C5.748 9.583 5.537 9.834 5.571 10.21C5.808 12.826 8.223 14.969 10.928 14.452C11.504 14.342 12.028 14.114 12.453 13.684C11.533 12.891 11.084 12.083 10.327 11.287C9.244 10.148 7.702 9.347 6.098 9.54Z" />
+</vector>

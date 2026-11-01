@@ -49,9 +49,13 @@ afterEach(() => {
 const runtime: RuntimeView = { id: "r1", base: "/rt/r1", root: "/w", name: "w" };
 const other: RuntimeView = { id: "r2", base: "/rt/r2", root: "/w2", name: "w2" };
 
-function snapshot(lastEvent?: EventPayload, runtimes: RuntimeView[] = [runtime]): ConnectionSnapshot {
+function snapshot(
+  lastEvent?: EventPayload,
+  runtimes: RuntimeView[] = [runtime],
+  reach: ConnectionSnapshot["reach"] = { kind: "ok" },
+): ConnectionSnapshot {
   return {
-    reach: { kind: "ok" },
+    reach,
     runtimes,
     stream: { kind: "open" },
     ...(lastEvent ? { lastEvent } : {}),
@@ -77,8 +81,13 @@ function json(body: unknown, status = 200): Response {
  */
 function stubKernel(
   options: {
+    /** Newest-page body; `messages` is the array the screen folds. */
     history?: unknown;
     historyStatus?: number;
+    /** Served for cursor requests: the page before the newest one. */
+    olderPage?: unknown;
+    /** Serves the whole-transcript fallback at GET /history. */
+    wholeHistory?: unknown;
     todos?: unknown;
     todosStatus?: number;
     status?: unknown;
@@ -95,7 +104,18 @@ function stubKernel(
         json(options.status ?? { running: false, busy: false, decisions: [] }, options.statusStatus),
       );
     }
-    return Promise.resolve(json(options.history ?? [], options.historyStatus));
+    if (url.includes("/history/page")) {
+      if (url.includes("cursor=") && options.olderPage !== undefined) {
+        return Promise.resolve(json(options.olderPage, options.historyStatus));
+      }
+      const body = options.history ?? [];
+      const page =
+        Array.isArray(body)
+          ? { messages: body, total: body.length, hasMoreBefore: false }
+          : body;
+      return Promise.resolve(json(page, options.historyStatus));
+    }
+    return Promise.resolve(json(options.wholeHistory ?? options.history ?? [], options.historyStatus));
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -169,6 +189,18 @@ describe("ChatScreen history", () => {
     expect(container.textContent).toContain("没读到历史");
   });
 
+  it("names the failure, so a bug report can tell a 404 from a deadline", async () => {
+    // Without the code, every failure looked identical on the phone: the
+    // deadline on a long conversation and a kernel that closed the pane both
+    // read as "没读到历史".
+    stubKernel({ historyStatus: 404 });
+
+    render(snapshot());
+    await flush();
+
+    expect(container.textContent).toContain("http.404");
+  });
+
   it("says it is still reading rather than claiming there is nothing", async () => {
     // "还没有消息" on a session with history is a lie the person acts on.
     let resolve: (value: Response) => void = () => {};
@@ -203,7 +235,7 @@ describe("ChatScreen history", () => {
   it("repaints the cached conversation instead of waiting on the read", async () => {
     // The point of the cache: the rows the screen drew last time are on
     // screen before the history request returns.
-    scheduleSaveRows("r1", [
+    scheduleSaveRows(["r1"], [
       { kind: "user", id: "u1", text: "缓存里的问题" },
       { kind: "assistant", id: "a1", text: "缓存里的回答", reasoning: "", streaming: false },
     ]);
@@ -236,6 +268,112 @@ describe("ChatScreen history", () => {
     // The read replaces the cache rather than prefixing it — the cache IS the
     // earlier history, so a merge would draw the conversation twice.
     expect(container.textContent.split("缓存里的问题")).toHaveLength(2);
+  });
+
+  it("drops a cached streaming bubble that history has finished — no ghost answer", async () => {
+    // Reported on a device: a turn still streaming when the pane was closed
+    // reopens with the answer drawn twice. The cache flushed the bubble
+    // mid-turn (streaming: true), history carries the finished message, and
+    // keepUnconfirmed alone preserves both. A genuinely running turn is
+    // unaffected: history carries settled messages only, so no prefix match.
+    scheduleSaveRows(["r1"], [
+      { kind: "assistant", id: "a-ghost", text: "这段回答出现过两次", reasoning: "", streaming: true },
+    ]);
+
+    let resolve: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/todos")) return Promise.resolve(json([]));
+        return new Promise<Response>((done) => (resolve = done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+
+    // The streamed half painted from the cache, ghost included.
+    expect(container.textContent).toContain("这段回答出现过两次");
+
+    await act(async () => {
+      resolve(
+        json([
+          { role: "user", content: "问题", msgIndex: 1 },
+          { role: "assistant", content: "这段回答出现过两次，以及后文", msgIndex: 2 },
+        ]),
+      );
+      await Promise.resolve();
+    });
+
+    // History's finished copy stays, the streaming ghost is dropped: exactly
+    // one draw now.
+    expect(container.textContent.split("这段回答出现过两次")).toHaveLength(2);
+  });
+
+  it("keeps a cached streaming bubble when history has no finished copy — a turn still running", async () => {
+    // The turn is genuinely live: no settled message in history matches, so
+    // the streamed text must survive the replace and keep absorbing deltas.
+    scheduleSaveRows(["r1"], [
+      { kind: "assistant", id: "a-live", text: "仍在生成的回答前半", reasoning: "", streaming: true },
+    ]);
+
+    let resolve: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/todos")) return Promise.resolve(json([]));
+        return new Promise<Response>((done) => (resolve = done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+
+    await act(async () => {
+      resolve(
+        json([{ role: "user", content: "问题", msgIndex: 1 }]),
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("仍在生成的回答前半");
+  });
+
+  it("paints the cache before /runtimes answers, and says so", async () => {
+    // `base` comes from `GET /runtimes`, which is the slowest thing on a bad
+    // network. The cache exists to paint before that lands, so it must not be
+    // gated on it — and the screen must not claim the pane is gone meanwhile.
+    scheduleSaveRows(["r1"], [
+      { kind: "user", id: "u1", text: "缓存里的问题" },
+      { kind: "assistant", id: "a1", text: "缓存里的回答", reasoning: "", streaming: false },
+    ]);
+
+    // Every route hangs: the runtime list has not arrived.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    // `unknown` is the state before the first answer, which is what a phone on
+    // a bad network sits in.
+    render(snapshot(undefined, [], { kind: "unknown" }));
+    await flush();
+
+    // The cache was read without a base, which is the fix.
+    expect(container.textContent).toContain("已缓存 2 条");
+    expect(container.textContent).not.toContain("这个会话已经关掉了");
+  });
+
+  it("says the pane is gone once the list has answered without it", async () => {
+    // The list did answer (reach ok) and this pane is not in it: the old
+    // wording is right, and a stale cache must not hide it.
+    scheduleSaveRows(["r1"], [{ kind: "user", id: "u1", text: "旧缓存" }]);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    render(snapshot(undefined, [other], { kind: "ok" }));
+    await flush();
+
+    expect(container.textContent).toContain("这个会话已经关掉了");
   });
 });
 
@@ -1551,5 +1689,250 @@ describe("ChatScreen reading position", () => {
     } finally {
       scroll.restore();
     }
+  });
+});
+
+describe("ChatScreen transcript windowing", () => {
+  /**
+   * A long session read whole puts thousands of nodes into the DOM at once,
+   * and every streaming delta re-renders all of them — the stutter a phone
+   * shows flicking through an old pane. The window draws the tail and grows
+   * as the reader scrolls up, so the DOM stays proportional to what is on
+   * screen, not to how long the conversation is.
+   */
+
+  function longHistory(count: number): unknown[] {
+    return Array.from({ length: count }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `消息 ${i}`,
+      msgIndex: i + 1,
+    }));
+  }
+
+  it("draws the newest entries first and leaves the rest off the DOM", async () => {
+    stubKernel({ history: longHistory(120) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("消息 119");
+    expect(text).toContain("消息 91");
+    // Window is 30 entries: the first ~90 stay unpainted...
+    expect(text).not.toContain("消息 60");
+    // ...until the reader asks for them via the top affordance.
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+  });
+
+  it("grows the window when the reader scrolls toward the top", async () => {
+    stubKernel({ history: longHistory(120) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+    const before = container.textContent ?? "";
+
+    act(() => {
+      list.scrollTop = 10; // near the top → onScroll widens the window
+      list.dispatchEvent(new Event("scroll"));
+    });
+
+    const after = container.textContent ?? "";
+    expect(after).not.toBe(before);
+    expect(after).toContain("消息 60");
+    // The spacer stays as long as entries remain above the window.
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+  });
+
+  it("removes the spacer once the window covers the whole conversation", async () => {
+    stubKernel({ history: longHistory(60) });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.querySelector(".window-gap")).toBeTruthy();
+
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(container.querySelector(".window-gap")).toBeNull();
+    expect(container.textContent ?? "").toContain("消息 0");
+  });
+
+  it("keeps a short conversation unwindowed", async () => {
+    stubKernel({
+      history: [
+        { role: "user", content: "only question", msgIndex: 1 },
+        { role: "assistant", content: "only answer", msgIndex: 2 },
+      ],
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".window-gap")).toBeNull();
+    expect(container.textContent ?? "").toContain("only answer");
+  });
+
+  it("starts a new pane's window fresh when switching conversations", async () => {
+    stubKernel({ history: longHistory(120) });
+    render(snapshot());
+    await flush();
+    await flush();
+
+    // Widen this pane's window.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    expect(container.textContent ?? "").toContain("消息 60");
+
+    // The other pane opens with its own tail window, not the widened one.
+    render(snapshot(undefined, [other]), "r2");
+    await flush();
+    await flush();
+
+    expect(container.textContent ?? "").not.toContain("消息 0");
+  });
+
+  it("never fires the previous conversation's cursor after a switch", async () => {
+    // Pane A is paged and holds a cursor. Switching to pane B resets it: the
+    // cursor belonged to A's newest page, and a read against it would prepend
+    // A's messages onto B — most visibly when B's own history read fails and
+    // nothing arrives to overwrite them.
+    const fetchMock = stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 130,
+        hasMoreBefore: true,
+        nextCursor: "c-old",
+      },
+      olderPage: {
+        messages: [{ role: "user", content: "A 的旧消息", msgIndex: 1 }],
+        total: 130,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.textContent ?? "").toContain("消息 59");
+
+    // B's history read fails outright: nothing will land to mask a stray
+    // cursor read.
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/history/page") && !url.includes("cursor=")) {
+        return Promise.resolve(new Response(null, { status: 500 }));
+      }
+      if (url.includes("/history")) {
+        return Promise.resolve(new Response(null, { status: 500 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ running: false, busy: false, decisions: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+
+    render(snapshot(undefined, [other]), "r2");
+    await flush();
+    await flush();
+
+    // Push B to the top exactly as a reader would; the cursor from A is dead
+    // and no older-page request may go out.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    await flush();
+
+    const cursorCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("cursor="),
+    );
+    expect(cursorCalls).toHaveLength(0);
+    expect(container.textContent ?? "").not.toContain("A 的旧消息");
+    expect(container.textContent ?? "").toContain("没读到历史");
+  });
+
+  it("fetches an older page when the window reaches the top of a paged conversation", async () => {
+    // The newest page holds 60 of 130 messages: growing into the spacer is
+    // also the moment to ask the kernel for the page before this one. The
+    // older rows must land above the ones on screen, in order.
+    const older = Array.from({ length: 70 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `旧消息 ${i}`,
+      msgIndex: i + 1,
+    }));
+    const fetchMock = stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 130,
+        hasMoreBefore: true,
+        nextCursor: "c-old",
+      },
+      olderPage: {
+        messages: older,
+        total: 130,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.textContent ?? "").toContain("消息 59");
+    expect(container.textContent ?? "").not.toContain("旧消息 69");
+
+    // Near the top with the whole page drawn: the cursor read fires.
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    await flush();
+
+    expect(container.textContent ?? "").toContain("旧消息 69");
+    expect(container.textContent ?? "").toContain("消息 59");
+    const pageCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("cursor=c-old"),
+    );
+    expect(pageCalls).toHaveLength(1);
+  });
+
+  it("stops asking for older pages once the kernel says there are none", async () => {
+    stubKernel({
+      history: {
+        messages: longHistory(60),
+        total: 60,
+        hasMoreBefore: false,
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => {
+      const list = container.querySelector('[aria-label="对话记录"]') as HTMLElement;
+      list.scrollTop = 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+
+    // The spacer is gone with the window covering everything, and no cursor
+    // request was ever made: /history/page without hasMoreBefore is terminal.
+    expect(container.querySelector(".window-gap")).toBeNull();
   });
 });

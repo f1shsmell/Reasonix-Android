@@ -3,6 +3,8 @@ package com.reasonix.mobile;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.util.Log;
@@ -703,15 +705,17 @@ public final class LoopbackProxy {
 
     /**
      * Open a kernel connection. A phone with a VPN such as FlClash active often
-     * routes private addresses through the tunnel; the LAN share is on Wi-Fi,
-     * so prefer a non-VPN Wi-Fi/Ethernet network for a private target. With no
-     * VPN, bypass any configured HTTP proxy for the same private target.
+     * routes private addresses through the tunnel; a LAN share on Wi-Fi has to
+     * go around it. With no VPN, bypass any configured HTTP proxy for the same
+     * private target.
      *
-     * The Wi-Fi network is bound only when the target is an address it can
-     * actually reach: a VPN's own private range (a 组网 client, say)
-     * classifies as a LAN target but no Wi-Fi subnet contains it, and a bound
-     * socket there just times out. The default route — through the VPN — is
-     * the one that carries it.
+     * The detour is only for a target that is actually on the Wi-Fi's own
+     * subnet. A mesh VPN such as Oray's Pgy (蒲公英) also hands out private
+     * addresses — 172.16.x — but those exist only inside the tunnel, so
+     * pinning them to Wi-Fi is a route that cannot work: the request leaves on
+     * a network with no path to it and times out, while the tunnel that could
+     * have carried it sits idle. Deciding by subnet rather than by "is this
+     * address private" is what keeps the two apart.
      *
      * The net policy setting narrows or widens that behaviour: "bypass" keeps
      * the private-route path even without a VPN, "system" leaves every
@@ -724,57 +728,21 @@ public final class LoopbackProxy {
         if ("system".equals(policy) || target == null) {
             return (HttpURLConnection) uri.toURL().openConnection();
         }
-        if ("bypass".equals(policy)) {
-            Network override = lanNetwork();
-            if (override != null) {
-                return (HttpURLConnection) override.openConnection(uri.toURL());
-            }
+        Network local = "bypass".equals(policy) ? lanNetwork(target) : null;
+        if (local == null) {
+            // auto: bind only when the target is a neighbour of the Wi-Fi, so
+            // a mesh-VPN address rides the tunnel instead of a dead route.
+            local = vpnActive() ? null : lanNetwork(target);
+        }
+        if (local != null) {
+            return (HttpURLConnection) local.openConnection(uri.toURL());
+        }
+        if ("auto".equals(policy) && !vpnActive()) {
+            // Not on any directly attached subnet, no VPN: an HTTP proxy would
+            // answer for a private address it cannot see, so bypass it.
             return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
         }
-        Network lanNet = reachableNetwork(target);
-        if (lanNet != null) {
-            return (HttpURLConnection) lanNet.openConnection(uri.toURL());
-        }
-        if (vpnActive()) {
-            return (HttpURLConnection) uri.toURL().openConnection();
-        }
-        return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
-    }
-
-    /** A non-VPN Wi-Fi/Ethernet network whose subnets contain the target. */
-    private Network reachableNetwork(InetAddress target) {
-        Network lan = lanNetwork();
-        if (lan == null || !networkCovers(lan, target)) return null;
-        return lan;
-    }
-
-    /** Whether one of the network's interface addresses covers the target IP. */
-    static boolean networkCovers(Network network, InetAddress target, ConnectivityManager manager) {
-        android.net.LinkProperties props = manager.getLinkProperties(network);
-        if (props == null) return false;
-        for (android.net.LinkAddress linkAddress : props.getLinkAddresses()) {
-            InetAddress local = linkAddress.getAddress();
-            if (local.getAddress().length != target.getAddress().length) continue;
-            byte[] prefix = local.getAddress();
-            byte[] candidate = target.getAddress();
-            int bits = linkAddress.getPrefixLength();
-            int full = bits / 8;
-            boolean covered = true;
-            for (int i = 0; i < full && covered; i++) covered = prefix[i] == candidate[i];
-            if (covered && bits % 8 != 0) {
-                int mask = 0xff << (8 - bits % 8);
-                covered = (prefix[full] & mask) == (candidate[full] & mask);
-            }
-            if (covered) return true;
-        }
-        return false;
-    }
-
-    private boolean networkCovers(Network network, InetAddress target) {
-        ConnectivityManager manager =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager == null) return false;
-        return networkCovers(network, target, manager);
+        return (HttpURLConnection) uri.toURL().openConnection();
     }
 
     /** The IP a LAN share uses, or null for an internet host. */
@@ -795,8 +763,16 @@ public final class LoopbackProxy {
         return null;
     }
 
-    /** A non-VPN Wi-Fi or Ethernet network, when the active route is a VPN. */
-    private Network lanNetwork() {
+    /**
+     * The Wi-Fi or Ethernet network that can actually reach [target], or null
+     * when the target is not on any of their subnets.
+     *
+     * Only a VPN that owns the default route needs this: without one the
+     * default route already reaches the LAN. With one, a target on the Wi-Fi's
+     * own subnet must be sent out that link to avoid the tunnel, and a target
+     * that is on no local subnet must not be pinned to one at all.
+     */
+    private Network lanNetwork(InetAddress target) {
         ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (manager == null) return null;
         Network active = manager.getActiveNetwork();
@@ -805,12 +781,47 @@ public final class LoopbackProxy {
         for (Network network : manager.getAllNetworks()) {
             NetworkCapabilities caps = manager.getNetworkCapabilities(network);
             if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
-            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
-                return network;
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    && !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                continue;
             }
+            if (onLink(manager, network, target)) return network;
         }
         return null;
+    }
+
+    /** True when [network]'s own addresses make [target] a neighbour. */
+    private static boolean onLink(ConnectivityManager manager, Network network, InetAddress target) {
+        LinkProperties properties = manager.getLinkProperties(network);
+        if (properties == null) return false;
+        for (LinkAddress address : properties.getLinkAddresses()) {
+            if (inSubnet(target, address.getAddress(), address.getPrefixLength())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether [target] falls inside [local]/[prefix].
+     *
+     * An interface's own prefix is the only statement that a neighbour is
+     * directly reachable: a mesh VPN's 172.16.x address is private by the same
+     * rule as a home router's 192.168.x one, but only the latter is a
+     * neighbour of the Wi-Fi link.
+     */
+    static boolean inSubnet(InetAddress target, InetAddress local, int prefix) {
+        if (target == null || local == null || prefix < 0) return false;
+        byte[] a = target.getAddress();
+        byte[] b = local.getAddress();
+        if (a.length != b.length) return false;
+        int bits = Math.min(prefix, a.length * 8);
+        int whole = bits / 8;
+        for (int i = 0; i < whole; i++) {
+            if (a[i] != b[i]) return false;
+        }
+        int rest = bits % 8;
+        if (rest == 0) return true;
+        int mask = (0xff << (8 - rest)) & 0xff;
+        return (a[whole] & mask) == (b[whole] & mask);
     }
 
     private boolean vpnActive() {
@@ -839,7 +850,23 @@ public final class LoopbackProxy {
         String origin = prefs.getString(KEY_ORIGIN, "");
         JSONObject out = new JSONObject();
         out.put("origin", origin);
-        out.put("candidates", new JSONArray(prefs.getString(KEY_CANDIDATES, "[]")));
+        JSONArray saved;
+        try {
+            saved = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));
+        } catch (JSONException e) {
+            saved = new JSONArray();
+        }
+        out.put("candidates", saved);
+        // The same list in the order this phone would try it, and the subset it
+        // can reach without a tunnel. Both are needed: the order is what the
+        // app switches by, the subset is what it can honestly call "direct".
+        out.put("preferred", preferredFirst(saved, this::directlyReachable));
+        JSONArray direct = new JSONArray();
+        for (int i = 0; i < saved.length(); i++) {
+            String value = saved.optString(i, "");
+            if (!value.isEmpty() && directlyReachable(value)) direct.put(value);
+        }
+        out.put("direct", direct);
         out.put("paired", !origin.isEmpty()
                 && (hasCookie(origin) || !webCookie(origin.endsWith("/") ? origin : origin + "/").isEmpty()));
         out.put("mode", prefs.getString(KEY_MODE, "lan"));
@@ -891,9 +918,16 @@ public final class LoopbackProxy {
     }
 
     /**
-     * Try every remembered origin, newest first. An address that still answers
-     * becomes the upstream again; a phone that changed Wi-Fi can recover
-     * without a new scan as long as the address itself did not change.
+     * Try every remembered origin, the ones this phone can reach directly
+     * first.
+     *
+     * Order is the whole point. A computer that exposes both its Wi-Fi address
+     * and a mesh-VPN one is two doors to the same kernel, and the direct door
+     * is the faster one — no tunnel, no detour through someone else's relay.
+     * Trying them newest-first would keep picking whichever was paired last,
+     * which is the tunnel as often as not. A neighbour of a Wi-Fi/Ethernet
+     * interface is preferred, and everything else stays as a fallback so a
+     * phone that left that network still recovers.
      *
      * No origin means the person disconnected on purpose, and a network flip
      * must not quietly re-arm the proxy behind that choice: only an explicit
@@ -907,13 +941,70 @@ public final class LoopbackProxy {
         } catch (JSONException e) {
             return;
         }
-        for (int i = 0; i < list.length(); i++) {
-            String origin = list.optString(i, "");
+        JSONArray ordered = preferredFirst(list, this::directlyReachable);
+        for (int i = 0; i < ordered.length(); i++) {
+            String origin = ordered.optString(i, "");
             if (origin.isEmpty()) continue;
             if (probe(origin)) {
                 prefs.edit().putString(KEY_ORIGIN, origin).apply();
                 return;
             }
+        }
+    }
+
+    /**
+     * The remembered origins, the directly reachable ones first.
+     *
+     * Stable within each group: two neighbours keep the order they were
+     * recorded in, so the newest direct door still wins.
+     */
+    static JSONArray preferredFirst(JSONArray list, java.util.function.Predicate<String> direct) {
+        JSONArray near = new JSONArray();
+        JSONArray far = new JSONArray();
+        for (int i = 0; i < list.length(); i++) {
+            String origin = list.optString(i, "");
+            if (origin.isEmpty()) continue;
+            (direct.test(origin) ? near : far).put(origin);
+        }
+        for (int i = 0; i < far.length(); i++) near.put(far.optString(i, ""));
+        return near;
+    }
+
+    /**
+     * Whether [origin]'s host sits on a Wi-Fi or Ethernet interface this phone
+     * is attached to.
+     *
+     * This is the test for "direct", and it is deliberately not "is the
+     * address private": a mesh VPN hands out 172.16.x too, but that address is
+     * only reachable through the tunnel, so treating it as direct would pick
+     * the slow door and call it the fast one.
+     */
+    private boolean directlyReachable(String origin) {
+        String host = hostOf(origin);
+        InetAddress target = lanTarget(host);
+        if (target == null) return false;
+        ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return false;
+        for (Network network : manager.getAllNetworks()) {
+            NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    && !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                continue;
+            }
+            if (onLink(manager, network, target)) return true;
+        }
+        return false;
+    }
+
+    /** The host of an origin like `http://192.168.5.3:57074`, or "". */
+    static String hostOf(String origin) {
+        if (origin == null || origin.isEmpty()) return "";
+        try {
+            String host = URI.create(origin).getHost();
+            return host == null ? "" : host;
+        } catch (IllegalArgumentException e) {
+            return "";
         }
     }
 
