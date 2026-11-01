@@ -1015,6 +1015,38 @@
   flex: none;
 }
 
+/* Press-and-hold dictation. The live strip sits above the textarea, the
+   way a keyboard suggestion bar does; red means the hold is armed to be
+   thrown away. */
+.composer-bar .mic.live {
+  color: var(--accent-fill);
+  background: var(--accent-soft);
+}
+
+.composer-bar .mic.cancel {
+  color: var(--bad);
+  background: rgba(var(--bad-rgb), 0.14);
+}
+
+.voice-live {
+  margin: 0 2px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: rx-fade var(--dur-1) var(--ease-out);
+}
+
+.voice-live.cancel {
+  background: rgba(var(--bad-rgb), 0.14);
+  color: var(--bad);
+}
+
 .composer-bar .modelchip {
   margin: 0 auto;
 }

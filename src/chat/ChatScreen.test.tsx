@@ -11,7 +11,32 @@ import { resetTranscriptCache, scheduleSaveRows } from "./transcriptCache";
 
 vi.mock("../native/speech", () => ({
   speechSupported: () => true,
-  listenForSpeech: vi.fn(async () => "修复登录白屏"),
+  // A hold that starts already mid-sentence and delivers on release, the
+  // way a fast recognizer does.
+  beginSpeechHold: vi.fn(async (onChange: (state: Record<string, unknown>) => void) => {
+    const state = {
+      transcript: "修复登录白屏",
+      levels: [],
+      ready: true,
+      cancelArmed: false,
+      ended: false,
+      error: "",
+    };
+    onChange({ ...state });
+    return {
+      session: 1,
+      state,
+      move: () => {},
+      release: () => {
+        state.ended = true;
+        onChange({ ...state });
+      },
+      abandon: () => {
+        state.ended = true;
+        onChange({ ...state });
+      },
+    };
+  }),
 }));
 
 /**
@@ -645,14 +670,21 @@ describe("ChatScreen composer", () => {
     await flush();
     typeDraft("先看看");
 
-    const mic = container.querySelector('button[aria-label="语音输入"]') as HTMLButtonElement;
+    const mic = container.querySelector('button[aria-label="按住说话"]') as HTMLButtonElement;
     expect(mic).toBeTruthy();
+    // Press: the hold opens and the partial transcript shows up live.
     await act(async () => {
-      mic.click();
-      await Promise.resolve();
-      await Promise.resolve();
+      mic.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientY: 200 }));
+      await flush();
     });
+    const live = container.querySelector(".voice-live");
+    expect(live?.textContent).toContain("修复登录白屏");
 
+    // Release: the final text lands in the draft, next to what was typed.
+    await act(async () => {
+      mic.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+      await flush();
+    });
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe(
       "先看看 修复登录白屏",
     );
