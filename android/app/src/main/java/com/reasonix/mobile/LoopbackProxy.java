@@ -83,6 +83,9 @@ public final class LoopbackProxy {
     /** A 10 MB image becomes ~13.3 MB of base64 inside a JSON envelope. */
     private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
     private static final int MAX_HEADER_LINE = 8192;
+    /** Total request-head bounds, enforced before authentication. */
+    private static final int MAX_HEADER_LINES = 100;
+    private static final int MAX_HEADER_BYTES = 64 * 1024;
     private static final int SOCKET_READ_TIMEOUT_MS = 20_000;
     /** An idle SSE sends a comment this often so a dead WebView is noticed. */
     private static final int SSE_HEARTBEAT_MS = 25_000;
@@ -216,7 +219,21 @@ public final class LoopbackProxy {
             String target = parts[1];
             Map<String, String> headers = new LinkedHashMap<>();
             String line;
+            // Bounded like the body is: an unauthenticated request must not be
+            // able to grow this map either. A real browser sends well under
+            // twenty headers and a few hundred bytes of cookies; 100 lines or
+            // 64 KB total is already generous, and hitting either means the
+            // peer is not someone this proxy agreed to serve.
+            int headerLines = 0;
+            int headerBytes = 0;
             while ((line = readLine(in)) != null && !line.isEmpty()) {
+                headerLines += 1;
+                headerBytes += line.length() + 2;
+                if (headerLines > MAX_HEADER_LINES || headerBytes > MAX_HEADER_BYTES) {
+                    Log.w(TAG, "rejected oversized request head from " + s.getInetAddress());
+                    writeJson(s, 431, "{\"code\":\"proxy.headers_too_large\"}");
+                    return;
+                }
                 int colon = line.indexOf(':');
                 if (colon > 0) {
                     headers.put(line.substring(0, colon).trim().toLowerCase(Locale.ROOT),
@@ -528,8 +545,9 @@ public final class LoopbackProxy {
             return "";
         }
         if (!kernelPath.startsWith("/") || kernelPath.contains("..")
-                || kernelPath.startsWith("/__reasonix/")
-                || decoded.contains("..") || decoded.startsWith("/__reasonix/")) {
+                || kernelPath.toLowerCase(Locale.ROOT).startsWith("/__reasonix/")
+                || decoded.contains("..")
+                || decoded.toLowerCase(Locale.ROOT).startsWith("/__reasonix/")) {
             return "";
         }
         return kernelPath;
@@ -1722,7 +1740,11 @@ public final class LoopbackProxy {
         if (extra == null || !extra.containsKey("Cache-Control")) {
             head.append("Cache-Control: no-store\r\n");
         }
-        head.append("Content-Length: ").append(payload.length).append("\r\n");
+        // A 204 must not carry Content-Length (RFC 9110 §8.6): some clients
+        // read it as "a body of that length follows" and hang.
+        if (status != 204 && status != 304) {
+            head.append("Content-Length: ").append(payload.length).append("\r\n");
+        }
         head.append("Connection: close\r\n\r\n");
         out.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
         out.write(payload);
@@ -1748,10 +1770,12 @@ public final class LoopbackProxy {
             case 405: return "Method Not Allowed";
             case 409: return "Conflict";
             case 422: return "Unprocessable Entity";
+            case 429: return "Too Many Requests";
+            case 431: return "Request Header Fields Too Large";
             case 500: return "Internal Server Error";
             case 502: return "Bad Gateway";
             case 503: return "Service Unavailable";
-            default: return "OK";
+            default: return "Response";
         }
     }
 

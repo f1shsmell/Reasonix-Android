@@ -30,7 +30,8 @@ export type RelayKind =
   | "trust_required"
   | "trust_changed"
   | "trust_unreadable"
-  | "trust_cancelled";
+  | "trust_cancelled"
+  | "trust_unwritable";
 
 export class RelayError extends Error {
   constructor(
@@ -183,6 +184,11 @@ function trustError(result: Extract<TrustResult, { ok: false }>): RelayError {
       return new RelayError("trust_unreadable", "这台电脑的身份公钥无法识别，连接已拒绝。");
     case "cancelled":
       return new RelayError("trust_cancelled", "已取消确认这台电脑的身份。");
+    case "unwritable":
+      return new RelayError(
+        "trust_unwritable",
+        "确认已同意，但手机没能记住这台电脑（存储被占用或已满），请清理后重试。",
+      );
     default:
       return new RelayError("trust_required", "这台电脑还没有在手机上确认身份，请在设置里手动连接一次。");
   }

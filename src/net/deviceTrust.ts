@@ -23,7 +23,12 @@ export interface TrustedDevice {
   at: number;
 }
 
-export type TrustCode = "required" | "cancelled" | "changed" | "unreadable";
+export type TrustCode =
+  | "required"
+  | "cancelled"
+  | "changed"
+  | "unreadable"
+  | "unwritable";
 
 export interface TrustPrompt {
   id: string;
@@ -168,7 +173,10 @@ export async function checkDeviceTrust(
   const accepted = await confirm({ id: device.id, fingerprint: fingerprint.display });
   if (!accepted) return { ok: false, code: "cancelled" };
   if (!pinDevice({ id: device.id, publicKey: device.publicKey, fingerprint: fingerprint.full })) {
-    return { ok: false, code: "required", fingerprint: fingerprint.display };
+    // The person accepted, so answering "required" would re-ask and loop
+    // forever: the confirmation succeeded, only remembering it did not. Say
+    // so — storage is full or blocked — instead of sending them round again.
+    return { ok: false, code: "unwritable", fingerprint: fingerprint.display };
   }
   return { ok: true };
 }

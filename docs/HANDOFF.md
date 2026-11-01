@@ -536,7 +536,10 @@ solely once `Connection.lost` is true. That flag means the transport failed
 `TOLERATED_FAILURES` (2) reads in a row; a single lost request keeps the last
 good answer on screen and is what a Wi-Fi hiccup looks like. A refusal from the
 kernel — 401/403, an unreadable body — is an answer, not a loss, and is
-published at once.
+published at once. But an answer that ends the session is still decisive: both
+`check` and `watch` move the machine to `failed` on `reach.kind ===
+"unauthorized"` (「配对或登录已失效」), because a tolerance that kept the chip on
+已连接 under an expired pairing would only relocate the wedge it removed.
 
 Home carries the link as a row under the title bar: dot + computer name + state
 (`已连接` / `正在重连（第 n 次）` / `等待网络` / `连接失败`). Tapping it opens 切换连接

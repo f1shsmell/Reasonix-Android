@@ -108,7 +108,7 @@ describe("checkDeviceTrust", () => {
     expect(result).toMatchObject({ ok: false, code: "unreadable" });
   });
 
-  it("treats a storage that cannot write as no trust at all", async () => {
+  it("says the pin could not be written when storage refuses, instead of re-asking", async () => {
     const publicKey = key(8);
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -116,7 +116,8 @@ describe("checkDeviceTrust", () => {
 
     const result = await checkDeviceTrust({ id: "dev1", publicKey }, async () => true);
 
-    expect(result).toMatchObject({ ok: false, code: "required" });
+    // The person accepted; answering "required" would loop the sheet forever.
+    expect(result).toMatchObject({ ok: false, code: "unwritable" });
   });
 
   it("forgets a device when asked, so a reinstall can be approved", async () => {

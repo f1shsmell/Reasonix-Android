@@ -515,6 +515,29 @@ describe("App", () => {
     expect(container.textContent).toContain("配对或登录已失效");
   });
 
+  it("ends a live link the moment the pairing expires mid-session", async () => {
+    // The kernel answered with 401 — that is an answer, not a hiccup, so the
+    // tolerance must not keep the chip on 已连接 with a dead session.
+    await renderApp();
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+
+    connectionMock.current.reach = { kind: "unauthorized" };
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        value: "visible",
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("连接失败");
+    // The chip already carried the reason (device.unauthorized); opening the
+    // switch sheet names it for the person.
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+    expect(container.querySelector(".switch-sheet")?.textContent).toContain("配对或登录已失效");
+  });
+
   it("waits for the network instead of retrying into a dead one", async () => {
     rememberConnection("lan", "http://192.168.9.9:51234");
     vi.mocked(readProxyConfig).mockResolvedValue({ ...lanConfig(), origin: "", candidates: [] });
