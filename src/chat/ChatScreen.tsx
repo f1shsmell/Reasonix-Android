@@ -26,7 +26,7 @@ import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
-import { listenForSpeech, speechSupported } from "../native/speech";
+import { beginSpeechHold, speechSupported, type SpeechHold, type SpeechSession } from "../native/speech";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
@@ -787,7 +787,12 @@ export function ChatScreen({
   >([]);
   const [attachError, setAttachError] = useState("");
   const [attaching, setAttaching] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [voice, setVoice] = useState<SpeechSession | null>(null);
+  const voiceHold = useRef<SpeechHold | null>(null);
+  const voiceStartY = useRef(0);
+  /** A press whose hold is still being created; the release may land first. */
+  const voicePending = useRef(false);
+  const voiceReleaseQueued = useRef(false);
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
   );
@@ -1050,26 +1055,95 @@ export function ChatScreen({
     input.style.height = `${input.scrollHeight}px`;
   }, []);
 
-  /** Dictation appends to the draft; a cancel leaves it untouched. */
-  const dictate = useCallback(async () => {
-    if (listening) return;
-    setListening(true);
-    setPromptError("");
-    try {
-      const text = await listenForSpeech();
-      if (text) {
-        setDraft((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text));
-        requestAnimationFrame(() => {
-          grow();
-          inputRef.current?.focus();
-        });
-      }
-    } catch {
-      setPromptError("语音输入不可用，检查系统语音服务后重试。");
-    } finally {
-      setListening(false);
+  /** The dictation hold, from press to delivered text. */
+  const voiceChange = useCallback((next: SpeechSession) => {
+    setVoice({ ...next });
+    if (!next.ended) return;
+    voiceHold.current = null;
+    const text = next.transcript.trim();
+    if (text) {
+      setDraft((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text));
+      requestAnimationFrame(() => {
+        grow();
+        inputRef.current?.focus();
+      });
+    } else if (next.error) {
+      setPromptError(next.error);
     }
-  }, [grow, listening]);
+  }, [grow]);
+
+  /** Press-and-hold to talk; slide up to throw the sentence away. */
+  const voiceDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (voiceHold.current || voicePending.current) return;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // A WebView without pointer capture drops the move/up once the finger
+      // leaves the button; the window listener below ends the hold anyway.
+      const up = () => voiceUpRef.current();
+      window.addEventListener("pointerup", up, { once: true });
+      window.addEventListener("pointercancel", up, { once: true });
+    }
+    voiceStartY.current = event.clientY;
+    voicePending.current = true;
+    voiceReleaseQueued.current = false;
+    setPromptError("");
+    void beginSpeechHold(voiceChange)
+      .then((result) => {
+        voicePending.current = false;
+        if (!result.hold) {
+          setPromptError(
+            result.reason === "denied"
+              ? "麦克风权限被拒绝，到系统设置里打开后重试"
+              : "这个手机没有可用的语音服务",
+          );
+          return;
+        }
+        // A buffered final or error can end the hold during creation; the
+        // change listener already closed it out, and assigning it here
+        // would wedge the button until remount.
+        if (result.hold.state.ended) return;
+        voiceHold.current = result.hold;
+        setVoice({ ...result.hold.state });
+        // The finger came up while the hold was still being created: a tap,
+        // or a very short word. Release now instead of sticking the hold.
+        if (voiceReleaseQueued.current) {
+          voiceReleaseQueued.current = false;
+          result.hold.release();
+        }
+      })
+      .catch(() => {
+        // The bridge itself refused; without this the pending flag pins
+        // the button forever with no feedback.
+        voicePending.current = false;
+        setPromptError("语音输入启动失败，再试一次");
+      });
+  }, [voiceChange]);
+
+  const voiceMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    voiceHold.current?.move(event.clientY - voiceStartY.current);
+  }, []);
+
+  const voiceUp = useCallback(() => {
+    if (voicePending.current) {
+      // The hold does not exist yet; remember the release for when it does.
+      voiceReleaseQueued.current = true;
+      return;
+    }
+    voiceHold.current?.release();
+  }, []);
+  // The fallback window listener must see the latest voiceUp, not the one
+  // captured when it was registered.
+  const voiceUpRef = useRef(voiceUp);
+  voiceUpRef.current = voiceUp;
+
+  useEffect(
+    () => () => {
+      // Leaving the screen mid-hold must not leave the microphone hot.
+      voiceHold.current?.abandon();
+    },
+    [],
+  );
 
   // A cold link may not know the session path on the first render. When it
   // arrives, adopt the draft taken under the pane id instead of abandoning it
@@ -1674,6 +1748,15 @@ export function ChatScreen({
             ))}
           </div>
         ) : null}
+        {voice && !voice.ended ? (
+          <div className={`voice-live${voice.cancelArmed ? " cancel" : ""}`} aria-live="polite">
+            {voice.cancelArmed
+              ? "松手取消"
+              : voice.ready
+                ? voice.transcript || "听着呢…"
+                : "启动语音服务…"}
+          </div>
+        ) : null}
         <textarea
           ref={inputRef}
           value={draft}
@@ -1699,13 +1782,18 @@ export function ChatScreen({
           {speechSupported() ? (
             <button
               type="button"
-              className="iconbtn"
-              aria-label="语音输入"
-              title="语音输入"
-              onClick={() => void dictate()}
-              disabled={runtime.readOnly === true || listening}
+              className={`iconbtn mic${voice && !voice.ended ? " live" : ""}${
+                voice?.cancelArmed && !voice.ended ? " cancel" : ""
+              }`}
+              aria-label={voice && !voice.ended ? "松开发送，上滑取消" : "按住说话"}
+              title="按住说话，上滑取消"
+              onPointerDown={voiceDown}
+              onPointerMove={voiceMove}
+              onPointerUp={voiceUp}
+              onPointerCancel={voiceUp}
+              disabled={runtime.readOnly === true}
             >
-              {listening ? "…" : "◉"}
+              {voice && !voice.ended ? "●" : "◉"}
             </button>
           ) : null}
           {runtime.readOnly ? (
