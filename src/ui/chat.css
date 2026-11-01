@@ -219,7 +219,7 @@
 
 .row.user .bubble {
   background: var(--bubble-user);
-  color: #fff;
+  color: var(--on-fill);
   border-bottom-right-radius: 6px;
   max-width: 86%;
   box-shadow: 0 6px 18px rgba(var(--bubble-user-rgb), 0.24);
@@ -748,13 +748,13 @@
 }
 
 .tool-detail .out.diff .line.add {
-  background: rgba(26, 127, 55, 0.1);
-  color: #1a7f37;
+  background: var(--diff-add);
+  color: var(--diff-add-ink);
 }
 
 .tool-detail .out.diff .line.del {
-  background: rgba(207, 34, 46, 0.1);
-  color: #b42318;
+  background: var(--diff-del);
+  color: var(--diff-del-ink);
 }
 
 .tool-detail .out.diff .line.hunk {
@@ -1100,8 +1100,10 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
+  /* Floats over any image, so it cannot follow the theme; the fixed dark
+     keeps --on-fill readable on both. */
   background: rgba(15, 23, 42, 0.62);
-  color: #fff;
+  color: var(--on-fill);
   font-size: 10px;
 }
 
@@ -1352,7 +1354,7 @@
   border-radius: 50%;
   background: var(--accent-fill);
   border-color: var(--accent-fill);
-  color: #fff;
+  color: var(--on-fill);
   font-size: 16px;
   box-shadow: 0 6px 16px rgba(var(--accent-fill-rgb), 0.3);
   @supports (color: color-mix(in srgb, red, blue)) {
