@@ -120,7 +120,10 @@ describe("MachinePanel", () => {
 
     await render();
 
-    expect(container.textContent).toContain("读不到这台机器的状态");
-    expect(container.querySelector(".notice button")?.textContent).toBe("重试");
+    // Every read failing now reads as "nothing to show yet": the panel sits
+    // on the connect pane, where no connection is the common reason, and the
+    // retry would answer the same five dead reads again.
+    expect(container.textContent).toContain("连上电脑后");
+    expect(container.textContent).not.toContain("最近 30 天");
   });
 });
