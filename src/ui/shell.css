@@ -835,7 +835,7 @@ pre.frame {
   padding: 0 16px;
   background: var(--accent-fill);
   border-color: var(--accent-fill);
-  color: #fff;
+  color: var(--on-fill);
   font-weight: 600;
   flex: none;
   box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
@@ -942,7 +942,7 @@ pre.frame {
   z-index: 50;
   display: flex;
   align-items: flex-end;
-  background: rgba(6, 9, 15, 0.48);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   animation: rx-fade var(--dur-2) var(--ease-out) both;
@@ -1246,7 +1246,7 @@ pre.frame {
   border: 0;
   border-radius: 999px;
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-fill);
   font: inherit;
   font-weight: 600;
   box-shadow: 0 6px 18px rgba(var(--accent-fill-rgb), 0.28);
