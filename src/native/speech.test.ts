@@ -165,6 +165,17 @@ describe("beginSpeechHold", () => {
     expect(updates.at(-1)?.ended).toBe(true);
   });
 
+  it("ends a tap that never reached the service without blaming it", async () => {
+    const { hold } = await holding();
+
+    // Released before any ready event: too short to be a word, not a
+    // service failure.
+    hold.release();
+
+    expect(hold.state.ended).toBe(true);
+    expect(hold.state.error).toBe("");
+  });
+
   it("tells a refused microphone from a missing recognizer", async () => {
     mocks.calls.listen.mockResolvedValue({ reason: "denied" });
     const refused = await beginSpeechHold(() => {});

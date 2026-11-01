@@ -187,7 +187,15 @@ export async function beginSpeechHold(
     ),
   );
 
-  const started = await plugin.listen({ language: navigator.language || "zh-CN" });
+  let started: { session?: number; reason?: string };
+  try {
+    started = await plugin.listen({ language: navigator.language || "zh-CN" });
+  } catch (error) {
+    // The bridge itself refused; the listeners are still up and would
+    // buffer every event on the phone until the page reloads.
+    for (const handle of handles) void handle.remove();
+    throw error;
+  }
   if (started.session == null) {
     // No recognizer, or a refused prompt. Nothing was delivered for this
     // hold; tear the listeners down and say which it was.
