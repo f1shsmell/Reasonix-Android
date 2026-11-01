@@ -19,7 +19,7 @@ import {
   linkFailure,
 } from "../net/link";
 import type { LinkError, LinkState, LinkStep } from "../net/link";
-import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
+import { loadRelayDevice, saveRelayDevice, loadStandDown, saveStandDown, clearStandDown } from "../net/relayStore";
 import {
   loadConnections,
   latestConnection,
@@ -61,6 +61,12 @@ export interface Link {
   noteConnected: () => Promise<void>;
   /** The settings screen swapped the upstream and then could not verify it. */
   noteFailed: (error: LinkError) => void;
+  /**
+   * The person disconnected on purpose: stand down until they connect again.
+   * A machine that auto-reconnects would fight the choice the screen just
+   * carried out.
+   */
+  noteDisconnected: () => void;
 }
 
 export function useLink(connection: Connection): Link {
@@ -72,6 +78,14 @@ export function useLink(connection: Connection): Link {
   const active = useRef(false);
   /** Bumped by a manual switch and by unmount, so a stale attempt stands down. */
   const generation = useRef(0);
+  /**
+   * Set while the person's own disconnect stands: automatic kicks (a network
+   * change, coming back to the foreground) honour it, and only a person's
+   * retry or switch clears it. Without it the machine would fight the choice
+   * the settings screen just carried out. Mirrored to storage so a restart
+   * keeps the phone offline too.
+   */
+  const standDown = useRef(loadStandDown());
   const attemptRef = useRef<() => Promise<void>>(async () => {});
 
   const emit = useCallback((next: LinkState) => {
@@ -269,6 +283,7 @@ export function useLink(connection: Connection): Link {
 
   const kick = useCallback(() => {
     if (active.current) return;
+    if (standDown.current) return;
     const phase = stateRef.current.phase;
     if (phase === "connecting") return;
     if (phase === "connected") {
@@ -301,6 +316,8 @@ export function useLink(connection: Connection): Link {
   }, [clearTimer, connection]);
 
   const retry = useCallback(() => {
+    standDown.current = false;
+    clearStandDown();
     backoff.current.reset();
     kick();
   }, [kick]);
@@ -309,6 +326,8 @@ export function useLink(connection: Connection): Link {
     async (entry: SavedConnection) => {
       if (active.current) return { ok: false };
       active.current = true;
+      standDown.current = false;
+      clearStandDown();
       clearTimer();
       backoff.current.reset();
       const mine = ++generation.current;
@@ -365,6 +384,8 @@ export function useLink(connection: Connection): Link {
   );
 
   const noteConnected = useCallback(async () => {
+    standDown.current = false;
+    clearStandDown();
     clearTimer();
     backoff.current.reset();
     const mine = ++generation.current;
@@ -398,6 +419,15 @@ export function useLink(connection: Connection): Link {
     [clearTimer, failed],
   );
 
+  const noteDisconnected = useCallback(() => {
+    generation.current += 1;
+    clearTimer();
+    backoff.current.reset();
+    standDown.current = true;
+    saveStandDown();
+    emit({ phase: "idle", completed: [], attempt: 0 });
+  }, [clearTimer, emit]);
+
   useEffect(
     () => () => {
       generation.current += 1;
@@ -406,5 +436,5 @@ export function useLink(connection: Connection): Link {
     [clearTimer],
   );
 
-  return { state, kick, retry, switchTo, noteConnected, noteFailed };
+  return { state, kick, retry, switchTo, noteConnected, noteFailed, noteDisconnected };
 }

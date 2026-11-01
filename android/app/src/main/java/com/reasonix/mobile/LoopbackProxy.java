@@ -318,6 +318,9 @@ public final class LoopbackProxy {
                 case "/__reasonix/relay":
                     setRelay(socket, body);
                     return;
+                case "/__reasonix/disconnect":
+                    disconnect(socket, body);
+                    return;
                 case "/__reasonix/relay/clear":
                     prefs.edit().putString(KEY_MODE, "lan").remove(KEY_RELAY_DEVICE).apply();
                     writeJson(socket, 200, configJson().toString());
@@ -366,6 +369,7 @@ public final class LoopbackProxy {
             case "/__reasonix/account/approve":
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
+            case "/__reasonix/disconnect":
             case "/__reasonix/relay/clear":
                 return "POST".equals(method);
             default:
@@ -578,6 +582,28 @@ public final class LoopbackProxy {
         writeJson(socket, 200, configJson().toString());
     }
 
+    /**
+     * Drop the active upstream and forget which one it was: the phone is
+     * offline until the person connects again. Saved connections and pairing
+     * cookies survive — this is a disconnect, not a factory reset.
+     */
+    private void disconnect(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONArray list;
+        try {
+            list = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));
+        } catch (JSONException e) {
+            list = new JSONArray();
+        }
+        JSONArray candidates = new JSONArray();
+        for (int i = 0; i < list.length(); i++) {
+            String value = list.optString(i, "");
+            if (!value.isEmpty()) candidates.put(value);
+        }
+        prefs.edit().remove(KEY_ORIGIN).putString(KEY_MODE, "lan")
+                .remove(KEY_RELAY_DEVICE).putString(KEY_CANDIDATES, candidates.toString()).apply();
+        writeJson(socket, 200, configJson().toString());
+    }
+
     private void accountGrant(Socket socket, byte[] body) throws IOException, JSONException {
         String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
         if (token.isEmpty()) {
@@ -654,16 +680,62 @@ public final class LoopbackProxy {
      * routes private addresses through the tunnel; the LAN share is on Wi-Fi,
      * so prefer a non-VPN Wi-Fi/Ethernet network for a private target. With no
      * VPN, bypass any configured HTTP proxy for the same private target.
+     *
+     * The Wi-Fi network is bound only when the target is an address it can
+     * actually reach: a VPN's own private range (a 组网 client, say)
+     * classifies as a LAN target but no Wi-Fi subnet contains it, and a bound
+     * socket there just times out. The default route — through the VPN — is
+     * the one that carries it.
      */
     private HttpURLConnection openKernelConnection(URI uri) throws IOException {
-        if (lanTarget(uri.getHost()) == null) {
+        InetAddress target = lanTarget(uri.getHost());
+        if (target == null) {
             return (HttpURLConnection) uri.toURL().openConnection();
         }
-        Network lan = lanNetwork();
-        if (lan != null) {
-            return (HttpURLConnection) lan.openConnection(uri.toURL());
+        Network lanNet = reachableNetwork(target);
+        if (lanNet != null) {
+            return (HttpURLConnection) lanNet.openConnection(uri.toURL());
+        }
+        if (vpnActive()) {
+            return (HttpURLConnection) uri.toURL().openConnection();
         }
         return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
+    }
+
+    /** A non-VPN Wi-Fi/Ethernet network whose subnets contain the target. */
+    private Network reachableNetwork(InetAddress target) {
+        Network lan = lanNetwork();
+        if (lan == null || !networkCovers(lan, target)) return null;
+        return lan;
+    }
+
+    /** Whether one of the network's interface addresses covers the target IP. */
+    static boolean networkCovers(Network network, InetAddress target, ConnectivityManager manager) {
+        android.net.LinkProperties props = manager.getLinkProperties(network);
+        if (props == null) return false;
+        for (android.net.LinkAddress linkAddress : props.getLinkAddresses()) {
+            InetAddress local = linkAddress.getAddress();
+            if (local.getAddress().length != target.getAddress().length) continue;
+            byte[] prefix = local.getAddress();
+            byte[] candidate = target.getAddress();
+            int bits = linkAddress.getPrefixLength();
+            int full = bits / 8;
+            boolean covered = true;
+            for (int i = 0; i < full && covered; i++) covered = prefix[i] == candidate[i];
+            if (covered && bits % 8 != 0) {
+                int mask = 0xff << (8 - bits % 8);
+                covered = (prefix[full] & mask) == (candidate[full] & mask);
+            }
+            if (covered) return true;
+        }
+        return false;
+    }
+
+    private boolean networkCovers(Network network, InetAddress target) {
+        ConnectivityManager manager =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return false;
+        return networkCovers(network, target, manager);
     }
 
     /** The IP a LAN share uses, or null for an internet host. */
@@ -782,8 +854,13 @@ public final class LoopbackProxy {
      * Try every remembered origin, newest first. An address that still answers
      * becomes the upstream again; a phone that changed Wi-Fi can recover
      * without a new scan as long as the address itself did not change.
+     *
+     * No origin means the person disconnected on purpose, and a network flip
+     * must not quietly re-arm the proxy behind that choice: only an explicit
+     * connect (configure, pair, relay) writes an origin again.
      */
     private void refreshUpstream() {
+        if (prefs.getString(KEY_ORIGIN, "").isEmpty()) return;
         JSONArray list;
         try {
             list = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));

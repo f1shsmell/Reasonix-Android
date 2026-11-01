@@ -194,6 +194,18 @@ export async function clearRelay(): Promise<ProxyConfig> {
   return request<ProxyConfig>("/__reasonix/relay/clear", { method: "POST" });
 }
 
+/**
+ * Drop the active upstream: no origin, no relay device.
+ *
+ * Saved connections and pairing cookies survive, so reconnecting is one tap
+ * on a remembered row or one scan. This is the "断开连接" the settings screen
+ * offers; a phone that only clears the app side would leave the proxy still
+ * forwarding to a computer the person asked it to leave.
+ */
+export async function disconnectProxy(): Promise<ProxyConfig> {
+  return request<ProxyConfig>("/__reasonix/disconnect", { method: "POST" });
+}
+
 // ---- fleet: the other computers this phone listens to -------------------
 
 /**

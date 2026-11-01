@@ -14,7 +14,7 @@ import type { SubmitResult } from "../net/submit";
 import { startTurnNotification } from "../native/turn";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay } from "../net/relay";
-import { loadRelayDevice, saveRelayDevice } from "../net/relayStore";
+import { loadRelayDevice, saveRelayDevice, loadStandDown } from "../net/relayStore";
 import { loadConnections } from "../net/savedConnections";
 import { Home } from "./Home";
 import type { HomeTab } from "./swipe";
@@ -121,6 +121,21 @@ export function App() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let cancelled = false;
+    // Once the six-second gate has handed over to the app, the slow chain
+    // behind it stops steering screens: a "connect" verdict arriving after
+    // the person is already looking at the home screen would yank them out
+    // of it. The chain keeps running — configureProxy still re-arms the
+    // proxy — but only the gate and a pre-gate verdict pick the screen.
+    let gated = false;
+    // The boot gate must answer quickly: a relay handshake or a dead LAN
+    // probe can each spend tens of seconds, and that is a white screen the
+    // person cannot act on. Six seconds covers a healthy path; anything
+    // slower hands over to the app, where the link machine keeps recovering
+    // in the open and the connection bar shows the progress.
+    const gate = window.setTimeout(() => {
+      gated = true;
+      if (!cancelled) setBoot("ready");
+    }, 6_000);
     void (async () => {
       const config = await readProxyConfig();
       if (cancelled) return;
@@ -151,7 +166,7 @@ export function App() {
               // fall through to the connect screen
             }
           }
-          if (!cancelled) setBoot("connect");
+          if (!cancelled && !gated) setBoot("connect");
         }
         return;
       }
@@ -171,6 +186,7 @@ export function App() {
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(gate);
     };
   }, []);
 
@@ -179,8 +195,10 @@ export function App() {
     let cancelled = false;
     void bootstrap().then(() => {
       // The first attempt verifies whatever the proxy was told at boot and
-      // prefers a LAN door if one answers.
-      if (!cancelled) link.kick();
+      // prefers a LAN door if one answers. A phone the person disconnected on
+      // purpose stays offline: the stand-down mark survives the restart, and
+      // only a tap in the settings or the switch sheet reconnects.
+      if (!cancelled && !loadStandDown()) link.kick();
     });
     return () => {
       cancelled = true;
@@ -624,6 +642,7 @@ export function App() {
       <ConnectScreen
         onConnected={onConnected}
         onFailed={link.noteFailed}
+        onDisconnected={link.noteDisconnected}
         link={link.state}
         machineBase={snapshot.runtimes[0]?.base}
       />
@@ -635,6 +654,7 @@ export function App() {
       <ConnectScreen
         onConnected={onConnected}
         onFailed={link.noteFailed}
+        onDisconnected={link.noteDisconnected}
         onClose={() => {
           setShowConnect(false);
           // A removed computer shifted the watch rows; re-read them before

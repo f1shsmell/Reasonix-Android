@@ -8,6 +8,36 @@
  */
 
 const KEY = "reasonix.relay.device";
+/**
+ * The person disconnected on purpose and it should survive a restart: the
+ * boot path reads this and leaves the phone offline instead of quietly
+ * re-establishing the last connection. Only a person's own connect clears it.
+ */
+const STAND_DOWN_KEY = "reasonix.link.stand-down";
+
+export function loadStandDown(): boolean {
+  try {
+    return localStorage.getItem(STAND_DOWN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveStandDown(): void {
+  try {
+    localStorage.setItem(STAND_DOWN_KEY, "1");
+  } catch {
+    // A lost mark costs one automatic reconnect, not a broken promise.
+  }
+}
+
+export function clearStandDown(): void {
+  try {
+    localStorage.removeItem(STAND_DOWN_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 export function loadRelayDevice(): string | null {
   try {

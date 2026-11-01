@@ -39,6 +39,7 @@ import {
   ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
+import { disconnectProxy } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
@@ -78,6 +79,8 @@ export interface ConnectScreenProps {
   onConnected: () => void;
   /** The upstream was switched but the kernel did not answer through it. */
   onFailed?: (error: LinkError) => void;
+  /** The person disconnected on purpose; the link machine stands down. */
+  onDisconnected?: () => void;
   /** Present when this screen was opened over an existing connection. */
   onClose?: () => void;
   /** The app's link machine, for the hero at the top of the page. */
@@ -147,7 +150,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBase }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -759,6 +762,29 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
     };
   }, [account.signedIn]);
 
+  /**
+   * Drop the active upstream without touching the saved rows: the phone goes
+   * offline by choice, and reconnecting is a tap on a remembered computer.
+   *
+   * The proxy is asked first. Tearing the web-side relay down before the
+   * POST answers would kill a live connection on a failure — an old shell
+   * that does not know the route — and the native proxy would keep
+   * forwarding without anyone being told.
+   */
+  const disconnect = useCallback(async () => {
+    setError("");
+    try {
+      const next = await disconnectProxy();
+      clearRelayRouting();
+      clearRelayDevice();
+      setOrigin("");
+      setConfig(next);
+      onDisconnected?.();
+    } catch (failure) {
+      setError(`没断开：${refusalCode(failure)}`);
+    }
+  }, [onDisconnected]);
+
   const signOut = useCallback(async () => {
     setSignInError("");
     const cloudRows = loadConnections().filter((entry) => entry.kind === "cloud");
@@ -945,6 +971,11 @@ export function ConnectScreen({ onConnected, onFailed, onClose, link, machineBas
             <p className="group-note">
               回到同一 Wi-Fi 会自动走局域网；离开后自动改用云端。点一行即可手动切换；× 会移除记录，云端电脑同时忘记已确认的身份。
             </p>
+            {config?.origin || config?.mode === "relay" ? (
+              <button type="button" className="setting action danger" onClick={() => void disconnect()} disabled={busy !== ""}>
+                断开连接
+              </button>
+            ) : null}
           </>
         ) : null}
 
