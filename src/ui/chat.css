@@ -335,10 +335,6 @@
   vertical-align: middle;
 }
 
-/* While deltas arrive the text is shown raw; Markdown is parsed at the end. */
-.md.streaming-text { white-space: pre-wrap; }
-
-
 /* A caret that exists only while text is still arriving. */
 .streaming .bubble::after {
   content: "";

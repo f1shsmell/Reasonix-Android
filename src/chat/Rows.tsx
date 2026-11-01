@@ -6,7 +6,7 @@
  * collapsed, and only the detail it exists to hide is inside.
  */
 
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
 import { Markdown } from "./Markdown";
@@ -83,17 +83,17 @@ export function UserBubble({ row, base }: { row: UserRow; base?: string }) {
 }
 
 export function AssistantBubble({ row }: { row: AssistantRow }) {
+  // Markdown renders while the answer streams, the way xiaoban does it:
+  // useDeferredValue lets React skip re-parsing the growing text when a
+  // delta lands mid-input or mid-scroll, so formatting forms progressively
+  // without the stutter that forced the raw-text shortcut this replaces.
+  // The finished bubble takes the row's own text, never a deferred one.
+  const deferredText = useDeferredValue(row.text);
   if (!row.text) return null;
   return (
     <div className={`row assistant${row.streaming ? " streaming" : ""}`}>
       <div className="bubble">
-        {row.streaming ? (
-          // Markdown is parsed once the answer is finished: re-parsing the
-          // whole growing text on every delta makes a long answer stutter.
-          <div className="md streaming-text">{row.text}</div>
-        ) : (
-          <Markdown text={row.text} />
-        )}
+        <Markdown text={row.streaming ? deferredText : row.text} />
         {!row.streaming ? (
           <div className="bubble-actions">
             <CopyButton text={row.text} label="复制回答" />
