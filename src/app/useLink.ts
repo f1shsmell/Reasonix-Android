@@ -30,7 +30,7 @@ import {
   rememberConnection,
 } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
-import { answeringOrigins, firstAnswering, readProxyConfig, refreshProxy } from "../net/server";
+import { answeringOrigins, readProxyConfig, refreshProxy } from "../net/server";
 import type { ProxyConfig } from "../net/server";
 
 function reachCode(reach: ConnectionSnapshot["reach"]): string {
@@ -116,6 +116,24 @@ export interface Link {
   switchTo: (entry: SwitchTarget) => Promise<SwitchResult>;
   /** The settings screen just connected; record that, then re-read the list. */
   noteConnected: () => Promise<void>;
+  /**
+   * Verify a live link without ever tearing it down.
+   *
+   * This is what a foreground or a settings visit should ask for: it reads the
+   * route and leaves the state machine alone. A route that has actually
+   * stopped answering is handled by `watch`, not by the mere act of a screen
+   * appearing.
+   */
+  check: () => void;
+  /**
+   * Look after a live link: verify it, and reconnect only when the transport
+   * has really stopped answering.
+   *
+   * Called on a timer while the app is on screen. A single lost request is
+   * not enough — that is the difference between "the Wi-Fi hiccuped while you
+   * opened settings" and "the computer is gone".
+   */
+  watch: () => void;
   /** The settings screen swapped the upstream and then could not verify it. */
   noteFailed: (error: LinkError) => void;
   /**
@@ -289,9 +307,11 @@ export function useLink(connection: Connection): Link {
       if (config === null) {
         // A browser preview has no proxy to read; the page's own origin is
         // the kernel, so verify that and otherwise leave the chip quiet.
-        await connection.refresh();
+        // The return value is the answer for *this* read: the snapshot may
+        // still say "ok" from before while the read itself failed.
+        const reached = await connection.refresh();
         if (!live()) return;
-        if (connection.current.reach.kind === "ok") {
+        if (reached) {
           connected("", "本机服务", "lan");
           return;
         }
@@ -310,9 +330,9 @@ export function useLink(connection: Connection): Link {
       // an origin with a trailing slash is the same door.
       if (config.mode !== "relay" && config.origin) {
         tried.add(`lan:${normalizeTarget("lan", config.origin)}`);
-        await connection.refresh();
+        const reached = await connection.refresh();
         if (!live()) return;
-        if (connection.current.reach.kind === "ok") {
+        if (reached) {
           connected(config.origin, originName(config.origin), "lan");
           return;
         }
@@ -347,9 +367,12 @@ export function useLink(connection: Connection): Link {
         );
         if (!live()) return;
         if (result.ok) {
-          await connection.refresh();
+          // Verify the door with the read's own answer, not the snapshot: a
+          // tolerated hiccup leaves `reach` at "ok" from an earlier door, and
+          // trusting that would call a dead route connected.
+          const reached = await connection.refresh();
           if (!live()) return;
-          if (connection.current.reach.kind === "ok") {
+          if (reached) {
             if (door.kind === "lan") {
               // Keep the cloud id as the hint for the next time this phone
               // leaves the Wi-Fi.
@@ -386,39 +409,55 @@ export function useLink(connection: Connection): Link {
     attemptRef.current = attempt;
   }, [attempt]);
 
+  /**
+   * Verify the route a live link is on, without ever changing it.
+   *
+   * Safe to call as often as a screen mounts: it reads `/runtimes` and decides
+   * nothing. Switching a working relay to the LAN is an improvement, not a
+   * repair, and doing it here meant a settings visit could silently replace
+   * the transport under a conversation — which is the other half of the "it
+   * disconnects when I open settings" report. The `watch` timer owns
+   * reconnection; this only looks.
+   */
+  const check = useCallback(() => {
+    void connection.refresh();
+  }, [connection]);
+
+  /**
+   * Look after a live link on a timer.
+   *
+   * The difference from `check` is what happens when the route stops
+   * answering: `check` only records it, and this reconnects — but only once
+   * the transport has failed twice in a row (`Connection.lost`). A single
+   * lost request is a Wi-Fi hiccup, and acting on it is what used to drop a
+   * working connection the moment a screen appeared.
+   */
+  const watch = useCallback(() => {
+    if (standDown.current || active.current) return;
+    if (stateRef.current.phase !== "connected") return;
+    void (async () => {
+      await connection.refresh();
+      if (!connection.lost) return;
+      if (standDown.current || active.current) return;
+      if (stateRef.current.phase !== "connected") return;
+      backoff.current.reset();
+      void attemptRef.current();
+    })();
+  }, [connection]);
+
   const kick = useCallback(() => {
     if (active.current) return;
     if (standDown.current) return;
     const phase = stateRef.current.phase;
     if (phase === "connecting") return;
     if (phase === "connected") {
-      // A network change under a live link: ask whether a LAN door answers
-      // now (the relay may still work but be the slower path), and verify the
-      // current route quietly. Only a dead route starts a reconnect, so the
-      // chip does not flash on every foreground.
-      void (async () => {
-        const config = await readProxyConfig();
-        if (config?.mode === "relay") {
-          const hit = await firstAnswering(lanDoorsOf(config));
-          if (hit !== null) {
-            if (active.current) return;
-            backoff.current.reset();
-            void attemptRef.current();
-            return;
-          }
-        }
-        await connection.refresh();
-        if (connection.current.reach.kind === "ok") return;
-        if (active.current) return;
-        backoff.current.reset();
-        void attemptRef.current();
-      })();
+      check();
       return;
     }
     clearTimer();
     backoff.current.reset();
     void attemptRef.current();
-  }, [clearTimer, connection]);
+  }, [check, clearTimer]);
 
   /**
    * Try now, whether or not the system still believes it is offline.
@@ -493,6 +532,9 @@ export function useLink(connection: Connection): Link {
       const mine = ++generation.current;
       const live = () => generation.current === mine;
       const mode = entry.kind === "lan" ? "lan" : "cloud";
+      // The person is pointing this phone somewhere else; failures counted
+      // against the old route say nothing about the new one.
+      connection.resetFailures();
       const room = (): LinkState => ({
         ...connectingLink("switch"),
         target: entry.target,
@@ -519,9 +561,9 @@ export function useLink(connection: Connection): Link {
           failed(result.error, room());
           return { ok: false };
         }
-        await connection.refresh();
+        const reached = await connection.refresh();
         if (!live()) return { ok: false };
-        if (connection.current.reach.kind !== "ok") {
+        if (!reached) {
           failed(linkFailure(reachCode(connection.current.reach)), room());
           return { ok: false };
         }
@@ -548,6 +590,9 @@ export function useLink(connection: Connection): Link {
     clearStandDown();
     clearTimer();
     backoff.current.reset();
+    // A connection made from the settings screen is a new route, so failures
+    // counted against the previous one must not carry over.
+    connection.resetFailures();
     const mine = ++generation.current;
     const config = await readProxyConfig();
     if (generation.current !== mine) return;
@@ -599,6 +644,8 @@ export function useLink(connection: Connection): Link {
   return {
     state,
     kick,
+    check,
+    watch,
     retry,
     switchTo,
     noteConnected,

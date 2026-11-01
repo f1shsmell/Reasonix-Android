@@ -33,17 +33,44 @@ import { rememberConnection } from "../net/savedConnections";
  * list, and a conversation row opens a chat. The chat itself is a stub.
  */
 
-const connectionMock = vi.hoisted(() => ({
-  current: {
-    reach: { kind: "ok" as "ok" | "unauthorized" | "unreachable" },
-    runtimes: [] as unknown[],
-    stream: { kind: "idle" as const },
-  },
-  subscribe: vi.fn(() => () => {}),
-  refresh: vi.fn(async () => {}),
-  attach: vi.fn(),
-  detach: vi.fn(),
-}));
+const connectionMock = vi.hoisted(() => {
+  const state = {
+    current: {
+      reach: { kind: "ok" as "ok" | "unauthorized" | "unreachable" },
+      runtimes: [] as unknown[],
+      stream: { kind: "idle" as const },
+    },
+    /** Whether the transport has failed enough times to count as gone. */
+    lost: false,
+    /** How many reads the next refresh should report as lost. */
+    lostReads: 0,
+    /** Failures in a row, mirroring the real class's tolerance of 2. */
+    failures: 0,
+    subscribe: vi.fn(() => () => {}),
+    attach: vi.fn(),
+    detach: vi.fn(),
+    // Mirrors the real contract closely enough for the screens: the return
+    // value is *this* read's answer, one lost read is tolerated and leaves the
+    // snapshot alone, and a second one in a row is what flips `reach` to
+    // unreachable and sets `lost`. A refusal is an answer: it reports false,
+    // resets the count, and publishes at once.
+    refresh: vi.fn(async () => {
+      if (state.lostReads > 0) {
+        state.lostReads -= 1;
+        state.failures += 1;
+        state.lost = state.failures >= 2;
+        if (state.lost) {
+          state.current = { ...state.current, reach: { kind: "unreachable" } };
+        }
+        return false;
+      }
+      state.failures = 0;
+      state.lost = false;
+      return state.current.reach.kind === "ok";
+    }),
+  };
+  return state;
+});
 
 vi.mock("../net/connection", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../net/connection")>()),
@@ -51,6 +78,14 @@ vi.mock("../net/connection", async (importOriginal) => ({
     get current() {
       return connectionMock.current;
     }
+    get lost() {
+      return connectionMock.lost;
+    }
+    resetFailures = () => {
+      connectionMock.lost = false;
+      connectionMock.lostReads = 0;
+      connectionMock.failures = 0;
+    };
     subscribe = connectionMock.subscribe;
     refresh = connectionMock.refresh;
     attach = connectionMock.attach;
@@ -219,6 +254,9 @@ beforeEach(() => {
     runtimes: [{ id: "r2", base: "/rt/r2", root: "/work/app", name: "app" }],
     stream: { kind: "idle" },
   };
+  connectionMock.lost = false;
+  connectionMock.lostReads = 0;
+  connectionMock.failures = 0;
   vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
   vi.mocked(readProxyConfig).mockResolvedValue(lanConfig());
   vi.mocked(refreshProxy).mockResolvedValue(lanConfig());
@@ -352,6 +390,50 @@ describe("App", () => {
     await renderApp();
 
     expect(ensureRelay).not.toHaveBeenCalled();
+  });
+
+  it("keeps a live link when a foreground probe is lost", async () => {
+    // The reported symptom: coming back to the app fired a probe, one lost
+    // request tore the link down. Drive the real trigger — visibilitychange
+    // calls link.kick() — and let the transport read fail.
+    //
+    // What this asserts is the *delegation*: kick on a live link verifies and
+    // decides nothing. The tolerance itself (one lost read absorbed, two in a
+    // row meaning lost) is `Connection`'s contract and is covered against the
+    // real class in connection.test.ts; this mock is not the place that can
+    // discriminate that.
+    await renderApp();
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+
+    connectionMock.lostReads = 1;
+    act(() => {
+      Object.defineProperty(document, "visibilityState", {
+        value: "visible",
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+    expect(container.querySelector(".linkbar")?.textContent).not.toContain("正在重连");
+    // The read ran and failed, and the machine was not told to reconnect.
+    expect(connectionMock.lostReads).toBe(0);
+    expect(connectionMock.failures).toBe(1);
+  });
+
+  it("does not tear the link down when a screen mounts", async () => {
+    // The settings screen mounts and unmounts around a live link. Neither the
+    // visit nor the return may change the connection on its own.
+    await renderApp();
+    click("连接与账号");
+    await settle();
+    expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
+
+    click("close");
+    await settle();
+
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
   });
 
   it("opens a relay and reaches the home screen when the saved mode is relay", async () => {

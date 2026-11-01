@@ -494,12 +494,16 @@ Both limits are eased by the connection records in `src/net/savedConnections.ts`
 They are places, not credentials: a LAN origin or an account device id, the
 label it was given, and when it last worked. Every successful connect records
 one, the settings screen lists them with the current one marked (a tap switches,
-the × forgets), and recovery tries every remembered LAN address before falling
-back to the account. A LAN door is preferred even while a relay still answers —
-back on the computer's Wi-Fi the relay is the slower path — but it is trusted
-only after `/runtimes` answers through it. The proxy's own origin and candidates
-are part of the same list, so an install that predates the records still gains
-them on first boot.
+the × forgets), and recovery tries every door in the saved order before falling
+through the rest. A LAN door is preferred *while walking* — back on the
+computer's Wi-Fi it is the faster path — but it is trusted only after
+`/runtimes` answers through it. That preference is a decision of a fresh
+attempt, not of a live link: once connected, the transport is left alone (see
+below), so a relay that is working is not swapped for a LAN door until the
+link is reopened — by the person switching, by a retry, or by the watch timer
+after the route has actually failed twice. The proxy's own origin
+and candidates are part of the same list, so an install that predates the
+records still gains them on first boot.
 
 The link itself is a state machine (`src/net/link.ts`, `src/app/useLink.ts`):
 `connecting` reports which of 探测地址 → 切换上游 → 读取会话 is running,
@@ -522,6 +526,17 @@ second machine. A manual switch from the saved list bumps a generation token so
 a stale attempt cannot overwrite its result. ConnectScreen performs the same
 `/runtimes` check before it calls `onConnected`, so saving an address is no
 longer mistaken for connecting to a computer.
+
+A **live** link is never torn down by a kick. `kick` on `connected` delegates to
+`check`, which reads `/runtimes` and decides nothing —
+a screen mounting, a settings visit or a return to the foreground must not be
+what disconnects a phone. Reconnection belongs to two things only: the person's
+own 重试, and the `watch` timer (30 s while the app is on screen), which acts
+solely once `Connection.lost` is true. That flag means the transport failed
+`TOLERATED_FAILURES` (2) reads in a row; a single lost request keeps the last
+good answer on screen and is what a Wi-Fi hiccup looks like. A refusal from the
+kernel — 401/403, an unreadable body — is an answer, not a loss, and is
+published at once.
 
 Home carries the link as a row under the title bar: dot + computer name + state
 (`已连接` / `正在重连（第 n 次）` / `等待网络` / `连接失败`). Tapping it opens 切换连接
