@@ -100,7 +100,6 @@ public class SpeechPlugin extends Plugin {
     }
 
     private void start(PluginCall call) {
-        destroyRecognizer();
         String language = call.getString("language");
         if (language == null || language.isEmpty()) language = "zh-CN";
 

@@ -219,10 +219,12 @@ export async function beginSpeechHold(
         finish();
         return;
       }
-      // The service never came up and no error arrived either (a race at
-      // the very start); end the hold so the pill cannot stick.
+      // The service never came up: almost always a tap shorter than the
+      // recognizer's start latency, or a slide-up that finished while the
+      // hold was still being created. Either way the hold is over before
+      // it began — ending quietly beats blaming the service.
       if (!state.ready) {
-        finish("语音服务没响应，再试一次");
+        finish();
         return;
       }
       void plugin.stop({ session });

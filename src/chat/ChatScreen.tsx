@@ -1088,25 +1088,36 @@ export function ChatScreen({
     voicePending.current = true;
     voiceReleaseQueued.current = false;
     setPromptError("");
-    void beginSpeechHold(voiceChange).then((result) => {
-      voicePending.current = false;
-      if (!result.hold) {
-        setPromptError(
-          result.reason === "denied"
-            ? "麦克风权限被拒绝，到系统设置里打开后重试"
-            : "这个手机没有可用的语音服务",
-        );
-        return;
-      }
-      voiceHold.current = result.hold;
-      setVoice({ ...result.hold.state });
-      // The finger came up while the hold was still being created: a tap,
-      // or a very short word. Release now instead of sticking the hold.
-      if (voiceReleaseQueued.current) {
-        voiceReleaseQueued.current = false;
-        result.hold.release();
-      }
-    });
+    void beginSpeechHold(voiceChange)
+      .then((result) => {
+        voicePending.current = false;
+        if (!result.hold) {
+          setPromptError(
+            result.reason === "denied"
+              ? "麦克风权限被拒绝，到系统设置里打开后重试"
+              : "这个手机没有可用的语音服务",
+          );
+          return;
+        }
+        // A buffered final or error can end the hold during creation; the
+        // change listener already closed it out, and assigning it here
+        // would wedge the button until remount.
+        if (result.hold.state.ended) return;
+        voiceHold.current = result.hold;
+        setVoice({ ...result.hold.state });
+        // The finger came up while the hold was still being created: a tap,
+        // or a very short word. Release now instead of sticking the hold.
+        if (voiceReleaseQueued.current) {
+          voiceReleaseQueued.current = false;
+          result.hold.release();
+        }
+      })
+      .catch(() => {
+        // The bridge itself refused; without this the pending flag pins
+        // the button forever with no feedback.
+        voicePending.current = false;
+        setPromptError("语音输入启动失败，再试一次");
+      });
   }, [voiceChange]);
 
   const voiceMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {

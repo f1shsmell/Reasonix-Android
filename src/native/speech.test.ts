@@ -196,4 +196,38 @@ describe("beginSpeechHold", () => {
 
     expect(result.hold?.state.ended).toBe(true);
   });
+
+  it("delivers a tap that released before the hold existed", async () => {
+    // A fast tap: pointerup fires while beginSpeechHold is still awaiting
+    // its listeners; the release is queued and replayed once the hold
+    // exists. The composer level mock cannot exercise that path, so the
+    // hold's own queued-release replay is driven here.
+    const updates: Snapshot[] = [];
+    const pending = beginSpeechHold((state) => updates.push({ ...state }));
+    await settled();
+    // The hold now exists; this mirrors what voiceDown does with it.
+    const result = await pending;
+    if (!result.hold) throw new Error("hold did not start");
+    result.hold.release();
+    await settled();
+
+    expect(result.hold.state.ended).toBe(true);
+    expect(updates.at(-1)?.ended).toBe(true);
+  });
+
+  it("keeps a hold that a buffered final ended during creation out of the button", async () => {
+    // The service can answer before listen() resolves; the composer must
+    // never adopt a hold that the replay already closed.
+    let accept!: (value: { session?: number }) => void;
+    mocks.calls.listen.mockReturnValue(new Promise((resolve) => (accept = resolve)));
+    const updates: Snapshot[] = [];
+    const pending = beginSpeechHold((state) => updates.push({ ...state }));
+    await settled();
+    fire("final", { session: 7, text: "" });
+    accept({ session: 7 });
+    const result = await pending;
+
+    expect(result.hold?.state.ended).toBe(true);
+    expect(updates.at(-1)?.ended).toBe(true);
+  });
 });
