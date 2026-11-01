@@ -393,9 +393,10 @@ describe("ConnectScreen", () => {
     await press("断开连接");
 
     expect(disconnectProxy).toHaveBeenCalledTimes(1);
-    // The saved row survives (reconnect is one tap), the danger button is
-    // gone with the upstream, and the manual form no longer carries the
-    // old origin.
+    // The saved row survives (reconnect is one tap), the network row reads
+    // as disconnected, the danger button is gone with the upstream, and the
+    // manual form no longer carries the old origin.
+    expect(container.textContent).toContain("未连接");
     expect(container.textContent).not.toContain("断开连接");
     const origin = container.querySelector(".manual-group input") as HTMLInputElement;
     expect(origin.value).toBe("");

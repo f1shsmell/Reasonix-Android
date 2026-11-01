@@ -70,6 +70,7 @@ public final class LoopbackProxy {
     private static final String KEY_RELAY_DEVICE = "relay_device";
     private static final String KEY_PROXY_SECRET = "proxy_secret";
     private static final String KEY_FLEET = "fleet";
+    private static final String KEY_NET_POLICY = "net_policy";
     /** Watching every remembered computer would make a sweep a port scan. */
     private static final int MAX_FLEET = 4;
     private static final String PROXY_COOKIE = "reasonix_loopback";
@@ -318,6 +319,9 @@ public final class LoopbackProxy {
                 case "/__reasonix/relay":
                     setRelay(socket, body);
                     return;
+                case "/__reasonix/net-policy":
+                    setNetPolicy(socket, body);
+                    return;
                 case "/__reasonix/disconnect":
                     disconnect(socket, body);
                     return;
@@ -369,6 +373,7 @@ public final class LoopbackProxy {
             case "/__reasonix/account/approve":
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
+            case "/__reasonix/net-policy":
             case "/__reasonix/disconnect":
             case "/__reasonix/relay/clear":
                 return "POST".equals(method);
@@ -604,6 +609,27 @@ public final class LoopbackProxy {
         writeJson(socket, 200, configJson().toString());
     }
 
+    /**
+     * Adopt the UI's choice of network policy. Only the three known values
+     * are accepted: a client that invents one would silently widen what the
+     * connection code has to decide between.
+     */
+    private void setNetPolicy(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String policy = request.optString("policy", "").trim();
+        if (!isValidNetPolicy(policy)) {
+            writeJson(socket, 400, "{\"code\":\"proxy.bad_policy\"}");
+            return;
+        }
+        prefs.edit().putString(KEY_NET_POLICY, policy).apply();
+        writeJson(socket, 200, configJson().toString());
+    }
+
+    /** The values the connection code knows how to honour. */
+    static boolean isValidNetPolicy(String policy) {
+        return policy.equals("auto") || policy.equals("bypass") || policy.equals("system");
+    }
+
     private void accountGrant(Socket socket, byte[] body) throws IOException, JSONException {
         String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
         if (token.isEmpty()) {
@@ -686,11 +712,24 @@ public final class LoopbackProxy {
      * classifies as a LAN target but no Wi-Fi subnet contains it, and a bound
      * socket there just times out. The default route — through the VPN — is
      * the one that carries it.
+     *
+     * The net policy setting narrows or widens that behaviour: "bypass" keeps
+     * the private-route path even without a VPN, "system" leaves every
+     * connection on the default route so a chosen proxy sees LAN traffic too.
+     * "auto" — the default — is the paragraph above.
      */
     private HttpURLConnection openKernelConnection(URI uri) throws IOException {
+        String policy = prefs.getString(KEY_NET_POLICY, "auto");
         InetAddress target = lanTarget(uri.getHost());
-        if (target == null) {
+        if ("system".equals(policy) || target == null) {
             return (HttpURLConnection) uri.toURL().openConnection();
+        }
+        if ("bypass".equals(policy)) {
+            Network override = lanNetwork();
+            if (override != null) {
+                return (HttpURLConnection) override.openConnection(uri.toURL());
+            }
+            return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
         }
         Network lanNet = reachableNetwork(target);
         if (lanNet != null) {
@@ -807,6 +846,7 @@ public final class LoopbackProxy {
         out.put("relayDevice", prefs.getString(KEY_RELAY_DEVICE, ""));
         out.put("vpn", vpnActive());
         out.put("lan", lanAvailable());
+        out.put("netPolicy", prefs.getString(KEY_NET_POLICY, "auto"));
         out.put("account", accountJson());
         return out;
     }
