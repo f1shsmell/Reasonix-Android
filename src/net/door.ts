@@ -87,6 +87,8 @@ export function failureFromError(error: unknown): LinkError {
         return linkFailure("device.trust_unreadable", error.message);
       case "trust_cancelled":
         return linkFailure("device.trust_cancelled", error.message);
+      case "trust_unwritable":
+        return linkFailure("device.trust_unwritable", error.message);
       default:
         return linkFailure("client.offline", error.message);
     }

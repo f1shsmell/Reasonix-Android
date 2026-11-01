@@ -420,8 +420,22 @@ export function useLink(connection: Connection): Link {
    * reconnection; this only looks.
    */
   const check = useCallback(() => {
-    void connection.refresh();
-  }, [connection]);
+    void (async () => {
+      await connection.refresh();
+      // An expired pairing is an answer, not a hiccup: the kernel refused
+      // every read it will refuse until the person re-pairs. Leaving the chip
+      // on 已连接 with a dead session is exactly the wedge the tolerance was
+      // not meant to create, so the machine moves to `failed` and says why.
+      if (
+        connection.current.reach.kind === "unauthorized" &&
+        !standDown.current &&
+        !active.current &&
+        stateRef.current.phase === "connected"
+      ) {
+        failed(linkFailure("device.unauthorized"), stateRef.current);
+      }
+    })();
+  }, [connection, failed]);
 
   /**
    * Look after a live link on a timer.
@@ -437,13 +451,27 @@ export function useLink(connection: Connection): Link {
     if (stateRef.current.phase !== "connected") return;
     void (async () => {
       await connection.refresh();
+      // Same verdict as `check`: a refusal is decisive, a lost transport is
+      // not. Both end the "connected" phase; only the lost one retries. The
+      // phase is re-checked like the lost branch below, because a refresh can
+      // outlive the state it started under — noteFailed or a manual switch
+      // may have moved the machine while this read was in flight.
+      if (
+        connection.current.reach.kind === "unauthorized" &&
+        !standDown.current &&
+        !active.current &&
+        stateRef.current.phase === "connected"
+      ) {
+        failed(linkFailure("device.unauthorized"), stateRef.current);
+        return;
+      }
       if (!connection.lost) return;
       if (standDown.current || active.current) return;
       if (stateRef.current.phase !== "connected") return;
       backoff.current.reset();
       void attemptRef.current();
     })();
-  }, [connection]);
+  }, [connection, failed]);
 
   const kick = useCallback(() => {
     if (active.current) return;

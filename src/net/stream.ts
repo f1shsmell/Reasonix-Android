@@ -120,7 +120,11 @@ export class RuntimeStream {
 
   private scheduleRetry(): void {
     const index = Math.min(this.attempt, BACKOFF_MS.length - 1);
-    const afterMs = BACKOFF_MS[index] ?? 15000;
+    // Half the slot plus a random half, the same full-jitter rule `Backoff`
+    // uses for the link machine: when the kernel restarts, every phone
+    // reconnecting in lockstep turns one recovery into a thundering herd.
+    const slot = BACKOFF_MS[index] ?? 15000;
+    const afterMs = Math.max(1, Math.round(slot / 2 + Math.random() * (slot / 2)));
     this.attempt += 1;
     this.handlers.onState({ kind: "retrying", attempt: this.attempt, afterMs });
     this.clearTimer();

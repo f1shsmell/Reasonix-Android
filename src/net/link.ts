@@ -177,6 +177,13 @@ export function linkFailure(code: string, detail?: string): LinkError {
       return { code, message: "这台电脑的身份公钥无法识别，连接已拒绝。", retryable: false, ...withDetail };
     case "device.trust_cancelled":
       return { code, message: "已取消确认这台电脑的身份。", retryable: false, ...withDetail };
+    case "device.trust_unwritable":
+      return {
+        code,
+        message: "确认已同意，但手机没能记住这台电脑（存储被占用或已满），请清理后重试。",
+        retryable: false,
+        ...withDetail,
+      };
     case "client.timeout":
       return { code, message: "电脑没有及时回应，稍后重试。", retryable: true, ...withDetail };
     case "no.doors":
