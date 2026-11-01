@@ -9,6 +9,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
@@ -31,13 +33,25 @@ public class RelaySocketPlugin extends Plugin {
     private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
+            // The link carries requests, not a byte stream, so it can sit
+            // silent for a long time. A dead route (sleep, NAT expiry) never
+            // raises TCP error on its own; a missed Pong is what reports it.
+            .pingInterval(20, TimeUnit.SECONDS)
             .build();
-    private WebSocket socket;
+    /**
+     * Every connection the page has dialed, keyed by its tag. Capacitor
+     * broadcasts an event to every listener ever registered, so each event
+     * carries its tag; without that a slow close from a replaced socket
+     * would arrive at the socket that replaced it and read as that one's
+     * failure.
+     */
+    private final Map<Integer, WebSocket> sockets = new ConcurrentHashMap<>();
 
     @PluginMethod
     public void connect(PluginCall call) {
         String url = call.getString("url");
         String origin = call.getString("origin", "https://reasonix.io");
+        Integer tag = tagOf(call);
         JSArray array = call.getArray("protocols");
         List<String> protocols = new ArrayList<>();
         if (array != null) {
@@ -50,9 +64,9 @@ public class RelaySocketPlugin extends Plugin {
             call.reject("missing url");
             return;
         }
-        if (socket != null) {
-            socket.close(1000, "replaced");
-            socket = null;
+        WebSocket previous = sockets.remove(tag);
+        if (previous != null) {
+            previous.close(1000, "replaced");
         }
         Request.Builder builder = new Request.Builder().url(url).header("Origin", origin);
         if (!protocols.isEmpty()) {
@@ -60,17 +74,17 @@ public class RelaySocketPlugin extends Plugin {
             // requires the ticket-bearing subprotocol.
             builder.header("Sec-WebSocket-Protocol", String.join(", ", protocols));
         }
-        socket = client.newWebSocket(builder.build(), new WebSocketListener() {
+        WebSocket webSocket = client.newWebSocket(builder.build(), new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
-                notifyListeners("open", new JSObject());
+                notifyTagged("open", tag, new JSObject());
             }
 
             @Override
             public void onMessage(WebSocket webSocket, String text) {
                 JSObject event = new JSObject();
                 event.put("data", text);
-                notifyListeners("message", event);
+                notifyTagged("message", tag, event);
             }
 
             @Override
@@ -78,7 +92,8 @@ public class RelaySocketPlugin extends Plugin {
                 JSObject event = new JSObject();
                 event.put("code", code);
                 event.put("reason", reason);
-                notifyListeners("close", event);
+                notifyTagged("close", tag, event);
+                sockets.remove(tag, webSocket);
             }
 
             @Override
@@ -86,14 +101,17 @@ public class RelaySocketPlugin extends Plugin {
                 JSObject event = new JSObject();
                 event.put("message", failure.getMessage() == null ? "relay socket failed" : failure.getMessage());
                 event.put("status", response == null ? 0 : response.code());
-                notifyListeners("error", event);
+                notifyTagged("error", tag, event);
+                sockets.remove(tag, webSocket);
             }
         });
+        sockets.put(tag, webSocket);
         call.resolve();
     }
 
     @PluginMethod
     public void send(PluginCall call) {
+        WebSocket socket = sockets.get(tagOf(call));
         String data = call.getString("data");
         if (socket == null || data == null || !socket.send(data)) {
             call.reject("socket is not open");
@@ -104,16 +122,30 @@ public class RelaySocketPlugin extends Plugin {
 
     @PluginMethod
     public void close(PluginCall call) {
+        WebSocket socket = sockets.remove(tagOf(call));
         if (socket != null) {
             socket.close(1000, "closed");
-            socket = null;
         }
         call.resolve();
     }
 
     @Override
     protected void handleOnDestroy() {
-        if (socket != null) socket.close(1000, "destroyed");
+        for (WebSocket socket : sockets.values()) {
+            socket.close(1000, "destroyed");
+        }
+        sockets.clear();
         super.handleOnDestroy();
+    }
+
+    private static Integer tagOf(PluginCall call) {
+        Object raw = call.getData().opt("tag");
+        return raw instanceof Number ? Integer.valueOf(((Number) raw).intValue()) : Integer.valueOf(0);
+    }
+
+    /** An event addressed to one connection, not broadcast to all of them. */
+    private void notifyTagged(String event, Integer tag, JSObject payload) {
+        payload.put("tag", tag);
+        notifyListeners(event, payload);
     }
 }

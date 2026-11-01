@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { deviceFingerprint, pinDevice } from "./deviceTrust";
 import { RelayError, RelayEventSource, RelayLink, connectRelay, isKernelPath } from "./relay";
 
-type Handler = (event: { data?: string; code?: number; reason?: string }) => void;
+type Handler = (event: {
+  data?: string;
+  code?: number;
+  reason?: string;
+  message?: string;
+}) => void;
 
 function connection() {
   const listeners = new Map<string, Handler[]>();
@@ -74,6 +79,78 @@ describe("RelayLink", () => {
     const response = await responsePromise;
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("[]");
+  });
+
+  it("keeps a pending GET recoverable across an abnormal close", async () => {
+    // What the reconnect will find: the grant refused with 401, which ends
+    // the link for a reason a person can act on. It also keeps this test off
+    // the network while the reconnect walks its delays.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    const { socket, channel, listeners } = connection();
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+    });
+
+    const responsePromise = link.fetch(new Request("http://127.0.0.1:8788/runtimes"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(socket.send).toHaveBeenCalledTimes(1);
+
+    // What the transport now reports for a dead route: an error, then the
+    // close the page bridges from it. Code 1006 is not fatal, so the loss
+    // must not end the link or fail the read it still hopes to resend.
+    const errorListener = listeners.get("error")?.[0];
+    errorListener?.({ message: "timeout" });
+    const closeListener = listeners.get("close")?.[0];
+    closeListener?.({ code: 1006, reason: "abnormal" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(link.isEnded).toBe(false);
+
+    // The reconnect then takes its first retry, finds the grant refused,
+    // and ends the link with that reason.
+    const ended = await responsePromise.catch((error: unknown) => error);
+    expect(ended).toBeInstanceOf(RelayError);
+    expect((ended as RelayError).kind).toBe("ended");
+    expect(link.isEnded).toBe(true);
+  });
+
+  it("fails a pending write on the close and leaves the link reconnecting", async () => {
+    // The 401 also ends the link's own reconnect deterministically, so this
+    // test leaves no retry loop behind.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    const { socket, channel, listeners } = connection();
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+    });
+
+    const failurePromise = link
+      .fetch(new Request("http://127.0.0.1:8788/submit", { method: "POST", body: "{}" }))
+      .then(() => null, (error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const closeListener = listeners.get("close")?.[0];
+    closeListener?.({ code: 1006, reason: "abnormal" });
+
+    // A write the kernel may already have run is not silently retried; the
+    // person is asked to check. The loss itself is still not an end.
+    const failure = await failurePromise;
+    expect(failure).toBeInstanceOf(RelayError);
+    expect((failure as RelayError).kind).toBe("transient");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(link.isEnded).toBe(false);
+
+    // The reconnect then ends the link on the refused grant; a fetch after
+    // that is refused at once instead of hanging.
+    const ended = await link
+      .fetch(new Request("http://127.0.0.1:8788/runtimes"))
+      .catch((error: unknown) => error);
+    expect(ended).toBeInstanceOf(RelayError);
+    expect((ended as RelayError).kind).toBe("ended");
+    expect(link.isEnded).toBe(true);
   });
 });
 
