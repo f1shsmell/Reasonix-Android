@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sweepCloud } from "./cloudWatch";
+import { installCloudWatchBridge, sweepCloud } from "./cloudWatch";
 
 const relay = vi.hoisted(() => ({
   relayAlive: vi.fn(),
@@ -82,5 +82,26 @@ describe("sweepCloud", () => {
     expect(snapshot.ok).toBe(true);
     expect(snapshot.runtimes).toHaveLength(1);
     expect(snapshot.statuses).toEqual({});
+  });
+
+  it("posts a notification decision through the same relay", async () => {
+    installCloudWatchBridge();
+    http.fetchWithTimeout.mockResolvedValue(new Response(null, { status: 204 }));
+
+    window.__reasonixCloudDecide?.({
+      path: "/rt/r1/approve",
+      body: "{\"id\":\"d1\",\"allow\":true}",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(http.fetchWithTimeout).toHaveBeenCalledWith(
+      "/rt/r1/approve",
+      expect.objectContaining({
+        method: "POST",
+        body: "{\"id\":\"d1\",\"allow\":true}",
+      }),
+      15_000,
+    );
   });
 });

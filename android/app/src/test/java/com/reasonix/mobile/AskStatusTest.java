@@ -67,4 +67,45 @@ public class AskStatusTest {
 
         assertFalse(first.signature.equals(second.signature));
     }
+
+    @Test
+    public void offersTheThreeApprovalActions() {
+        AskStatus status = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d1\",\"kind\":\"tool_approval\"}]}");
+
+        assertEquals(true, status.choice.approval);
+        assertEquals("d1", status.choice.decisionId);
+        assertEquals(3, status.choice.options.size());
+        assertEquals("允许", status.choice.options.get(0));
+    }
+
+    @Test
+    public void offersASingleChoiceQuestionsLabels() {
+        AskStatus status = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d2\",\"kind\":\"ask\",\"questions\":[{"
+                        + "\"id\":\"q1\",\"header\":\"选一个\",\"options\":["
+                        + "{\"label\":\"茶\"},{\"label\":\"咖啡\"}]}]}]}");
+
+        assertFalse(status.choice.approval);
+        assertEquals("q1", status.choice.questionId);
+        assertEquals(java.util.Arrays.asList("茶", "咖啡"), status.choice.options);
+    }
+
+    @Test
+    public void keepsTheOpenActionForAMultiSelectOrLongQuestion() {
+        AskStatus multi = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d3\",\"kind\":\"ask\",\"questions\":[{"
+                        + "\"id\":\"q1\",\"multi\":true,\"options\":[{\"label\":\"a\"}]}]}]}");
+        AskStatus longList = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d4\",\"kind\":\"ask\",\"questions\":[{"
+                        + "\"id\":\"q1\",\"options\":[{\"label\":\"a\"},{\"label\":\"b\"},"
+                        + "{\"label\":\"c\"},{\"label\":\"d\"}]}]}]}");
+        AskStatus freeText = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d5\",\"kind\":\"ask\",\"questions\":[{"
+                        + "\"id\":\"q1\",\"prompt\":\"说说看\"}]}]}");
+
+        assertEquals(null, multi.choice);
+        assertEquals(null, longList.choice);
+        assertEquals(null, freeText.choice);
+    }
 }

@@ -1085,13 +1085,54 @@ describe("ChatScreen composer", () => {
 
     act(() =>
       (
-        container.querySelector('button[aria-label="移除图片 photo.png"]') as HTMLButtonElement
+        container.querySelector('button[aria-label="移除附件 photo.png"]') as HTMLButtonElement
       ).click(),
     );
 
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
     expect(container.querySelector(".attachment")).toBeNull();
     expect(preview).toHaveBeenCalled();
+  });
+
+  it("uploads a file and shows a file chip", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/rt/r1/attachments")) {
+        return Promise.resolve(
+          json({
+            path: ".reasonix/attachments/app.log",
+            ref: "@.reasonix/attachments/app.log",
+          }),
+        );
+      }
+      return Promise.resolve(json([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(snapshot());
+    await flush();
+
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const input = inputs[2] as HTMLInputElement;
+    const file = new File(["2026-11-02 log"], "app.log", { type: "text/plain" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("@.reasonix/attachments/app.log");
+    expect(container.querySelector(".attachment-file")?.textContent).toBe("LOG");
+    expect(container.querySelector(".attachment img")).toBeNull();
+    const upload = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/rt/r1/attachments"),
+    );
+    const body = JSON.parse(String(upload?.[1]?.body)) as {
+      name: string;
+      mime: string;
+    };
+    expect(body.name).toBe("app.log");
+    expect(body.mime).toBe("text/plain");
   });
 
   it("accepts several images at once and keeps the ones that uploaded", async () => {

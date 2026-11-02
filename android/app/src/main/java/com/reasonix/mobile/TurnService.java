@@ -16,6 +16,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -56,6 +58,13 @@ public class TurnService extends Service {
     static final String EXTRA_RUNTIME = "runtime";
     static final String EXTRA_MODE = "mode";
     static final String EXTRA_CLOUD = "cloud";
+    static final String ACTION_DECIDE = "com.reasonix.mobile.TURN_DECIDE";
+    static final String EXTRA_DECISION = "decision";
+    static final String EXTRA_QUESTION = "question";
+    static final String EXTRA_SELECTED = "selected";
+    static final String EXTRA_ALLOW = "allow";
+    static final String EXTRA_SESSION = "session";
+    static final String EXTRA_APPROVAL = "approval";
 
     private static final String TAG = "ReasonixTurn";
     private static final String CHANNEL_RUNNING = "turn_running";
@@ -71,6 +80,7 @@ public class TurnService extends Service {
     static final int ASK_BASE = 0x02000000;
     static final int REQUEST_DONE_BASE = 0x03000000;
     static final int REQUEST_ASK_BASE = 0x04000000;
+    static final int REQUEST_DECISION_BASE = 0x05000000;
     static final int SESSION_BUCKETS = 1 << 20;
     private static final int OFFLINE_AFTER = 3;
     private static final long WAKE_LOCK_MS = 30 * 60 * 1000L;
@@ -134,6 +144,7 @@ public class TurnService extends Service {
     private volatile int cloudMisses = 0;
     private PowerManager.WakeLock cloudWakeLock;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService decisions = Executors.newSingleThreadExecutor();
     /** The running watcher, for the WebView's result bridge. */
     private static volatile TurnService active;
     private volatile int pollFailures = 0;
@@ -160,6 +171,10 @@ public class TurnService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_DECIDE.equals(intent.getAction())) {
+            decide(intent);
+            return START_NOT_STICKY;
+        }
         completed = false;
         stopping = false;
         lastAnswerAt = System.currentTimeMillis();
@@ -233,6 +248,7 @@ public class TurnService extends Service {
         stopWatching();
         cancelAsks();
         clearCounts();
+        decisions.shutdownNow();
         releaseWakeLock();
         releaseWifiLock();
         releaseCloudWakeLock();
@@ -755,29 +771,134 @@ public class TurnService extends Service {
         if (status.signature.equals(watch.askSignature)) return;
         if (!manager.areNotificationsEnabled()) return;
         watch.askSignature = status.signature;
-        manager.notify(askId(watch.key), buildAsk(watch, status.text));
+        manager.notify(askId(watch.key), buildAsk(watch, status));
     }
 
-    private Notification buildAsk(Watch watch, String text) {
+    private Notification buildAsk(Watch watch, AskStatus status) {
         String heading = watch.title.isEmpty() ? "需要你处理" : watch.title;
+        PendingIntent open = openChat(watch, askRequest(watch.key));
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ASK)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(heading)
-                .setContentText(text)
+                .setContentText(status.text)
                 .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
-                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setStyle(new Notification.BigTextStyle().bigText(status.text))
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
                 // A prompt can carry code and paths; the lock screen says only
                 // that something is waiting until the phone is unlocked.
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicAsk())
-                .setContentIntent(openChat(watch, askRequest(watch.key)))
-                .addAction(R.drawable.ic_notification, "去回答", openChat(watch, askRequest(watch.key)));
+                .setContentIntent(open);
+        AskStatus.Choice choice = watch.readOnly ? null : status.choice;
+        if (choice == null) {
+            builder.addAction(R.drawable.ic_notification, "去回答", open);
+        } else {
+            int added = 0;
+            for (int index = 0; index < choice.options.size() && added < 3; index++) {
+                builder.addAction(
+                        R.drawable.ic_notification,
+                        choice.options.get(index),
+                        decision(watch, choice, index));
+                added++;
+            }
+            if (added < 3) {
+                builder.addAction(R.drawable.ic_notification, "去回答", open);
+            }
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH);
         }
         return builder.build();
+    }
+
+    /** One action on the ask notification; the service settles it. */
+    private PendingIntent decision(Watch watch, AskStatus.Choice choice, int index) {
+        Intent intent = new Intent(this, TurnService.class);
+        intent.setAction(ACTION_DECIDE);
+        intent.putExtra(EXTRA_RUNTIME, watch.runtime);
+        intent.putExtra(EXTRA_DECISION, choice.decisionId);
+        intent.putExtra(EXTRA_QUESTION, choice.questionId);
+        intent.putExtra(EXTRA_APPROVAL, choice.approval);
+        if (choice.approval) {
+            intent.putExtra(EXTRA_ALLOW, index != 1);
+            intent.putExtra(EXTRA_SESSION, index == 2);
+        } else {
+            intent.putExtra(EXTRA_SELECTED, choice.options.get(index));
+        }
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        int request = REQUEST_DECISION_BASE + sessionBucket(watch.key) * 4 + index;
+        return PendingIntent.getService(this, request, intent, flags);
+    }
+
+    /**
+     * Settle the decision an action named.
+     *
+     * LAN goes straight through the proxy. Cloud has no upstream there — the
+     * relay lives in the WebView — so the same POST is handed to the page's
+     * bridge, and the next sweep reflects it.
+     */
+    private void decide(Intent intent) {
+        String runtime = extra(intent, EXTRA_RUNTIME);
+        Watch watch = watches.get(runtime);
+        if (watch == null || watch.base.isEmpty()) return;
+        String decisionId = extra(intent, EXTRA_DECISION);
+        if (decisionId.isEmpty()) return;
+        boolean approval = intent.getBooleanExtra(EXTRA_APPROVAL, false);
+        try {
+            JSONObject body = new JSONObject();
+            String path;
+            if (approval) {
+                body.put("id", decisionId);
+                body.put("allow", intent.getBooleanExtra(EXTRA_ALLOW, false));
+                body.put("session", intent.getBooleanExtra(EXTRA_SESSION, false));
+                body.put("persist", false);
+                path = watch.base + "/approve";
+            } else {
+                JSONObject answer = new JSONObject();
+                answer.put("QuestionID", extra(intent, EXTRA_QUESTION));
+                answer.put("Selected", new JSONArray().put(extra(intent, EXTRA_SELECTED)));
+                body.put("id", decisionId);
+                body.put("answers", new JSONArray().put(answer));
+                path = watch.base + "/answer";
+            }
+            if (cloud) {
+                MainActivity.requestCloudDecision(path, body.toString());
+                // Let the relay POST land before the next sweep reads status.
+                mainHandler.postDelayed(this::pollCloud, 2_000);
+                return;
+            }
+            decisions.execute(() -> {
+                if (post(path, body)) {
+                    pollStatus(watch, false);
+                    mainHandler.post(this::refreshRunning);
+                }
+            });
+        } catch (Exception e) {
+            Log.d(TAG, "decision skipped", e);
+        }
+    }
+
+    private boolean post(String path, JSONObject body) {
+        HttpURLConnection connection = null;
+        try {
+            connection = open(path);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json");
+            byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(data.length);
+            try (java.io.OutputStream out = connection.getOutputStream()) {
+                out.write(data);
+            }
+            int code = connection.getResponseCode();
+            return code >= 200 && code < 300;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     /** The lock-screen stand-in: no session title, no question text. */
