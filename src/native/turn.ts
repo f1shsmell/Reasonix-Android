@@ -26,6 +26,20 @@ export interface BackgroundStatus {
   notifications: boolean;
 }
 
+export interface NativeCloudStatus {
+  active?: boolean;
+  cloud?: boolean;
+  visible?: boolean;
+  pending?: boolean;
+  misses?: number;
+  watches?: number;
+  code?: string;
+  at?: number;
+  runtimes?: number;
+  statuses?: number;
+  asks?: number;
+}
+
 export interface NativeDiagnostics {
   version?: string;
   build?: number;
@@ -35,6 +49,7 @@ export interface NativeDiagnostics {
   manufacturer?: string;
   exempt?: boolean;
   notifications?: boolean;
+  cloud?: NativeCloudStatus;
 }
 
 interface TurnNotificationsPlugin {

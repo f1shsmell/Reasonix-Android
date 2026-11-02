@@ -132,6 +132,7 @@ public class TurnPlugin extends Plugin {
         NotificationManager notifications =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         result.put("notifications", notifications != null && notifications.areNotificationsEnabled());
+        result.put("cloud", TurnService.cloudStatus());
         call.resolve(result);
     }
 
