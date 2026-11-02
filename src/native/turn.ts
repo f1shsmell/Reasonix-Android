@@ -57,6 +57,7 @@ interface TurnNotificationsPlugin {
   stop(options: { completed?: boolean }): Promise<void>;
   startCloudWatch(): Promise<void>;
   stopCloudWatch(): Promise<void>;
+  setNotificationOptions(options: { showOptions: boolean }): Promise<void>;
   backgroundStatus(): Promise<BackgroundStatus>;
   diagnostics(): Promise<NativeDiagnostics>;
   openBatterySettings(): Promise<void>;
@@ -97,6 +98,14 @@ export function stopCloudWatch(): void {
   if (!Capacitor.isNativePlatform()) return;
   void TurnNotifications.stopCloudWatch().catch(() => {
     // Nothing to do; the service stops with the process anyway.
+  });
+}
+
+/** Inline ask options in the notification, or only the open-the-chat action. */
+export function setNotificationOptions(showOptions: boolean): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void TurnNotifications.setNotificationOptions({ showOptions }).catch(() => {
+    // The next app start writes the choice again.
   });
 }
 

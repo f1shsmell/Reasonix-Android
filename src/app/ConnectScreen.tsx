@@ -104,6 +104,9 @@ export interface ConnectScreenProps {
   /** Cloud background reminders, owned by App because the service follows the link. */
   cloudWatch?: boolean;
   onCloudWatchChange?: (on: boolean) => void;
+  /** Inline ask options in the notification; off means one 去回答 action. */
+  notificationOptions?: boolean;
+  onNotificationOptionsChange?: (on: boolean) => void;
   /** The About page's copy-diagnostics text, built by App from its live state. */
   buildDiagnostics?: () => Promise<string>;
 }
@@ -169,7 +172,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, buildDiagnostics }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, buildDiagnostics }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -1323,6 +1326,21 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             <span className="setting-title">震动</span>
             <Switch checked={haptics} onChange={pickHaptics} ariaLabel="震动" />
           </div>
+          {Capacitor.isNativePlatform() && onNotificationOptionsChange ? (
+            <div className="setting">
+              <span className="setting-main">
+                <span className="setting-title">通知里显示选项</span>
+                <span className="setting-sub">
+                  关闭时只显示「去回答」，点击直接进入该会话
+                </span>
+              </span>
+              <Switch
+                checked={notificationOptions ?? false}
+                onChange={onNotificationOptionsChange}
+                ariaLabel="通知里显示选项"
+              />
+            </div>
+          ) : null}
           {Capacitor.isNativePlatform() && onCloudWatchChange ? (
             <div className="setting">
               <span className="setting-main">

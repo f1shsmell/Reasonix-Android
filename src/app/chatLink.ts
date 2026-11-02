@@ -13,6 +13,8 @@ export interface ChatLink {
   /** A LAN target when the conversation lives on another watched computer. */
   peer?: string;
   peerName?: string;
+  /** A decision notification asks the screen to land on the waiting prompt. */
+  focusAsk?: boolean;
 }
 
 export function parseChatLink(raw: string): ChatLink | null {
@@ -31,6 +33,7 @@ export function parseChatLink(raw: string): ChatLink | null {
       ...(title ? { title } : {}),
       ...(peer ? { peer } : {}),
       ...(peerName ? { peerName } : {}),
+      ...(url.searchParams.get("focus") === "ask" ? { focusAsk: true } : {}),
     };
   } catch {
     return null;
