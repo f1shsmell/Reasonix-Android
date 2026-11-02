@@ -23,6 +23,7 @@ import { submit } from "../net/submit";
 import { startTurnNotification } from "../native/turn";
 import { loadTree } from "../net/tree";
 import { rememberConnection } from "../net/savedConnections";
+import type { NetworkStatus } from "../net/network";
 
 /**
  * The shell has three jobs: choose the boot screen from the proxy config,
@@ -91,6 +92,8 @@ vi.mock("../net/connection", async (importOriginal) => ({
     refresh = connectionMock.refresh;
     attach = connectionMock.attach;
     detach = connectionMock.detach;
+    quickCheck = vi.fn(async () => true);
+    wakeStream = vi.fn();
   },
 }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: vi.fn(() => true) } }));
@@ -98,7 +101,7 @@ const appMock = vi.hoisted(() => ({
   back: null as (() => void) | null,
   exitApp: vi.fn(),
   launchUrl: null as string | null,
-  network: null as ((status: { connected: boolean }) => void) | null,
+  networkWatch: null as ((status: NetworkStatus) => void) | null,
 }));
 vi.mock("@capacitor/app", () => ({
   App: {
@@ -112,14 +115,17 @@ vi.mock("@capacitor/app", () => ({
     ),
   },
 }));
-vi.mock("@capacitor/network", () => ({
-  Network: {
-    getStatus: vi.fn(async () => ({ connected: true })),
-    addListener: vi.fn(async (event: string, handler: (status: { connected: boolean }) => void) => {
-      if (event === "networkStatusChange") appMock.network = handler;
-      return { remove: vi.fn() };
-    }),
-  },
+vi.mock("../native/networkWatch", () => ({
+  readNetworkStatus: vi.fn(async () => ({
+    connected: true,
+    connectionType: "wifi",
+    validated: true,
+    networkKey: "w1",
+  })),
+  onNetworkChange: vi.fn(async (handler: (status: NetworkStatus) => void) => {
+    appMock.networkWatch = handler;
+    return { remove: vi.fn() };
+  }),
 }));
 vi.mock("../net/token", () => ({ bootstrap: vi.fn(async () => {}) }));
 const relayStoreMock = vi.hoisted(() => ({
@@ -212,6 +218,16 @@ function lanConfig() {
   };
 }
 
+function networkStatus(overrides: Partial<NetworkStatus> = {}): NetworkStatus {
+  return {
+    connected: true,
+    connectionType: "wifi",
+    validated: true,
+    networkKey: "w1",
+    ...overrides,
+  };
+}
+
 function treeBody() {
   return {
     ok: true as const,
@@ -250,7 +266,7 @@ beforeEach(() => {
   appMock.back = null;
   appMock.exitApp.mockClear();
   appMock.launchUrl = null;
-  appMock.network = null;
+  appMock.networkWatch = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   connectionMock.current = {
@@ -596,7 +612,7 @@ describe("App", () => {
 
     // The first attempt failed and scheduled a retry; losing the network now
     // must replace that wait with the offline state.
-    act(() => appMock.network?.({ connected: false }));
+    act(() => appMock.networkWatch?.(networkStatus({ connected: false, connectionType: "none", validated: false, networkKey: "" })));
 
     expect(container.querySelector(".linkbar")?.textContent).toContain("等待网络");
   });
@@ -608,7 +624,7 @@ describe("App", () => {
     vi.mocked(firstAnswering).mockResolvedValue(null);
     vi.mocked(answeringOrigins).mockResolvedValue([]);
     await renderApp();
-    act(() => appMock.network?.({ connected: false }));
+    act(() => appMock.networkWatch?.(networkStatus({ connected: false, connectionType: "none", validated: false, networkKey: "" })));
     expect(container.querySelector(".linkbar")?.textContent).toContain("等待网络");
 
     vi.mocked(answeringOrigins).mockResolvedValue(["http://192.168.9.9:51234"]);
@@ -618,7 +634,7 @@ describe("App", () => {
       candidates: ["http://192.168.9.9:51234"],
     });
     await act(async () => {
-      appMock.network?.({ connected: true });
+      appMock.networkWatch?.(networkStatus({ networkKey: "w2" }));
       await Promise.resolve();
     });
     await settle();

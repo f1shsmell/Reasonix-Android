@@ -259,4 +259,41 @@ describe("Connection", () => {
     connection.detach();
     expect(connection.current.lastEvent).toBeUndefined();
   });
+
+  it("quick-checks without counting a lost probe as a lost route", async () => {
+    // A network change asks once and acts; it must not add to the watch's
+    // tolerated-failure count, or the next change would look like a dead link.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));
+    const connection = new Connection();
+
+    await expect(connection.quickCheck(10)).resolves.toBe(false);
+    expect(connection.lost).toBe(false);
+    expect(connection.current.reach.kind).toBe("unknown");
+  });
+
+  it("quick-checks a live route and restores the reachable answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const connection = new Connection();
+
+    await expect(connection.quickCheck(10)).resolves.toBe(true);
+    expect(connection.current.reach.kind).toBe("ok");
+    expect(connection.current.runtimes.map((runtime) => runtime.id)).toEqual(["r1"]);
+  });
+
+  it("quick-checks a refusal as unauthorized, not as a dead route", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+    const connection = new Connection();
+
+    await expect(connection.quickCheck(10)).resolves.toBe(false);
+    expect(connection.current.reach.kind).toBe("unauthorized");
+    expect(connection.lost).toBe(false);
+  });
 });

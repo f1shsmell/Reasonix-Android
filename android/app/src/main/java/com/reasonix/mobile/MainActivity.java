@@ -25,6 +25,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SpeechPlugin.class);
         registerPlugin(PairPlugin.class);
         registerPlugin(RelaySocketPlugin.class);
+        registerPlugin(NetworkWatchPlugin.class);
         registerPlugin(TurnPlugin.class);
         registerPlugin(UpdaterPlugin.class);
         super.onCreate(savedInstanceState);

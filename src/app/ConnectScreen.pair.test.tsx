@@ -17,8 +17,9 @@ vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } 
 vi.mock("@capacitor/app", () => ({
   App: { addListener: vi.fn(async () => ({ remove: vi.fn() })), exitApp: vi.fn() },
 }));
-vi.mock("@capacitor/network", () => ({
-  Network: { addListener: vi.fn(async () => ({ remove: vi.fn() })) },
+vi.mock("../native/networkWatch", () => ({
+  readNetworkStatus: vi.fn(async () => null),
+  onNetworkChange: vi.fn(async () => ({ remove: vi.fn() })),
 }));
 vi.mock("@capacitor/browser", () => ({ Browser: { open: vi.fn(async () => {}) } }));
 vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn() } }));

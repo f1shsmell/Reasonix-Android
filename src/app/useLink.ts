@@ -40,6 +40,7 @@ import {
   refreshProxy,
 } from "../net/server";
 import type { ProxyConfig } from "../net/server";
+import type { NetworkStatus } from "../net/network";
 
 function reachCode(reach: ConnectionSnapshot["reach"]): string {
   return reach.kind === "unauthorized" ? "device.unauthorized" : "client.offline";
@@ -158,13 +159,14 @@ export interface Link {
   /** The settings screen swapped the upstream and then could not verify it. */
   noteFailed: (error: LinkError) => void;
   /**
-   * The system reported whether this phone has a network.
+   * The platform's view of the default network.
    *
-   * Losing it stops the retry timer instead of letting it spin against a
-   * network that is not there; getting it back is the signal that starts the
-   * walk over the saved doors again, in their order.
+   * A network change is not only a disconnect: Wi-Fi A→B and cellular→Wi-Fi
+   * keep `connected` true. `changed` says the route itself may have moved, so
+   * a live link is verified once and reconnected immediately if it no longer
+   * answers.
    */
-  noteNetwork: (connected: boolean) => void;
+  noteNetwork: (status: NetworkStatus, changed?: boolean) => void;
   /**
    * The person disconnected on purpose: stand down until they connect again.
    * A machine that auto-reconnects would fight the choice the screen just
@@ -191,14 +193,22 @@ export function useLink(connection: Connection): Link {
    */
   const standDown = useRef(loadStandDown());
   /**
-   * Whether the system says this phone has a network at all.
+   * Whether the system says a default network exists.
    *
-   * Starts optimistic: a browser session has no network plugin to ask, and a
-   * phone that has not reported yet is far more likely to be online than not.
-   * A false value is what turns a retry into a wait, so guessing "offline"
-   * would leave a working phone stuck until the first network event.
+   * This is deliberately not Android's "validated internet": a LAN-only Wi-Fi
+   * is connected enough to reach the kernel, and treating it as offline would
+   * leave the phone waiting for a validation that may never come. Starts
+   * optimistic: a browser session has no network plugin to ask, and a phone
+   * that has not reported yet is far more likely to be online than not.
    */
   const online = useRef(true);
+  const lastNetwork = useRef<NetworkStatus | null>(null);
+  /** A change arrived while an attempt was running; retry when it ends. */
+  const networkDirty = useRef(false);
+  /** Coalesces capability bursts into one reassessment. */
+  const lastNetworkKick = useRef(0);
+  /** One short verification after a change; overlapping events share it. */
+  const reassessing = useRef(false);
   const attemptRef = useRef<() => Promise<void>>(async () => {});
 
   const emit = useCallback((next: LinkState) => {
@@ -225,6 +235,10 @@ export function useLink(connection: Connection): Link {
           if (identity) learnConnectionMachine("lan", target, identity.machine);
         });
       }
+      // A stream may be waiting out a backoff from before the route was
+      // restored; retry it now with the same cursor.
+      networkDirty.current = false;
+      connection.wakeStream();
       emit({
         phase: "connected",
         target,
@@ -234,7 +248,7 @@ export function useLink(connection: Connection): Link {
         completed: LINK_STEPS,
       });
     },
-    [emit],
+    [connection, emit],
   );
 
   const failed = useCallback(
@@ -435,6 +449,16 @@ export function useLink(connection: Connection): Link {
       if (live()) schedule(failureFromError(error));
     } finally {
       active.current = false;
+      if (networkDirty.current) {
+        networkDirty.current = false;
+        // A change arrived during the attempt: the route it just tested is the
+        // old one, so a failure must not wait out the backoff.
+        if (!standDown.current && online.current && stateRef.current.phase !== "connected") {
+          window.setTimeout(() => {
+            void attemptRef.current();
+          }, 0);
+        }
+      }
     }
   }, [clearTimer, connected, connection, emit, schedule]);
 
@@ -619,6 +643,35 @@ export function useLink(connection: Connection): Link {
     })();
   }, [connected, connection, failed]);
 
+  /**
+   * One short verification after the network changed.
+   *
+   * A working route stays connected — no flicker, no teardown — while a route
+   * that no longer answers goes straight to a fresh attempt instead of waiting
+   * for the watch timer and its second tolerated failure.
+   */
+  const reassess = useCallback(() => {
+    if (standDown.current || active.current || reassessing.current) return;
+    if (stateRef.current.phase !== "connected") return;
+    reassessing.current = true;
+    void (async () => {
+      try {
+        const reached = await connection.quickCheck(5_000);
+        if (standDown.current || active.current) return;
+        if (stateRef.current.phase !== "connected") return;
+        if (reached) {
+          connection.wakeStream();
+          preferLan();
+          return;
+        }
+        backoff.current.reset();
+        await attemptRef.current();
+      } finally {
+        reassessing.current = false;
+      }
+    })();
+  }, [connection, preferLan]);
+
   const kick = useCallback(() => {
     if (active.current) return;
     if (standDown.current) return;
@@ -636,8 +689,8 @@ export function useLink(connection: Connection): Link {
   /**
    * Try now, whether or not the system still believes it is offline.
    *
-   * The `online` flag is a cache of one `networkStatusChange` event, and a
-   * phone that regained Wi-Fi while the app was paused can miss it entirely.
+   * The `online` flag caches the platform's last network answer, and a phone
+   * that regained Wi-Fi while the app was paused can miss the event entirely.
    * A person tapping 重试 is a stronger signal than that cache, so their own
    * action clears it; the attempt then either succeeds or sets it again from
    * its own failure.
@@ -651,25 +704,27 @@ export function useLink(connection: Connection): Link {
   }, [kick]);
 
   /**
-   * The system's answer about this phone's network.
+   * The platform's answer about this phone's network.
    *
-   * Losing it cancels the retry timer: an attempt fired while offline can only
-   * fail, and a chain of those is exactly the "still retrying after the Wi-Fi
-   * died" this state exists to prevent. Regaining it resets the backoff — the
-   * person was not waiting on this computer, they were waiting on the network
-   * — and starts one attempt that walks the saved doors in order.
+   * No network cancels the retry timer: an attempt fired while offline can
+   * only fail. A default network returning starts one attempt over the saved
+   * doors. A change while the phone stays connected — Wi-Fi A→B, cellular→
+   * Wi-Fi — is just as important: the route may have moved, so a live link is
+   * verified once and reconnected immediately if it no longer answers.
    */
   const noteNetwork = useCallback(
-    (reachable: boolean) => {
+    (status: NetworkStatus, changed = false) => {
       const was = online.current;
-      online.current = reachable;
-      if (!reachable) {
+      const previous = lastNetwork.current;
+      lastNetwork.current = status;
+      online.current = status.connected;
+      const phase = stateRef.current.phase;
+
+      if (!status.connected) {
         clearTimer();
-        // Only a link that was waiting on a retry has anything to stop. A
-        // live link may still answer over another interface, a first attempt
-        // is already running, and a failure the person can read ("配对失效")
-        // should not be replaced by "no network".
-        const phase = stateRef.current.phase;
+        // Only a link waiting on a retry has anything to stop. A live link
+        // may still answer over another interface, and a failure the person
+        // can read ("配对失效") should not be replaced by "no network".
         if (phase !== "reconnecting" && phase !== "offline") return;
         emit({
           phase: "offline",
@@ -682,19 +737,39 @@ export function useLink(connection: Connection): Link {
         });
         return;
       }
-      if (was) return;
       if (standDown.current) return;
-      if (active.current) return;
+
+      // The boolean can stay true across a handover, so the network's
+      // identity and transport are part of the signal too.
+      const routeChanged =
+        changed ||
+        !was ||
+        (previous !== null &&
+          (previous.networkKey !== status.networkKey ||
+            previous.connectionType !== status.connectionType));
+      if (!routeChanged) return;
+
+      const now = Date.now();
+      if (changed && was && now - lastNetworkKick.current < 1_000) return;
+      lastNetworkKick.current = now;
+      connection.resetFailures();
       backoff.current.reset();
       clearTimer();
-      // `kick` already knows what each phase deserves: a live link is only
-      // verified quietly, and a waiting one starts a fresh walk over the
-      // saved doors.
+
+      if (active.current) {
+        networkDirty.current = true;
+        return;
+      }
+      if (phase === "connected") {
+        reassess();
+        return;
+      }
+      // A waiting or failed link starts a fresh walk over the saved doors.
       kick();
       // Wi-Fi returning is also the moment a cloud link can become a LAN one.
       preferLan();
     },
-    [clearTimer, emit, kick, preferLan],
+    [clearTimer, connection, emit, kick, preferLan, reassess],
   );
 
   const switchTo = useCallback(
@@ -793,6 +868,8 @@ export function useLink(connection: Connection): Link {
       ...(name ? { name } : {}),
     });
     await connection.refresh();
+    networkDirty.current = false;
+    connection.wakeStream();
   }, [clearTimer, connection, emit]);
 
   const noteFailed = useCallback(

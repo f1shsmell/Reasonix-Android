@@ -60,6 +60,19 @@ export class RuntimeStream {
     this.handlers.onState({ kind: "closed", reason: "stopped by caller" });
   }
 
+  /**
+   * Retry now instead of waiting out the backoff.
+   *
+   * The platform reported the network is back, so the delay was measured
+   * against a route that no longer exists. The cursor is kept.
+   */
+  retryNow(): void {
+    if (this.stopped || this.source !== null || this.timer === null) return;
+    this.clearTimer();
+    this.attempt = 0;
+    this.connect();
+  }
+
   private clearTimer(): void {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);

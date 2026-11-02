@@ -2,7 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
-import { Network } from "@capacitor/network";
+import { onNetworkChange, readNetworkStatus } from "../native/networkWatch";
+import type { NetworkStatus } from "../net/network";
 import { Connection } from "../net/connection";
 import type { ConnectionSnapshot } from "../net/connection";
 import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
@@ -598,41 +599,47 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [boot, link.state.phase, link.watch, link.preferLan]);
 
-  // The system's own answer about this phone's network. Losing it stops the
-  // retry timer instead of letting it spin against a network that is not
-  // there; regaining it starts a fresh walk over the saved doors, in order.
-  // The proxy also retries the remembered origins on a network change, and
-  // the link machine then checks the other transport if nothing answered.
+  // The platform's own answer about this phone's network. A default network
+  // returning starts a fresh walk; a change while the boolean stays true
+  // (Wi-Fi A→B, cellular→Wi-Fi) is passed through as a change too, so the link
+  // machine verifies the route instead of waiting for the watch timer.
   //
-  // The listener is not the only source. Android can deliver the transition
-  // while the app is paused, or not at all, so the current status is also
-  // asked for once at boot and again whenever the app returns to the
-  // foreground: a phone whose Wi-Fi came back while the screen was off would
-  // otherwise sit in 等待网络 until a settings-screen switch.
+  // NetworkWatch is native because Capacitor's Network plugin reports a
+  // validated internet connection: a LAN-only Wi-Fi would read as offline, and
+  // a Wi-Fi handover with no dropout would read as no change.
+  //
+  // Android can deliver the transition while the app is paused, so the current
+  // status is also asked for at boot and whenever the app returns to the
+  // foreground. A resume is a change only when the network itself moved; a
+  // plain foreground check stays the watch/kick path.
   useEffect(() => {
     if (boot !== "ready" || !Capacitor.isNativePlatform()) return;
     let cancelled = false;
     let remove: (() => void) | undefined;
+    let last: NetworkStatus | null = null;
+    const moved = (next: NetworkStatus) =>
+      last !== null &&
+      (last.connected !== next.connected ||
+        last.connectionType !== next.connectionType ||
+        last.networkKey !== next.networkKey);
+    const apply = (status: NetworkStatus, changed: boolean) => {
+      if (cancelled) return;
+      last = status;
+      link.noteNetwork(status, changed);
+    };
     const ask = () => {
-      void Network.getStatus()
-        .then((status) => {
-          if (!cancelled) link.noteNetwork(status.connected);
-        })
-        .catch(() => {
-          // A phone that cannot answer is treated as reachable: the attempt
-          // itself is the better test, and this must not invent an outage.
-        });
+      void readNetworkStatus().then((status) => {
+        if (status !== null) apply(status, moved(status));
+      });
     };
     ask();
-    void Network.addListener("networkStatusChange", (status) => {
-      link.noteNetwork(status.connected);
-    }).then((handle) => {
+    void onNetworkChange((status) => apply(status, true)).then((handle) => {
       if (cancelled) {
-        void handle.remove();
+        void handle?.remove();
         return;
       }
       remove = () => {
-        void handle.remove();
+        void handle?.remove();
       };
     });
     document.addEventListener("visibilitychange", onVisible);
