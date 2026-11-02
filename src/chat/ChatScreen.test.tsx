@@ -16,7 +16,8 @@ vi.mock("../native/speech", () => ({
   beginSpeechHold: vi.fn(async (onChange: (state: Record<string, unknown>) => void) => {
     const state = {
       transcript: "修复登录白屏",
-      levels: [],
+      // A mid-hold wave: the sliding samples the recognizer has streamed.
+      levels: Array.from({ length: 14 }, (_, i) => (i % 4) / 4),
       ready: true,
       cancelArmed: false,
       ended: false,
@@ -681,6 +682,8 @@ describe("ChatScreen composer", () => {
     });
     const live = container.querySelector(".voice-live");
     expect(live?.textContent).toContain("修复登录白屏");
+    // The wave rides along: one bar per sliding level sample.
+    expect(container.querySelectorAll(".voice-wave i")).toHaveLength(14);
 
     // Release: the final text lands in the draft, next to what was typed.
     await act(async () => {

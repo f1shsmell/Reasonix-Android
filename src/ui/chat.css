@@ -1025,6 +1025,9 @@
 }
 
 .voice-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 2px;
   padding: 6px 10px;
   border-radius: 10px;
@@ -1032,15 +1035,37 @@
   color: var(--fg);
   font-size: 13px;
   line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   animation: rx-fade var(--dur-1) var(--ease-out);
 }
 
 .voice-live.cancel {
   background: rgba(var(--bad-rgb), 0.14);
   color: var(--bad);
+}
+
+/* The microphone level, one sliding bar per 80ms RMS sample from the
+   recognizer. Height is set inline from the level; the base height below
+   is what a silent mic shows. */
+.voice-wave {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 21px;
+}
+
+.voice-wave i {
+  width: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+.voice-live-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .composer-bar .modelchip {

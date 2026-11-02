@@ -1754,11 +1754,18 @@ export function ChatScreen({
         ) : null}
         {voice && !voice.ended ? (
           <div className={`voice-live${voice.cancelArmed ? " cancel" : ""}`} aria-live="polite">
-            {voice.cancelArmed
-              ? "松手取消"
-              : voice.ready
-                ? voice.transcript || "听着呢…"
-                : "启动语音服务…"}
+            <span className="voice-wave" aria-hidden="true">
+              {voice.levels.map((level, index) => (
+                <i key={index} style={{ height: `${Math.round(3 + level * 15)}px` }} />
+              ))}
+            </span>
+            <span className="voice-live-text">
+              {voice.cancelArmed
+                ? "松手取消"
+                : voice.ready
+                  ? voice.transcript || "听着呢…"
+                  : "启动语音服务…"}
+            </span>
           </div>
         ) : null}
         <textarea
