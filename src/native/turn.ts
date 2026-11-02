@@ -26,12 +26,24 @@ export interface BackgroundStatus {
   notifications: boolean;
 }
 
+export interface NativeDiagnostics {
+  version?: string;
+  build?: number;
+  android?: string;
+  sdk?: number;
+  model?: string;
+  manufacturer?: string;
+  exempt?: boolean;
+  notifications?: boolean;
+}
+
 interface TurnNotificationsPlugin {
   start(options: TurnLink): Promise<void>;
   stop(options: { completed?: boolean }): Promise<void>;
   startCloudWatch(): Promise<void>;
   stopCloudWatch(): Promise<void>;
   backgroundStatus(): Promise<BackgroundStatus>;
+  diagnostics(): Promise<NativeDiagnostics>;
   openBatterySettings(): Promise<void>;
   openNotificationSettings(): Promise<void>;
 }
@@ -93,6 +105,16 @@ export function openBatterySettings(): void {
   void TurnNotifications.openBatterySettings().catch(() => {
     // No settings page on this device; the hint stays as a sentence.
   });
+}
+
+/** Native facts for the copy-diagnostics row; null in a browser. */
+export async function readNativeDiagnostics(): Promise<NativeDiagnostics | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    return await TurnNotifications.diagnostics();
+  } catch {
+    return null;
+  }
 }
 
 export function openNotificationSettings(): void {

@@ -49,7 +49,7 @@ vi.mock("../native/networkWatch", () => ({
   onNetworkChange: vi.fn(async () => ({ remove: vi.fn() })),
 }));
 vi.mock("@capacitor/browser", () => ({ Browser: { open: vi.fn(async () => {}) } }));
-vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn() } }));
+vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn(), write: vi.fn(async () => {}) } }));
 vi.mock("@capacitor/barcode-scanner", () => ({
   CapacitorBarcodeScanner: { scanBarcode: vi.fn() },
   CapacitorBarcodeScannerCameraDirection: { BACK: "BACK" },

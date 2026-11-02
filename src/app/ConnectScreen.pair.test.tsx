@@ -4,6 +4,7 @@ import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { ConnectScreen } from "./ConnectScreen";
+import { Clipboard } from "@capacitor/clipboard";
 import { configureProxy, probeUpstream, ProxyError, readProxyConfig } from "../net/server";
 import type { ProxyConfig } from "../net/server";
 import type { LinkError } from "../net/link";
@@ -22,7 +23,7 @@ vi.mock("../native/networkWatch", () => ({
   onNetworkChange: vi.fn(async () => ({ remove: vi.fn() })),
 }));
 vi.mock("@capacitor/browser", () => ({ Browser: { open: vi.fn(async () => {}) } }));
-vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn() } }));
+vi.mock("@capacitor/clipboard", () => ({ Clipboard: { read: vi.fn(), write: vi.fn(async () => {}) } }));
 vi.mock("@capacitor/barcode-scanner", () => ({
   CapacitorBarcodeScanner: { scanBarcode: vi.fn() },
   CapacitorBarcodeScannerCameraDirection: { BACK: "BACK" },
@@ -202,6 +203,42 @@ describe("ConnectScreen native pairing", () => {
     expect(configureProxy).not.toHaveBeenCalled();
     expect(onConnected).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("配对没有完成");
+  });
+
+  it("copies the diagnostics text the app prepared", async () => {
+    const buildDiagnostics = vi.fn(async () => "diag text");
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <ConnectScreen
+          onConnected={onConnected}
+          onFailed={onFailed}
+          buildDiagnostics={buildDiagnostics}
+        />,
+      );
+    });
+    const prefs = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === "偏好",
+    );
+    if (!prefs) throw new Error("no prefs tab");
+    await act(async () => {
+      prefs.click();
+      await Promise.resolve();
+    });
+
+    const row = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes("复制诊断信息"),
+    );
+    if (!row) throw new Error("no diagnostics row");
+    await act(async () => {
+      row.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(buildDiagnostics).toHaveBeenCalledTimes(1);
+    expect(Clipboard.write).toHaveBeenCalledWith({ string: "diag text" });
+    expect(container.textContent).toContain("已复制");
   });
 
   it("keeps the cloud background reminder off until the person turns it on", async () => {

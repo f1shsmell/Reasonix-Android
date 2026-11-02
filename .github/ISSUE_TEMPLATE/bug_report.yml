@@ -1,0 +1,59 @@
+name: Bug report
+description: 报告 Reasonix For Android 的问题
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不要粘贴配对码、账号 cookie、token、聊天内容或设备私钥。日志请先脱敏。
+  - type: input
+    id: version
+    attributes:
+      label: App 版本
+      description: 设置 → 偏好 → 关于里的版本号，或 Release 的 tag。
+      placeholder: "0.2.2"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 手机与系统
+      description: 型号、Android 版本、WebView 版本（设置 → 偏好 → 复制诊断信息会包含这些）。
+      placeholder: "Pixel 8 / Android 14 / WebView 126"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 连接方式
+      options:
+        - "局域网直连"
+        - "云端 relay"
+        - "未连接 / 连接中"
+        - "不确定"
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: 发生了什么
+      description: 现象和预期分别是什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息或日志
+      description: 优先粘贴「复制诊断信息」的内容；不要包含聊天内容、配对码或 token。
+      render: text

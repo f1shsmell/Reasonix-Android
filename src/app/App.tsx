@@ -27,6 +27,7 @@ import { useLink } from "./useLink";
 import { useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
 import { loadCloudWatch, saveCloudWatch } from "./cloudWatchPref";
+import { buildDiagnostics } from "./diagnostics";
 import { openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
 import "../ui/shell.css";
@@ -123,6 +124,10 @@ export function App() {
     saveCloudWatch(on);
     setCloudWatchState(on);
   }, []);
+  const buildDiagnosticsText = useCallback(
+    () => buildDiagnostics({ link: link.state, snapshot, cloudWatch }),
+    [link.state, snapshot, cloudWatch],
+  );
 
   // Coming back from a failed or retried link is the moment the lists are
   // most likely to be stale: the old read may have gone through a dead door.
@@ -735,6 +740,7 @@ export function App() {
         machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
+        buildDiagnostics={buildDiagnosticsText}
       />
     );
   } else if (showConnect) {
@@ -755,6 +761,7 @@ export function App() {
         machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
+        buildDiagnostics={buildDiagnosticsText}
       />
     );
   } else if (openRuntime) {

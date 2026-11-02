@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安装与发版
+    url: https://github.com/f1shsmell/Reasonix-Android/blob/main/RELEASING.md
+    about: 版本号、签名、latest.json 和 Release 流程。
+  - name: 安全漏洞
+    url: https://github.com/f1shsmell/Reasonix-Android/blob/main/SECURITY.md
+    about: 请私下报告，不要公开利用细节。
