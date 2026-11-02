@@ -695,6 +695,24 @@ describe("ChatScreen composer", () => {
     );
   });
 
+  it("keeps a long press from opening the copy menu on the mic", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+
+    const mic = container.querySelector('button[aria-label="按住说话"]') as HTMLButtonElement;
+    expect(mic.querySelector("svg")).toBeTruthy();
+    // No text inside the button means the selection engine has nothing to
+    // copy; the context menu is refused as well.
+    expect(mic.textContent?.trim()).toBe("");
+    const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    let allowed = true;
+    await act(async () => {
+      allowed = mic.dispatchEvent(menu);
+    });
+    expect(allowed).toBe(false);
+  });
+
   it("restores a draft left in this pane before an interruption", async () => {
     localStorage.setItem("reasonix.draft.r1", "没发出去的想法");
     stubKernel();

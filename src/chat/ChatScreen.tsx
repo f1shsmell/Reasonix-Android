@@ -1816,9 +1816,27 @@ export function ChatScreen({
               onPointerMove={voiceMove}
               onPointerUp={voiceUp}
               onPointerCancel={voiceUp}
+              onContextMenu={(event) => event.preventDefault()}
               disabled={runtime.readOnly === true}
             >
-              {voice && !voice.ended ? "●" : "◉"}
+              {voice && !voice.ended ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z" />
+                  <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+                </svg>
+              )}
             </button>
           ) : null}
           {runtime.readOnly ? (
