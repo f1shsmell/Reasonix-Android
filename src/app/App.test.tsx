@@ -170,6 +170,8 @@ vi.mock("../net/submit", () => ({ submit: vi.fn() }));
 vi.mock("../native/turn", () => ({
   startTurnNotification: vi.fn(),
   stopTurnNotification: vi.fn(),
+  startCloudWatch: vi.fn(),
+  stopCloudWatch: vi.fn(),
   loadBackgroundStatus: vi.fn(async () => null),
   openBatterySettings: vi.fn(),
   openNotificationSettings: vi.fn(),

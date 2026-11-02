@@ -821,6 +821,11 @@ export function relayAlive(): boolean {
   return activeLink !== null && !activeLink.isEnded;
 }
 
+/** The device the relay is bound to, even while it is reconnecting. */
+export function relayDevice(): string | null {
+  return activeLink?.device ?? null;
+}
+
 /** Stop routing kernel requests through the relay (a LAN connection took over). */
 export function clearRelayRouting(): void {
   const link = activeLink;

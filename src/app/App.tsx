@@ -11,7 +11,7 @@ import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import { submit } from "../net/submit";
 import type { SubmitResult } from "../net/submit";
-import { startTurnNotification } from "../native/turn";
+import { startTurnNotification, startCloudWatch, stopCloudWatch } from "../native/turn";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice, loadStandDown } from "../net/relayStore";
@@ -25,6 +25,7 @@ import { closeTopSheet } from "./backStack";
 import { useLink } from "./useLink";
 import { useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
+import { loadCloudWatch, saveCloudWatch } from "./cloudWatchPref";
 import { openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
 import "../ui/shell.css";
@@ -114,6 +115,13 @@ export function App() {
   const tree = useTree();
   const pending = useNeedsYou(snapshot.runtimes, tree.projects, tree.revision);
   const link = useLink(connection);
+  /** Cloud background reminders; default off and only meaningful on a cloud link. */
+  const [cloudWatch, setCloudWatchState] = useState(() => loadCloudWatch());
+  const cloudWatchRunning = useRef(false);
+  const pickCloudWatch = useCallback((on: boolean) => {
+    saveCloudWatch(on);
+    setCloudWatchState(on);
+  }, []);
 
   // Coming back from a failed or retried link is the moment the lists are
   // most likely to be stale: the old read may have gone through a dead door.
@@ -261,30 +269,41 @@ export function App() {
     syncFleet,
   ]);
 
+  const hasWatchedTurns =
+    pending.items.length > 0 ||
+    pending.running.length > 0 ||
+    fleet.pending.length > 0 ||
+    fleet.running.length > 0;
+
   // The native watcher discovers every open pane itself; a running or
   // blocked pane on this computer *or another watched one* is the trigger
-  // that makes sure it exists. Only the LAN proxy is reachable from native
-  // code; relay fetches live in the WebView, so a cloud link has no
-  // background status to poll yet.
+  // that makes sure it exists. It polls the LAN proxy directly; a cloud link
+  // has its own foreground watcher, armed by the switch below.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    if (link.state.mode !== "lan") return;
-    if (
-      pending.items.length === 0 &&
-      pending.running.length === 0 &&
-      fleet.pending.length === 0 &&
-      fleet.running.length === 0
-    ) {
-      return;
-    }
+    if (link.state.mode !== "lan" || !hasWatchedTurns) return;
     startTurnNotification({ mode: "lan" });
-  }, [
-    pending.items.length,
-    pending.running.length,
-    fleet.pending.length,
-    fleet.running.length,
-    link.state.mode,
-  ]);
+  }, [link.state.mode, hasWatchedTurns]);
+
+  /**
+   * Start the cloud watcher while the app is still in the foreground.
+   *
+   * Android 12+ refuses a foreground-service start from the background, so the
+   * switch has to arm it here. The service itself skips polling while the app
+   * is visible and takes over when it goes away.
+   *
+   * Both watchers share TurnService. When the link changes to LAN with a turn
+   * to watch, the LAN effect above has already re-armed the service; stopping
+   * it here would kill that watch, so the stop is skipped.
+   */
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const wanted = cloudWatch && link.state.mode === "cloud";
+    if (wanted === cloudWatchRunning.current) return;
+    cloudWatchRunning.current = wanted;
+    if (wanted) startCloudWatch();
+    else if (!(link.state.mode === "lan" && hasWatchedTurns)) stopCloudWatch();
+  }, [cloudWatch, link.state.mode, hasWatchedTurns]);
 
   const [actionError, setActionError] = useState("");
   /** A peer notification waits for the boot link to settle before switching. */
@@ -707,6 +726,8 @@ export function App() {
         onDisconnected={link.noteDisconnected}
         link={link.state}
         machineBase={snapshot.runtimes[0]?.base}
+        cloudWatch={cloudWatch}
+        onCloudWatchChange={pickCloudWatch}
       />
     );
   } else if (showConnect) {
@@ -725,6 +746,8 @@ export function App() {
         }}
         link={link.state}
         machineBase={snapshot.runtimes[0]?.base}
+        cloudWatch={cloudWatch}
+        onCloudWatchChange={pickCloudWatch}
       />
     );
   } else if (openRuntime) {

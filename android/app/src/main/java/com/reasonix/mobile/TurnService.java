@@ -10,7 +10,9 @@ import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 
@@ -41,9 +43,10 @@ import java.util.concurrent.TimeUnit;
  * completion; the ongoing notification summarizes the rest. The desktop still
  * owns the turns: this is a watcher, not a transport.
  *
- * A phone cannot see a pane the desktop never opened, and a cloud computer is
- * out of reach until relay links can coexist. Both limits are stated rather
- * than hidden.
+ * A phone cannot see a pane the desktop never opened. LAN turns are read
+ * through the loopback proxy; a persistent cloud watcher asks the WebView's
+ * relay bridge for one snapshot at a time, so it only lives while the app
+ * process and its WebView do. Both limits are stated rather than hidden.
  */
 public class TurnService extends Service {
     static final String ACTION_START = "com.reasonix.mobile.TURN_START";
@@ -52,9 +55,11 @@ public class TurnService extends Service {
     static final String EXTRA_ROOT = "root";
     static final String EXTRA_RUNTIME = "runtime";
     static final String EXTRA_MODE = "mode";
+    static final String EXTRA_CLOUD = "cloud";
 
     private static final String TAG = "ReasonixTurn";
     private static final String CHANNEL_RUNNING = "turn_running";
+    private static final String CHANNEL_CLOUD = "turn_cloud";
     private static final String CHANNEL_DONE = "turn_done";
     private static final String CHANNEL_ASK = "turn_ask";
     private static final int RUNNING_ID = 4101;
@@ -70,6 +75,9 @@ public class TurnService extends Service {
     private static final int OFFLINE_AFTER = 3;
     private static final long WAKE_LOCK_MS = 30 * 60 * 1000L;
     private static final long WATCH_POLL_MS = 5000L;
+    private static final long CLOUD_POLL_MS = 60_000L;
+    private static final long CLOUD_TIMEOUT_MS = 20_000L;
+    private static final long CLOUD_WAKE_MS = 25_000L;
     /** Ten minutes without one answer means the computer is gone, not slow. */
     private static final long QUIET_STOP_MS = 10 * 60 * 1000L;
     private static final int MAX_BODY = 512 * 1024;
@@ -119,6 +127,15 @@ public class TurnService extends Service {
     private WifiManager.WifiLock wifiLock;
     /** "lan" or "cloud"; names the link in the ongoing summary. */
     private volatile String mode = "";
+    /** True for the persistent cloud watcher; false for a LAN turn. */
+    private volatile boolean cloud = false;
+    private volatile boolean cloudPending = false;
+    private volatile int cloudGeneration = 0;
+    private volatile int cloudMisses = 0;
+    private PowerManager.WakeLock cloudWakeLock;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /** The running watcher, for the WebView's result bridge. */
+    private static volatile TurnService active;
     private volatile int pollFailures = 0;
     private volatile boolean stopping = false;
     private ScheduledExecutorService watcher;
@@ -137,6 +154,7 @@ public class TurnService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        active = this;
         createChannels();
     }
 
@@ -145,8 +163,25 @@ public class TurnService extends Service {
         completed = false;
         stopping = false;
         lastAnswerAt = System.currentTimeMillis();
+        boolean nextCloud = intent != null && intent.getBooleanExtra(EXTRA_CLOUD, false);
+        if (nextCloud != cloud) {
+            cloud = nextCloud;
+            stopWatching();
+            cancelAsks();
+            watches.clear();
+            cloudPending = false;
+            cloudGeneration += 1;
+            cloudMisses = 0;
+            pollFailures = 0;
+            releaseCloudWakeLock();
+            if (cloud) {
+                releaseWakeLock();
+                releaseWifiLock();
+            }
+        }
         String nextMode = extra(intent, EXTRA_MODE);
         if (!nextMode.isEmpty()) mode = nextMode;
+        if (cloud) mode = "cloud";
         // A start from the open chat seeds one pane; discovery adds the rest
         // and replaces this row with the kernel's own labels when it answers.
         String nextBase = extra(intent, EXTRA_BASE);
@@ -176,22 +211,32 @@ public class TurnService extends Service {
             stopSelf(startId);
             return START_NOT_STICKY;
         }
-        acquireWakeLock();
-        acquireWifiLock();
+        if (cloud) {
+            // A persistent watcher takes a short lock per poll instead of
+            // holding the CPU and Wi-Fi awake all day.
+            releaseWakeLock();
+            releaseWifiLock();
+        } else {
+            acquireWakeLock();
+            acquireWifiLock();
+        }
         startWatching();
         return START_NOT_STICKY;
     }
-
     @Override
     public void onDestroy() {
         // A poll already in flight must not re-post notifications after
         // stopForeground has removed them.
         stopping = true;
+        cloudPending = false;
+        cloudGeneration += 1;
         stopWatching();
         cancelAsks();
         clearCounts();
         releaseWakeLock();
         releaseWifiLock();
+        releaseCloudWakeLock();
+        if (active == this) active = null;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
@@ -246,16 +291,26 @@ public class TurnService extends Service {
     private synchronized void startWatching() {
         if (watcher == null) {
             watcher = Executors.newSingleThreadScheduledExecutor();
-            watcher.scheduleWithFixedDelay(() -> {
-                try {
-                    pollAll();
-                } catch (Exception e) {
-                    // A poll that failed is not an answer; keep the last state.
-                    Log.w(TAG, "watch poll failed", e);
-                }
-            }, 500, WATCH_POLL_MS, TimeUnit.MILLISECONDS);
+            if (cloud) {
+                watcher.scheduleWithFixedDelay(() -> {
+                    try {
+                        pollCloud();
+                    } catch (Exception e) {
+                        Log.w(TAG, "cloud watch poll failed", e);
+                    }
+                }, 5_000, CLOUD_POLL_MS, TimeUnit.MILLISECONDS);
+            } else {
+                watcher.scheduleWithFixedDelay(() -> {
+                    try {
+                        pollAll();
+                    } catch (Exception e) {
+                        // A poll that failed is not an answer; keep the last state.
+                        Log.w(TAG, "watch poll failed", e);
+                    }
+                }, 500, WATCH_POLL_MS, TimeUnit.MILLISECONDS);
+            }
         }
-        if (peerWatcher == null) {
+        if (!cloud && peerWatcher == null) {
             peerWatcher = Executors.newSingleThreadScheduledExecutor();
             peerWatcher.scheduleWithFixedDelay(() -> {
                 try {
@@ -353,6 +408,119 @@ public class TurnService extends Service {
             idlePolls = 0;
         }
         refreshRunning();
+    }
+
+    /**
+     * Ask the WebView for one cloud snapshot.
+     *
+     * The relay is a WebView transport; native code only evaluates the bridge
+     * installed by `net/cloudWatch.ts`. The visible app polls itself, so this
+     * is skipped while the activity is on screen.
+     */
+    private void pollCloud() {
+        if (stopping || !cloud) return;
+        if (MainActivity.visible) return;
+        if (cloudPending) return;
+        if (!MainActivity.requestCloudSweep()) {
+            if (++cloudMisses >= 2) stopSelf();
+            return;
+        }
+        cloudPending = true;
+        int generation = ++cloudGeneration;
+        acquireCloudWakeLock();
+        mainHandler.postDelayed(() -> {
+            if (!cloudPending || generation != cloudGeneration || stopping) return;
+            cloudPending = false;
+            releaseCloudWakeLock();
+            cloudMisses = 0;
+            notePoll(false);
+            refreshRunning();
+        }, CLOUD_TIMEOUT_MS);
+    }
+
+    /** The WebView's result bridge; called on its own thread. */
+    static void deliverCloud(String json) {
+        TurnService service = active;
+        if (service != null) service.onCloudSnapshot(json);
+    }
+
+    /** The app just went to the background; do not wait out the next minute. */
+    static void wakeCloud() {
+        TurnService service = active;
+        if (service != null) service.pollCloudSoon();
+    }
+
+    private void pollCloudSoon() {
+        if (!cloud) return;
+        mainHandler.postDelayed(this::pollCloud, 500);
+    }
+
+    private void onCloudSnapshot(String json) {
+        mainHandler.post(() -> handleCloudSnapshot(json));
+    }
+
+    private void handleCloudSnapshot(String json) {
+        if (stopping || !cloud) return;
+        if (!cloudPending) return;
+        cloudPending = false;
+        releaseCloudWakeLock();
+        CloudSnapshot snapshot = CloudSnapshot.parse(json);
+        if (!snapshot.ok) {
+            cloudMisses = 0;
+            notePoll(false);
+            refreshRunning();
+            return;
+        }
+
+        Set<String> seen = new HashSet<>();
+        for (RuntimeList.Row row : snapshot.runtimes) {
+            seen.add(row.id);
+            Watch watch = watches.get(row.id);
+            if (watch == null) {
+                watches.put(row.id, new Watch(
+                        row.id, row.id, row.base, row.root, row.title, "", "", row.readOnly));
+            } else {
+                watch.update(row.base, row.root, row.title);
+                watch.readOnly = row.readOnly;
+            }
+        }
+        for (String id : new ArrayList<>(watches.keySet())) {
+            if (seen.contains(id)) continue;
+            Watch gone = watches.remove(id);
+            if (gone != null) finishWatch(gone);
+        }
+        for (Watch watch : watches.values()) {
+            String status = snapshot.statuses.get(watch.runtime);
+            if (status != null) applyStatus(watch, AskStatus.parse(status));
+        }
+        cloudMisses = 0;
+        notePoll(true);
+        refreshRunning();
+    }
+
+    /** The one place a status becomes notification state, LAN or cloud. */
+    private void applyStatus(Watch watch, AskStatus status) {
+        boolean wasRunning = watch.running;
+        watch.running = status.running;
+        watch.waiting = !status.empty() && !watch.readOnly;
+        syncAsk(watch, status);
+        if (wasRunning && !status.running && !MainActivity.visible) {
+            notifyFinished(watch);
+        }
+    }
+
+    private void acquireCloudWakeLock() {
+        if (cloudWakeLock != null && cloudWakeLock.isHeld()) return;
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (power == null) return;
+        cloudWakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "reasonix:cloud-watch");
+        cloudWakeLock.setReferenceCounted(false);
+        cloudWakeLock.acquire(CLOUD_WAKE_MS);
+    }
+
+    private void releaseCloudWakeLock() {
+        if (cloudWakeLock != null && cloudWakeLock.isHeld()) cloudWakeLock.release();
+        cloudWakeLock = null;
     }
 
     /**
@@ -492,13 +660,7 @@ public class TurnService extends Service {
                 body = readText(input);
             }
             AskStatus status = AskStatus.parse(body);
-            boolean wasRunning = watch.running;
-            watch.running = status.running;
-            watch.waiting = !status.empty() && !watch.readOnly;
-            syncAsk(watch, status);
-            if (wasRunning && !status.running && !MainActivity.visible) {
-                notifyFinished(watch);
-            }
+            applyStatus(watch, status);
             return true;
         } catch (Exception e) {
             // The next tick tries again; a dead pane must not kill the rest.
@@ -723,6 +885,11 @@ public class TurnService extends Service {
                 CHANNEL_RUNNING, "运行中的会话", NotificationManager.IMPORTANCE_LOW);
         running.setShowBadge(false);
         manager.createNotificationChannel(running);
+        NotificationChannel cloud = new NotificationChannel(
+                CHANNEL_CLOUD, "云端后台提醒", NotificationManager.IMPORTANCE_LOW);
+        cloud.setDescription("App 在后台时留意云端会话");
+        cloud.setShowBadge(false);
+        manager.createNotificationChannel(cloud);
         NotificationChannel done = new NotificationChannel(
                 CHANNEL_DONE, "会话完成", NotificationManager.IMPORTANCE_DEFAULT);
         manager.createNotificationChannel(done);
@@ -752,10 +919,13 @@ public class TurnService extends Service {
             } else if (running > 0) {
                 text = where + running + " 个会话运行中";
             } else {
-                text = watches.isEmpty() ? "正在准备…" : "没有正在运行的会话";
+                text = watches.isEmpty()
+                        ? ("cloud".equals(mode) ? "后台提醒已开启，App 在后台时留意" : "正在准备…")
+                        : "没有正在运行的会话";
             }
         }
-        return new Notification.Builder(this, CHANNEL_RUNNING)
+        String channel = "cloud".equals(mode) ? CHANNEL_CLOUD : CHANNEL_RUNNING;
+        return new Notification.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
                 .setContentText(text)

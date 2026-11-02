@@ -2,7 +2,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { installCloudWatchBridge } from "../net/cloudWatch";
 import { applyTheme, loadTheme } from "./theme";
+
+/**
+ * The service asks this page for cloud status while the app is backgrounded;
+ * install the entry point before the first render so it is never missing.
+ */
+installCloudWatchBridge();
 
 /**
  * The remembered appearance is applied before the first paint.
