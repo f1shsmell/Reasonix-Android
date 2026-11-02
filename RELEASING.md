@@ -29,7 +29,8 @@
    - tag 必须在 `main` 上；
    - 必须存在 `release-notes/android/X.Y.Z.md`；
    - `package.json` 与 `android/gradle.properties` 的版本必须等于 tag；
-   - `latest.json` 的 tag、version、versionCode、APK 名和说明必须与这次发布一致；
+   - `latest.json` 的 tag、version、versionCode、APK 名和说明必须与这次发布一致，
+     镜像和 App 里的仓库名必须指向本仓库；
    - GitHub Release 的正文直接使用这份发布说明，不自动生成。
 7. 发布失败可用 `workflow_dispatch` 输入**已存在的 tag** 重跑；重跑会替换同名资产，不会另起一个版本。
    勾选 `dry_run` 则只还原密钥、构建 `assembleRelease` 并验签，不发布、不碰已有资产。

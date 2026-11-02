@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repo = "f1hsmell/Reasonix-Android";
+const repo = "f1shsmell/Reasonix-Android";
 const mirrors = ["https://gh-proxy.com/", "https://ghfast.top/"];
 
 const { version } = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
