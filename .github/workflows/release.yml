@@ -113,7 +113,23 @@ jobs:
           manifest = json.loads(raw)
           notes = read(f"release-notes/android/{version}.md").replace("\r\n", "\n").strip()
           apk = f"reasonix-for-android-{version}.apk"
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
           problems = []
+          # The app and the manifest both name the owner; a typo here sends every
+          # check to a 404 and ships a manifest whose mirrors do too.
+          if repo:
+              for path in ("android/app/src/main/java/com/reasonix/mobile/UpdaterPlugin.java",
+                           "scripts/latest-json.mjs"):
+                  if f'"{repo}"' not in read(path):
+                      problems.append(f"{path} does not name {repo}")
+              expected = f"https://github.com/{repo}/releases/download/v{version}/{apk}"
+              mirrors = manifest.get("mirrors")
+              if not isinstance(mirrors, list) or not mirrors:
+                  problems.append("mirrors are missing")
+              else:
+                  for mirror in mirrors:
+                      if not isinstance(mirror, str) or expected not in mirror:
+                          problems.append(f"mirror {mirror!r} does not point at {expected}")
           if manifest.get("tag") != f"v{version}":
               problems.append(f"tag is {manifest.get('tag')!r}, expected v{version}")
           if manifest.get("version") != version:

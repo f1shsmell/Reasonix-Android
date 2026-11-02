@@ -49,7 +49,7 @@ import okhttp3.ResponseBody;
  */
 @CapacitorPlugin(name = "Updater")
 public class UpdaterPlugin extends Plugin {
-    static final String REPO = "f1hsmell/Reasonix-Android";
+    static final String REPO = "f1shsmell/Reasonix-Android";
 
     private static final String BRANCH = "main";
     private static final String[] MIRRORS = {

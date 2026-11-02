@@ -26,9 +26,9 @@ public class UpdateManifestTest {
         assertEquals("修复连接", manifest.notes());
         assertEquals(1, manifest.mirrors().size());
         assertEquals(
-                "https://github.com/f1hsmell/Reasonix-Android/releases/download/v0.2.2/"
+                "https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.2.2/"
                         + "reasonix-for-android-0.2.2.apk",
-                manifest.apkUrl("f1hsmell/Reasonix-Android"));
+                manifest.apkUrl("f1shsmell/Reasonix-Android"));
     }
 
     @Test
