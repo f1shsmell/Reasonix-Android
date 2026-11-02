@@ -92,6 +92,16 @@ public class AskStatusTest {
     }
 
     @Test
+    public void keepsTheOpenActionForAMultiQuestionForm() {
+        AskStatus form = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d6\",\"kind\":\"ask\",\"questions\":["
+                        + "{\"id\":\"q1\",\"options\":[{\"label\":\"a\"}]},"
+                        + "{\"id\":\"q2\",\"options\":[{\"label\":\"b\"}]}]}]}");
+
+        assertEquals(null, form.choice);
+    }
+
+    @Test
     public void keepsTheOpenActionForAMultiSelectOrLongQuestion() {
         AskStatus multi = AskStatus.parse(
                 "{\"decisions\":[{\"id\":\"d3\",\"kind\":\"ask\",\"questions\":[{"
