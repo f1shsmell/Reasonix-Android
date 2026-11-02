@@ -29,6 +29,8 @@ export interface BackgroundStatus {
 interface TurnNotificationsPlugin {
   start(options: TurnLink): Promise<void>;
   stop(options: { completed?: boolean }): Promise<void>;
+  startCloudWatch(): Promise<void>;
+  stopCloudWatch(): Promise<void>;
   backgroundStatus(): Promise<BackgroundStatus>;
   openBatterySettings(): Promise<void>;
   openNotificationSettings(): Promise<void>;
@@ -52,6 +54,21 @@ export function startTurnNotification(link: TurnLink = {}): void {
 export function stopTurnNotification(completed = false): void {
   if (!Capacitor.isNativePlatform()) return;
   void TurnNotifications.stop({ completed }).catch(() => {
+    // Nothing to do; the service stops with the process anyway.
+  });
+}
+
+/** Start the persistent cloud watcher; the caller must be in the foreground. */
+export function startCloudWatch(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void TurnNotifications.startCloudWatch().catch(() => {
+    // The switch stays on; the next foreground change retries.
+  });
+}
+
+export function stopCloudWatch(): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void TurnNotifications.stopCloudWatch().catch(() => {
     // Nothing to do; the service stops with the process anyway.
   });
 }

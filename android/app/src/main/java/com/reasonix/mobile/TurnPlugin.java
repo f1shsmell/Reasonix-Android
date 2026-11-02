@@ -45,18 +45,46 @@ public class TurnPlugin extends Plugin {
         if (runtime != null && !runtime.isEmpty()) intent.putExtra(TurnService.EXTRA_RUNTIME, runtime);
         String mode = call.getString("mode");
         if (mode != null && !mode.isEmpty()) intent.putExtra(TurnService.EXTRA_MODE, mode);
+        launch(intent);
+        call.resolve(new JSObject());
+    }
+
+    /**
+     * The persistent cloud watcher.
+     *
+     * It has to be started while the app is in the foreground: Android 12+
+     * refuses a foreground-service start from the background. The service
+     * itself skips polling while this activity is visible.
+     */
+    @PluginMethod
+    public void startCloudWatch(PluginCall call) {
+        requestNotificationPermission();
+        Intent intent = new Intent(getContext(), TurnService.class);
+        intent.setAction(TurnService.ACTION_START);
+        intent.putExtra(TurnService.EXTRA_CLOUD, true);
+        intent.putExtra(TurnService.EXTRA_MODE, "cloud");
+        launch(intent);
+        call.resolve(new JSObject());
+    }
+
+    @PluginMethod
+    public void stopCloudWatch(PluginCall call) {
+        getContext().stopService(new Intent(getContext(), TurnService.class));
+        call.resolve(new JSObject());
+    }
+
+    private void launch(Intent intent) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent);
+                getContext().startForegroundService(intent);
             } else {
-                context.startService(intent);
+                getContext().startService(intent);
             }
         } catch (RuntimeException e) {
             // A background start can be refused; the turn still runs, and the
             // next foreground entry will try again.
             Log.w(TAG, "cannot start the turn service", e);
         }
-        call.resolve(new JSObject());
     }
 
     @PluginMethod

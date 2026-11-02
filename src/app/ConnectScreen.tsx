@@ -100,6 +100,9 @@ export interface ConnectScreenProps {
   link?: LinkState;
   /** A runtime base for the machine panel's per-session reads. */
   machineBase?: string | undefined;
+  /** Cloud background reminders, owned by App because the service follows the link. */
+  cloudWatch?: boolean;
+  onCloudWatchChange?: (on: boolean) => void;
 }
 
 /**
@@ -163,7 +166,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -1311,6 +1314,19 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             <span className="setting-title">震动</span>
             <Switch checked={haptics} onChange={pickHaptics} ariaLabel="震动" />
           </div>
+          {Capacitor.isNativePlatform() && onCloudWatchChange ? (
+            <div className="setting">
+              <span className="setting-main">
+                <span className="setting-title">云端后台提醒</span>
+                <span className="setting-sub">App 在后台时留意云端会话；滑掉任务后失效</span>
+              </span>
+              <Switch
+                checked={cloudWatch ?? false}
+                onChange={onCloudWatchChange}
+                ariaLabel="云端后台提醒"
+              />
+            </div>
+          ) : null}
         </section>
 
         {background ? (

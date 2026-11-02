@@ -197,6 +197,40 @@ describe("ConnectScreen native pairing", () => {
     expect(container.textContent).not.toContain("配对没有完成");
   });
 
+  it("keeps the cloud background reminder off until the person turns it on", async () => {
+    const onCloudWatchChange = vi.fn<(on: boolean) => void>();
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <ConnectScreen
+          onConnected={onConnected}
+          onFailed={onFailed}
+          cloudWatch={false}
+          onCloudWatchChange={onCloudWatchChange}
+        />,
+      );
+    });
+    const prefs = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === "偏好",
+    );
+    if (!prefs) throw new Error("no prefs tab");
+    await act(async () => {
+      prefs.click();
+      await Promise.resolve();
+    });
+
+    const toggle = container.querySelector(
+      '[role="switch"][aria-label="云端后台提醒"]',
+    ) as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    expect(onCloudWatchChange).toHaveBeenCalledWith(true);
+  });
+
   it("adopts a cookie the page left after spending the code", async () => {
     vi.mocked(configureProxy).mockImplementation(async (origin, code) => {
       if (code) throw new ProxyError(403, "device.pairing_invalid");
