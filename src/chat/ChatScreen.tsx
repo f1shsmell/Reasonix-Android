@@ -25,6 +25,8 @@ import { useStreamHaptics } from "./streamHaptics";
 import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
+import { loadEnterPref } from "../app/enterPref";
+import type { EnterPref } from "../app/enterPref";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
 import { beginSpeechHold, speechSupported, type SpeechHold, type SpeechSession } from "../native/speech";
@@ -818,6 +820,8 @@ export function ChatScreen({
   // Read once per mount: the settings screen replaces this one, so returning
   // from it is a fresh mount and must not need an event to notice the change.
   const [fold] = useState(loadFoldMode);
+  /** Read once: the composer is remounted per conversation, settings apply next mount. */
+  const [enterPref] = useState<EnterPref>(loadEnterPref);
   /** The run whose timeline is open, or one long thought. */
   const [process, setProcess] = useState<{ title: string; steps: ProcessStep[] } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1364,12 +1368,22 @@ export function ChatScreen({
       // A pinyin keyboard uses Enter to accept a candidate, which arrives as
       // composing input (IME keyCode 229); sending then would ship half a word.
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (event.key !== "Enter") return;
+      if (enterPref === "newline") {
+        // The hardware-keyboard convention: Enter breaks the line, the
+        // modifier sends. Shift stays a line break either way.
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          if (send.kind !== "sending" && draft.trim()) void doSend(draft);
+        }
+        return;
+      }
+      if (!event.shiftKey) {
         event.preventDefault();
         if (send.kind !== "sending" && draft.trim()) void doSend(draft);
       }
     },
-    [draft, doSend, send.kind],
+    [draft, doSend, enterPref, send.kind],
   );
 
   /**

@@ -77,6 +77,8 @@ import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/fol
 import type { FoldMode } from "../chat/folding";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
 import type { NetPolicy } from "./netpref";
+import { ENTER_CHOICES, ENTER_NOTE, loadEnterPref, saveEnterPref } from "./enterPref";
+import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
 import { swipeDirection } from "./swipe";
 
@@ -180,6 +182,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [paneDir, setPaneDir] = useState<"none" | "forward" | "back">("none");
   /** How the proxy reaches a LAN computer while a VPN is active. */
   const [netPolicy, setNetPolicyState] = useState<NetPolicy>(() => loadNetPolicy());
+  /** What Enter does in the composer: send, or a line break for hardware keyboards. */
+  const [enterPref, setEnterPrefState] = useState<EnterPref>(() => loadEnterPref());
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -354,6 +358,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     // The proxy is the enforcer; the local store only remembers the choice.
     // An old native build has no route for this and the tap still sticks.
     void setNetworkPolicy(policy).catch(() => {});
+  }, []);
+
+  const pickEnterPref = useCallback((pref: EnterPref) => {
+    setEnterPrefState(pref);
+    saveEnterPref(pref);
   }, []);
 
   const connect = useCallback(
@@ -1219,8 +1228,17 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               onChange={pickFold}
             />
           </div>
+          <div className="setting">
+            <span className="setting-title">Enter 键</span>
+            <Segmented
+              ariaLabel="Enter 键行为"
+              value={enterPref}
+              options={ENTER_CHOICES}
+              onChange={pickEnterPref}
+            />
+          </div>
         </section>
-        <p className="group-note">只影响这台手机。{FOLD_NOTE}</p>
+        <p className="group-note">只影响这台手机。{FOLD_NOTE} {ENTER_NOTE}</p>
 
         {background ? (
           <>
