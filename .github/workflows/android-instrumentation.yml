@@ -1,0 +1,55 @@
+name: android-instrumentation
+
+# The native smoke test needs a device: the loopback proxy's cookie and Origin
+# checks cannot be exercised from a JVM test. Path-filtered so ordinary web
+# changes do not pay for an emulator.
+on:
+  pull_request:
+    paths:
+      - "android/**"
+      - "src/native/**"
+      - "capacitor.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/android-instrumentation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-instrumentation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    name: Android · instrumented smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npm run build
+      - name: Copy the web bundle into the Android shell
+        run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: cd android && chmod +x gradlew && ./gradlew :app:connectedDebugAndroidTest --console=plain

@@ -104,6 +104,8 @@ export interface ConnectScreenProps {
   /** Cloud background reminders, owned by App because the service follows the link. */
   cloudWatch?: boolean;
   onCloudWatchChange?: (on: boolean) => void;
+  /** The About page's copy-diagnostics text, built by App from its live state. */
+  buildDiagnostics?: () => Promise<string>;
 }
 
 /**
@@ -167,7 +169,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, buildDiagnostics }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -198,6 +200,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [enterPref, setEnterPrefState] = useState<EnterPref>(() => loadEnterPref());
   /** Whether held rows, picked-up projects and streamed answers buzz. */
   const [haptics, setHapticsState] = useState(() => loadHaptics());
+  /** The copy-diagnostics row's last result. */
+  const [diagStatus, setDiagStatus] = useState("");
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -1372,6 +1376,28 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </div>
           {Capacitor.isNativePlatform() ? (
             <UpdateRow status={updater.status} onAction={updater.act} />
+          ) : null}
+          {buildDiagnostics ? (
+            <button
+              type="button"
+              className="setting"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await Clipboard.write({ string: await buildDiagnostics() });
+                    setDiagStatus("已复制");
+                  } catch {
+                    setDiagStatus("复制失败");
+                  }
+                })();
+              }}
+            >
+              <span className="setting-main">
+                <span className="setting-title">复制诊断信息</span>
+                <span className="setting-sub">版本、网络、WebView 和最近错误；不含聊天内容</span>
+              </span>
+              <span className="setting-value">{diagStatus || "复制"}</span>
+            </button>
           ) : null}
         </section>
           </>

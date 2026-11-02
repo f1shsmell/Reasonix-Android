@@ -1,0 +1,36 @@
+name: Feature request
+description: 提议一个功能或体验改进
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 现在哪里不方便？别只写方案。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的做法
+      description: 界面、行为或连接层面的建议。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 现在怎么绕过去？有没有更小的做法？
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 涉及范围
+      options:
+        - "界面 / 设置"
+        - "连接 / 后台"
+        - "通知 / 更新"
+        - "原生壳 / 性能"
+        - "其他"
+    validations:
+      required: true

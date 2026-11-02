@@ -108,6 +108,33 @@ public class TurnPlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** The settings page's copy-diagnostics row: version, device, permissions. */
+    @PluginMethod
+    public void diagnostics(PluginCall call) {
+        Context context = getContext();
+        JSObject result = new JSObject();
+        try {
+            android.content.pm.PackageInfo info = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0);
+            result.put("version", info.versionName);
+            result.put("build", Build.VERSION.SDK_INT >= 28
+                    ? info.getLongVersionCode() : info.versionCode);
+        } catch (PackageManager.NameNotFoundException e) {
+            // The app's own package is always installed; leave the fields out.
+        }
+        result.put("android", Build.VERSION.RELEASE);
+        result.put("sdk", Build.VERSION.SDK_INT);
+        result.put("model", Build.MODEL);
+        result.put("manufacturer", Build.MANUFACTURER);
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        result.put("exempt",
+                power != null && power.isIgnoringBatteryOptimizations(context.getPackageName()));
+        NotificationManager notifications =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        result.put("notifications", notifications != null && notifications.areNotificationsEnabled());
+        call.resolve(result);
+    }
+
     @PluginMethod
     public void openBatterySettings(PluginCall call) {
         openSystemSettings(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), call);
