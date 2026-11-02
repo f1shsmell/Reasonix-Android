@@ -1014,7 +1014,7 @@ export function Home({
             aria-label="派任务"
             disabled={link.phase !== "connected" || tree.projects.length === 0}
           >
-            <StudioIcon name="arrow" />
+            <StudioIcon name="send" />
           </button>
         ) : null}
         <button
@@ -1024,7 +1024,7 @@ export function Home({
           aria-label="新建会话"
           disabled={tree.projects.length === 0}
         >
-          <StudioIcon name="plus" />
+          <StudioIcon name="compose" />
         </button>
         <button type="button" className="iconbtn" onClick={onRefresh} aria-label="刷新">
           <StudioIcon name="refresh" />

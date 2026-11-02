@@ -77,11 +77,11 @@ import {
 import type { BackgroundStatus } from "../native/turn";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
-import { FOLD_CHOICES, FOLD_NOTE, loadFoldMode, saveFoldMode } from "../chat/folding";
+import { FOLD_CHOICES, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
 import type { NetPolicy } from "./netpref";
-import { ENTER_CHOICES, ENTER_NOTE, loadEnterPref, saveEnterPref } from "./enterPref";
+import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
 import { swipeDirection } from "./swipe";
@@ -1035,7 +1035,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           )}
           <div className="settings-title">
             <h1>设置</h1>
-            <span>连接、账号与偏好</span>
           </div>
           {onClose ? (
             <button type="button" className="linkbtn" onClick={onClose}>
@@ -1096,9 +1095,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                 </span>
               </div>
             </section>
-            {config?.vpn ? (
-              <p className="group-note">检测到 VPN/代理，电脑不可达时可把策略改为「绕过代理」。</p>
-            ) : null}
           </>
         ) : null}
 
@@ -1168,9 +1164,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                 );
               })}
             </section>
-            <p className="group-note">
-              点一行切换；按住一行拖动可调整重连顺序；× 移除记录。离开后自动改用云端。
-            </p>
             {config?.origin || config?.mode === "relay" ? (
               <button type="button" className="setting action danger" onClick={() => void disconnect()} disabled={busy !== ""}>
                 断开连接
@@ -1188,7 +1181,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               <span className="setting-title">
                 {busy === "正在打开相机" ? "正在打开相机…" : "扫码连接"}
               </span>
-              <span className="setting-sub">用电脑「设备访问」里的二维码</span>
             </span>
             <span className="chev" aria-hidden="true">
               ›
@@ -1197,24 +1189,17 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <button type="button" className="setting" onClick={() => void pasteLink()} disabled={busy !== ""}>
             <span className="setting-main">
               <span className="setting-title">粘贴链接</span>
-              <span className="setting-sub">从浏览器地址栏复制完整链接</span>
             </span>
             <span className="chev" aria-hidden="true">
               ›
             </span>
           </button>
         </section>
-        <p className="group-note">
-          浏览器能连、App 不能时：在电脑上点「换一个」，把新链接复制到这里。
-        </p>
 
         <details className="group manual-group">
           <summary className="setting manual-summary">
             <span className="setting-main">
               <span className="setting-title">手动填写地址</span>
-              <span className="setting-sub">
-                {origin.trim() ? origin : "填写服务器地址与配对码"}
-              </span>
             </span>
             <span className="chev" aria-hidden="true">
               ›
@@ -1252,9 +1237,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             {busy === "正在连接" ? "正在连接…" : "连接"}
           </button>
         </details>
-        <p className="group-note">
-          配对码 5 分钟内有效，只能用一次。
-        </p>
 
         {busy && busy !== "正在连接" && busy !== "正在打开相机" ? (
           <p className="group-note">{busy}…</p>
@@ -1279,13 +1261,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </div>
         ) : null}
 
-        <details className="group-note">
-          <summary>局域网还是连不上？</summary>
-          <div>
-            用电脑「设备访问」里的局域网二维码，不要手填 8791（那是 Studio 主端口）。仍不通时检查电脑防火墙、
-            是否同一 Wi-Fi、路由器是否开了 AP 隔离或 VPN。
-          </div>
-        </details>
           </>
         ) : null}
 
@@ -1321,7 +1296,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             />
           </div>
         </section>
-        <p className="group-note">只影响这台手机。{FOLD_NOTE} {ENTER_NOTE}</p>
 
         {background ? (
           <>
@@ -1330,11 +1304,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               <button type="button" className="setting" onClick={openNotificationSettings}>
                 <span className="setting-main">
                   <span className="setting-title">通知</span>
-                  <span className="setting-sub">
-                    {background.notifications
-                      ? "已开启，提问和完成会提醒"
-                      : "已关闭，锁屏时收不到提醒"}
-                  </span>
+                </span>
+                <span className="setting-value">
+                  {background.notifications ? "已开启" : "已关闭"}
                 </span>
                 <span className="chev" aria-hidden="true">
                   ›
@@ -1343,20 +1315,15 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               <button type="button" className="setting" onClick={openBatterySettings}>
                 <span className="setting-main">
                   <span className="setting-title">电池优化</span>
-                  <span className="setting-sub">
-                    {background.exempt
-                      ? "已允许后台运行"
-                      : "受限，锁屏后提醒可能被延迟"}
-                  </span>
+                </span>
+                <span className="setting-value">
+                  {background.exempt ? "已允许" : "受限"}
                 </span>
                 <span className="chev" aria-hidden="true">
                   ›
                 </span>
               </button>
             </section>
-            <p className="group-note">
-              两项都放开，锁屏提醒才及时；通知设置里把「需要你处理」频道设为重要。
-            </p>
           </>
         ) : null}
 
@@ -1365,12 +1332,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <div className="setting">
             <span className="setting-title">版本</span>
             <span className="setting-value">{__APP_VERSION__}</span>
-          </div>
-          <div className="setting">
-            <span className="setting-main">
-              <span className="setting-title">协议</span>
-              <span className="setting-sub">客户端只读它认识的字段</span>
-            </span>
           </div>
         </section>
           </>
@@ -1387,7 +1348,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                   <span className="setting-title">
                     {account.user?.label ?? account.user?.handle ?? "已登录"}
                   </span>
-                  <span className="setting-sub">云端连接使用同一个账号</span>
                 </span>
               </div>
               <button type="button" className="setting action danger" onClick={() => void signOut()}>
@@ -1408,17 +1368,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             {signInError}
           </div>
         ) : null}
-        <p className="group-note">
-          {account.signedIn ? "云端连接不受网络限制。" : "登录后可在不同网络下用云端连接；局域网扫码不需要账号。"}
-        </p>
 
         {grant ? (
           <section className="group grant">
-            <p className="group-note">
-              {approved
-                ? "已批准，正在完成登录…"
-                : "用 Reasonix 账号登录，登录后会自动批准这次设备登录。"}
-            </p>
+            {approved ? <p className="group-note">已批准，正在完成登录…</p> : null}
             <div className="code">{grant.userCode}</div>
             {approved ? null : (
               <>
@@ -1497,10 +1450,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                         {device.name ?? device.id}
                         {device.platform ? ` · ${device.platform}` : ""}
                       </span>
-                      <span className="setting-sub">
-                        {ready ? "开启了互联网远程访问" : "未开启远程访问"}
-                      </span>
                     </span>
+                    <span className="setting-value">{ready ? "可远程" : "未开启"}</span>
                     <span className="chev" aria-hidden="true">
                       ›
                     </span>
@@ -1508,7 +1459,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                 );
               })}
             </section>
-        <p className="group-note">同一账号下开启了远程访问的电脑。</p>
           </>
         ) : null}
           </>

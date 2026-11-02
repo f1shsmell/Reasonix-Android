@@ -115,15 +115,14 @@ describe("MachinePanel", () => {
     expect(container.textContent).not.toContain("读不到这台机器的状态");
   });
 
-  it("offers a retry when every read fails", async () => {
+  it("shows nothing when every read fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => missing()));
 
     await render();
 
-    // Every read failing now reads as "nothing to show yet": the panel sits
-    // on the connect pane, where no connection is the common reason, and the
-    // retry would answer the same five dead reads again.
-    expect(container.textContent).toContain("连上电脑后");
-    expect(container.textContent).not.toContain("最近 30 天");
+    // No section answered, so there is no panel to draw. The settings page
+    // already says whether there is a computer; an empty explanation here
+    // repeated it in smaller type.
+    expect(container.textContent).toBe("");
   });
 });
