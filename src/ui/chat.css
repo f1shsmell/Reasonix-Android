@@ -1011,6 +1011,25 @@
   flex: none;
 }
 
+/* A hold is a gesture, not a selection. Without this the WebView draws its
+   text-selection handles over the mic and offers copy once the press is long
+   enough; the glyph is an SVG now, and the control owns the whole press. */
+.composer-bar .iconbtn,
+.composer-bar .send {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.composer-bar .mic {
+  touch-action: none;
+}
+
+.composer-bar .mic svg {
+  width: 20px;
+  height: 20px;
+}
+
 /* Press-and-hold dictation. The live strip sits above the textarea, the
    way a keyboard suggestion bar does; red means the hold is armed to be
    thrown away. */
