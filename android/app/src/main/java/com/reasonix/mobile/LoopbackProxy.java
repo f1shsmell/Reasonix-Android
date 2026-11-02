@@ -746,21 +746,39 @@ public final class LoopbackProxy {
         if ("system".equals(policy) || target == null) {
             return (HttpURLConnection) uri.toURL().openConnection();
         }
-        Network local = "bypass".equals(policy) ? lanNetwork(target) : null;
-        if (local == null) {
-            // auto: bind only when the target is a neighbour of the Wi-Fi, so
-            // a mesh-VPN address rides the tunnel instead of a dead route.
-            local = vpnActive() ? null : lanNetwork(target);
+        // A VPN that owns the default route is exactly when binding to the
+        // Wi-Fi matters: the neighbour is reachable there, not through the
+        // tunnel. A target on no local subnet stays on the default route so a
+        // mesh-VPN address still rides the tunnel.
+        Network local = lanNetwork(target);
+        switch (routeFor(policy, local != null, vpnActive())) {
+            case "direct":
+                return (HttpURLConnection) local.openConnection(uri.toURL());
+            case "no-proxy":
+                return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
+            default:
+                return (HttpURLConnection) uri.toURL().openConnection();
         }
-        if (local != null) {
-            return (HttpURLConnection) local.openConnection(uri.toURL());
-        }
-        if ("auto".equals(policy) && !vpnActive()) {
-            // Not on any directly attached subnet, no VPN: an HTTP proxy would
-            // answer for a private address it cannot see, so bypass it.
-            return (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
-        }
-        return (HttpURLConnection) uri.toURL().openConnection();
+    }
+
+    /**
+     * Which route a kernel connection should take.
+     *
+     * "direct" binds the socket to the Wi-Fi/Ethernet network that already has
+     * the target on-link, which is the only route a VPN does not steal.
+     * "no-proxy" keeps the default route but skips an HTTP proxy that cannot
+     * see a private address. "system" leaves both alone.
+     *
+     * `onLink` comes from [lanNetwork], which only answers while a VPN owns
+     * the default route; without one the default route already reaches the
+     * LAN. `vpn` keeps a mesh-VPN address on the tunnel: it is private by the
+     * same rule as a home router's address, but no local link can reach it.
+     */
+    static String routeFor(String policy, boolean onLink, boolean vpn) {
+        if ("system".equals(policy)) return "system";
+        if (onLink) return "direct";
+        if (!vpn) return "no-proxy";
+        return "system";
     }
 
     /** The IP a LAN share uses, or null for an internet host. */
