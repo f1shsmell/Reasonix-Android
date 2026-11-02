@@ -117,7 +117,9 @@ final class AskStatus {
         }
         if (!"ask".equals(kind)) return null;
         JSONArray questions = decision.optJSONArray("questions");
-        if (questions == null || questions.length() == 0) return null;
+        // One action answers one question; a form cannot be settled from a
+        // notification without leaving the others unanswered.
+        if (questions == null || questions.length() != 1) return null;
         JSONObject question = questions.optJSONObject(0);
         if (question == null || question.optBoolean("multi", false)) return null;
         JSONArray raw = question.optJSONArray("options");
