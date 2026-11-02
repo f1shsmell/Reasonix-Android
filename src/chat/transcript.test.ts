@@ -51,6 +51,19 @@ describe("transcript", () => {
     ]);
   });
 
+  it("confirms the optimistic send when turn_started carries no text", () => {
+    // The kernel names the authored message but does not send its words again;
+    // matching by text alone left every send local and duplicated it on reopen.
+    const pending: Transcript = { ...emptyTranscript, rows: [optimisticUser("hello")] };
+
+    const after = reduce(pending, { kind: "turn_started", msgIndex: 3 });
+
+    expect(after.rows).toHaveLength(1);
+    const row = after.rows[0];
+    if (row?.kind !== "user") throw new Error("expected the optimistic row");
+    expect(row.local).toBe(false);
+  });
+
   it("closes a bubble a dead turn left open", () => {
     // A turn that never reported `turn_done` must not keep absorbing text.
     const result = feed([

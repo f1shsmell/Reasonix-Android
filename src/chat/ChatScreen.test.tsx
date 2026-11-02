@@ -298,6 +298,72 @@ describe("ChatScreen history", () => {
     expect(container.textContent.split("缓存里的问题")).toHaveLength(2);
   });
 
+  it("drops a cached optimistic send history already contains — no ghost message", async () => {
+    // A pane closed before `turn_started` cached the optimistic row; history
+    // then carries the same message under its own id.
+    scheduleSaveRows(["r1"], [
+      { kind: "user", id: "local-1", text: "之前发过的消息", local: true },
+    ]);
+
+    const pending: ((value: Response) => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json([]));
+        if (url.endsWith("/status")) {
+          return Promise.resolve(json({ running: false, busy: false, decisions: [] }));
+        }
+        return new Promise<Response>((done) => pending.push(done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("之前发过的消息");
+
+    await act(async () => {
+      for (const done of pending) {
+        done(json({ messages: [{ role: "user", content: "之前发过的消息", msgIndex: 1 }], total: 1, hasMoreBefore: false }));
+      }
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(container.textContent.split("之前发过的消息")).toHaveLength(2);
+  });
+
+  it("keeps a cached optimistic send history does not have", async () => {
+    scheduleSaveRows(["r1"], [
+      { kind: "user", id: "local-1", text: "这条还没进历史", local: true },
+    ]);
+
+    const pending: ((value: Response) => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json([]));
+        if (url.endsWith("/status")) {
+          return Promise.resolve(json({ running: false, busy: false, decisions: [] }));
+        }
+        return new Promise<Response>((done) => pending.push(done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    await act(async () => {
+      for (const done of pending) {
+        done(json({ messages: [{ role: "user", content: "历史里的另一条", msgIndex: 1 }], total: 1, hasMoreBefore: false }));
+      }
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.textContent).toContain("这条还没进历史");
+    expect(container.textContent).toContain("历史里的另一条");
+  });
+
   it("drops a cached streaming bubble that history has finished — no ghost answer", async () => {
     // Reported on a device: a turn still streaming when the pane was closed
     // reopens with the answer drawn twice. The cache flushed the bubble
