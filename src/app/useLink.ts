@@ -23,14 +23,22 @@ import {
 import type { LinkError, LinkState, LinkStep } from "../net/link";
 import { loadRelayDevice, saveRelayDevice, loadStandDown, saveStandDown, clearStandDown } from "../net/relayStore";
 import {
+  directDoorForMachine,
+  learnConnectionMachine,
   loadConnections,
   latestConnection,
+  machineKey,
   normalizeTarget,
   originName,
   rememberConnection,
 } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
-import { answeringOrigins, readProxyConfig, refreshProxy } from "../net/server";
+import {
+  answeringOrigins,
+  readMachineIdentity,
+  readProxyConfig,
+  refreshProxy,
+} from "../net/server";
 import type { ProxyConfig } from "../net/server";
 
 function reachCode(reach: ConnectionSnapshot["reach"]): string {
@@ -73,16 +81,21 @@ export function orderedDoors(
 ): Door[] {
   const doors: Door[] = [];
   const seen = new Set<string>(skip);
-  const add = (kind: "lan" | "cloud", target: string, name?: string) => {
+  const add = (kind: "lan" | "cloud", target: string, name?: string, machine?: string) => {
     // The key is the normalised target, because that is what a saved row
     // stores and what an attempt records as tried. Comparing raw strings let
     // "http://host:1/" and "http://host:1" be two doors.
     const key = `${kind}:${normalizeTarget(kind, target) || target}`;
     if (!target || seen.has(key)) return;
     seen.add(key);
-    doors.push({ kind, target, ...(name ? { name } : {}) });
+    doors.push({
+      kind,
+      target,
+      ...(name ? { name } : {}),
+      ...(machine ? { machine } : {}),
+    });
   };
-  for (const row of saved) add(row.kind, row.target, row.name);
+  for (const row of saved) add(row.kind, row.target, row.name, row.machine);
   // What the proxy remembers but the app does not, in the proxy's own order:
   // it is the side that can see which addresses are neighbours of this Wi-Fi.
   for (const origin of lanDoorsOf(config)) add("lan", origin, originName(origin));
@@ -104,7 +117,7 @@ export type SwitchResult = { ok: boolean };
  * that have a row pass it; callers that only know a target do not have to
  * invent the rest.
  */
-export type SwitchTarget = Pick<SavedConnection, "kind" | "target" | "name">;
+export type SwitchTarget = Pick<SavedConnection, "kind" | "target" | "name" | "machine">;
 
 export interface Link {
   state: LinkState;
@@ -114,6 +127,14 @@ export interface Link {
   retry: () => void;
   /** Switch to a recorded computer and verify it. */
   switchTo: (entry: SwitchTarget) => Promise<SwitchResult>;
+  /**
+   * Prefer the LAN door to the computer already reached through the account.
+   *
+   * Called when Wi-Fi returns and while a cloud link is live. It does nothing
+   * unless both doors name the same machine and the proxy says the LAN origin
+   * is a neighbour, and a failed upgrade restores the cloud link.
+   */
+  preferLan: () => void;
   /** The settings screen just connected; record that, then re-read the list. */
   noteConnected: () => Promise<void>;
   /**
@@ -193,10 +214,17 @@ export function useLink(connection: Connection): Link {
   }, []);
 
   const connected = useCallback(
-    (target: string, name: string, mode: "lan" | "cloud") => {
+    (target: string, name: string, mode: "lan" | "cloud", machine?: string) => {
       backoff.current.reset();
       // Only a verified connection is a place worth returning to.
-      if (target) rememberConnection(mode === "lan" ? "lan" : "cloud", target, name);
+      if (target) rememberConnection(mode === "lan" ? "lan" : "cloud", target, name, machine);
+      // A LAN link that was reached without walking through `openDoor` (the
+      // route the proxy already held) still gets a name for the next match.
+      if (mode === "lan" && target) {
+        void readMachineIdentity(target).then((identity) => {
+          if (identity) learnConnectionMachine("lan", target, identity.machine);
+        });
+      }
       emit({
         phase: "connected",
         target,
@@ -360,7 +388,12 @@ export function useLink(connection: Connection): Link {
           continue;
         }
         const result = await openDoor(
-          { kind: door.kind, target: door.target, name },
+          {
+            kind: door.kind,
+            target: door.target,
+            name,
+            ...(door.machine ? { machine: door.machine } : {}),
+          },
           (step) => {
             if (live()) emit({ ...stage(step), target: door.target, name, mode: door.kind });
           },
@@ -380,7 +413,7 @@ export function useLink(connection: Connection): Link {
                 config.relayDevice || loadRelayDevice() || latestConnection("cloud")?.target;
               if (cloud) saveRelayDevice(cloud);
             }
-            connected(door.target, name, door.kind);
+            connected(door.target, name, door.kind, door.machine);
             return;
           }
           last = linkFailure(
@@ -473,6 +506,119 @@ export function useLink(connection: Connection): Link {
     })();
   }, [connection, failed]);
 
+  /** A LAN upgrade just failed; do not retry it on every timer tick. */
+  const lastUpgrade = useRef(0);
+
+  /**
+   * Switch an active cloud link to the LAN door of the same computer.
+   *
+   * The cloud route is often the only one that worked away from home; once
+   * the phone is back on the Wi-Fi, the neighbour answers directly and is
+   * faster. Both doors must name the same machine, and the proxy's `direct`
+   * list must call the origin a neighbour — so a phone that is not at home
+   * never gets pointed at an address that is not there.
+   *
+   * The upgrade is non-destructive: the link state stays "connected" while it
+   * runs, and a failed switch restores the relay before it is reported.
+   */
+  const preferLan = useCallback(() => {
+    if (standDown.current || active.current) return;
+    const live = stateRef.current;
+    if (live.phase !== "connected" || live.mode !== "cloud" || !live.target) return;
+    if (Date.now() - lastUpgrade.current < 15_000) return;
+    lastUpgrade.current = Date.now();
+    const cloudTarget = live.target;
+    const cloudName = live.name ?? "云端电脑";
+    const startGeneration = generation.current;
+    const unchanged = () =>
+      generation.current === startGeneration &&
+      !active.current &&
+      stateRef.current.phase === "connected" &&
+      stateRef.current.mode === "cloud" &&
+      stateRef.current.target === cloudTarget;
+    void (async () => {
+      const config = await readProxyConfig();
+      if (!config || config.mode !== "relay" || !unchanged()) return;
+      const saved = loadConnections();
+      const cloudRow = saved.find(
+        (row) => row.kind === "cloud" && row.target === cloudTarget,
+      );
+      // An older cloud row may predate the identity field; its name is the
+      // account's device name, which is the same host name the LAN door gives.
+      const machine = cloudRow?.machine?.trim() || cloudRow?.name?.trim() || "";
+      if (!machine) return;
+      const direct = config.direct ?? [];
+      let door = directDoorForMachine(saved, machine, direct);
+      if (door) {
+        // The saved name is a hint; the computer itself has the final word.
+        const identity = await readMachineIdentity(door.target);
+        if (!identity || machineKey(identity.machine) !== machineKey(machine)) return;
+      } else {
+        // The LAN door may predate the identity field. Ask the direct doors
+        // once, in parallel, instead of making the person open settings.
+        const reachable = new Set(
+          direct.map((target) => normalizeTarget("lan", target)).filter(Boolean),
+        );
+        const unknown = saved.filter(
+          (row) => row.kind === "lan" && reachable.has(row.target) && !row.machine?.trim(),
+        );
+        const answers = await Promise.all(
+          unknown.map(async (row) => ({
+            row,
+            identity: await readMachineIdentity(row.target),
+          })),
+        );
+        const hit = answers.find(
+          (answer) =>
+            answer.identity &&
+            machineKey(answer.identity.machine) === machineKey(machine),
+        );
+        if (!hit?.identity) return;
+        learnConnectionMachine("lan", hit.row.target, hit.identity.machine);
+        door = { ...hit.row, machine: hit.identity.machine };
+      }
+      if (!unchanged()) return;
+
+      active.current = true;
+      const mine = ++generation.current;
+      const stillLive = () => generation.current === mine;
+      try {
+        const opened = await openDoor(
+          { kind: "lan", target: door.target, name: door.name, machine },
+          () => {},
+        );
+        if (!stillLive()) return;
+        if (opened.ok && (await connection.refresh()) && stillLive()) {
+          // Keep the cloud id as the hint for the next time the phone leaves.
+          saveRelayDevice(cloudTarget);
+          connected(door.target, door.name, "lan", machine);
+          return;
+        }
+        // The LAN door did not answer after the switch: put the relay back
+        // before showing anything, so a failed upgrade is not an outage.
+        const restored = await openDoor(
+          { kind: "cloud", target: cloudTarget, name: cloudName, machine },
+          () => {},
+        );
+        if (!stillLive()) return;
+        if (restored.ok && (await connection.refresh()) && stillLive()) {
+          connected(cloudTarget, cloudName, "cloud", machine);
+          return;
+        }
+        if (stillLive()) {
+          failed(
+            restored.ok
+              ? linkFailure(reachCode(connection.current.reach), "cloud restore")
+              : restored.error,
+            stateRef.current,
+          );
+        }
+      } finally {
+        active.current = false;
+      }
+    })();
+  }, [connected, connection, failed]);
+
   const kick = useCallback(() => {
     if (active.current) return;
     if (standDown.current) return;
@@ -545,8 +691,10 @@ export function useLink(connection: Connection): Link {
       // verified quietly, and a waiting one starts a fresh walk over the
       // saved doors.
       kick();
+      // Wi-Fi returning is also the moment a cloud link can become a LAN one.
+      preferLan();
     },
-    [clearTimer, emit, kick],
+    [clearTimer, emit, kick, preferLan],
   );
 
   const switchTo = useCallback(
@@ -572,7 +720,12 @@ export function useLink(connection: Connection): Link {
       emit(room());
       try {
         const result = await openDoor(
-          { kind: entry.kind, target: entry.target, name: entry.name },
+          {
+            kind: entry.kind,
+            target: entry.target,
+            name: entry.name,
+            ...(entry.machine ? { machine: entry.machine } : {}),
+          },
           (step) => {
             if (live()) {
               emit({
@@ -599,7 +752,7 @@ export function useLink(connection: Connection): Link {
           const cloud = latestConnection("cloud")?.target || loadRelayDevice();
           if (cloud) saveRelayDevice(cloud);
         }
-        connected(entry.target, entry.name, mode);
+        connected(entry.target, entry.name, mode, entry.machine);
         return { ok: true };
       } catch (error) {
         if (live()) {
@@ -676,6 +829,7 @@ export function useLink(connection: Connection): Link {
     watch,
     retry,
     switchTo,
+    preferLan,
     noteConnected,
     noteFailed,
     noteNetwork,

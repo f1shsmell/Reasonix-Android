@@ -12,6 +12,7 @@ import {
   loadFleet,
   markRelay,
   probeUpstream,
+  readMachineIdentity,
   readProxyConfig,
   refreshProxy,
   saveFleet,
@@ -149,6 +150,7 @@ vi.mock("../net/server", () => ({
   firstAnswering: vi.fn(),
   answeringOrigins: vi.fn(),
   probeUpstream: vi.fn(),
+  readMachineIdentity: vi.fn(async () => null),
   loadFleet: vi.fn(async () => null),
   saveFleet: vi.fn(async () => {}),
   fleetRead: vi.fn(async () => ({ ok: false as const, code: "client.offline" })),
@@ -264,6 +266,7 @@ beforeEach(() => {
   vi.mocked(firstAnswering).mockResolvedValue(null);
   vi.mocked(answeringOrigins).mockResolvedValue([]);
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
+  vi.mocked(readMachineIdentity).mockResolvedValue(null);
   vi.mocked(loadFleet).mockReset();
   vi.mocked(loadFleet).mockResolvedValue(null);
   vi.mocked(saveFleet).mockReset();
@@ -470,6 +473,49 @@ describe("App", () => {
 
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
     expect(container.querySelectorAll(".session")).toHaveLength(2);
+  });
+
+  it("upgrades a live cloud link to the LAN door of the same computer", async () => {
+    // The computer is reachable both ways. The boot walk takes the relay
+    // first (the direct sweep found nothing yet); once the cloud link is up,
+    // the identity match lets the app move to the neighbour by itself.
+    const relayed = {
+      ...lanConfig(),
+      mode: "relay" as const,
+      relayDevice: "saved-device",
+      direct: ["http://192.168.5.2:56789"],
+    };
+    rememberConnection("cloud", "saved-device", "Home Mac", "Home Mac");
+    rememberConnection("lan", "http://192.168.5.2:56789", "Home Mac", "Home Mac");
+    vi.mocked(readProxyConfig).mockResolvedValue(relayed);
+    vi.mocked(refreshProxy).mockResolvedValue(relayed);
+    vi.mocked(markRelay).mockResolvedValue(relayed);
+    vi.mocked(answeringOrigins).mockResolvedValue([]);
+    vi.mocked(readMachineIdentity).mockResolvedValue({ machine: "Home Mac" });
+    await renderApp();
+
+    expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789");
+    expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+  });
+
+  it("does not upgrade to a LAN door that names another computer", async () => {
+    const relayed = {
+      ...lanConfig(),
+      mode: "relay" as const,
+      relayDevice: "saved-device",
+      direct: ["http://192.168.5.2:56789"],
+    };
+    rememberConnection("cloud", "saved-device", "Home Mac", "Home Mac");
+    rememberConnection("lan", "http://192.168.5.2:56789", "Office PC", "Office PC");
+    vi.mocked(readProxyConfig).mockResolvedValue(relayed);
+    vi.mocked(refreshProxy).mockResolvedValue(relayed);
+    vi.mocked(markRelay).mockResolvedValue(relayed);
+    vi.mocked(answeringOrigins).mockResolvedValue([]);
+    vi.mocked(readMachineIdentity).mockResolvedValue({ machine: "Office PC" });
+    await renderApp();
+
+    expect(configureProxy).not.toHaveBeenCalledWith("http://192.168.5.2:56789");
+    expect(container.querySelector(".linkbar")?.textContent).toContain("云端已连接");
   });
 
   it("stays on the relay when no LAN address answers", async () => {

@@ -341,6 +341,9 @@ public final class LoopbackProxy {
                 case "/__reasonix/net-policy":
                     setNetPolicy(socket, body);
                     return;
+                case "/__reasonix/device":
+                    deviceSelf(socket, body);
+                    return;
                 case "/__reasonix/disconnect":
                     disconnect(socket, body);
                     return;
@@ -393,6 +396,7 @@ public final class LoopbackProxy {
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
             case "/__reasonix/net-policy":
+            case "/__reasonix/device":
             case "/__reasonix/disconnect":
             case "/__reasonix/relay/clear":
                 return "POST".equals(method);
@@ -648,6 +652,66 @@ public final class LoopbackProxy {
     /** The values the connection code knows how to honour. */
     static boolean isValidNetPolicy(String policy) {
         return policy.equals("auto") || policy.equals("bypass") || policy.equals("system");
+    }
+
+    /**
+     * Ask one remembered LAN computer who it is.
+     *
+     * A paired device's `GET /device` names the machine it reaches — the same
+     * host name the account lists for a cloud device. Reading it through the
+     * proxy is what lets the app recognise that a LAN origin and a cloud
+     * device are one computer, and it works while a VPN owns the default
+     * route, where the page cannot reach the LAN origin directly.
+     */
+    private void deviceSelf(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String origin = normalizeOrigin(request.optString("origin", ""));
+        if (origin.isEmpty()) {
+            writeJson(socket, 400, "{\"code\":\"proxy.bad_origin\"}");
+            return;
+        }
+        URI uri = URI.create(origin + "/device");
+        HttpURLConnection conn = null;
+        try {
+            conn = openKernelConnection(uri);
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(4000);
+            String web = webCookie(origin.endsWith("/") ? origin : origin + "/");
+            if (!web.isEmpty()) {
+                conn.setRequestProperty("Cookie", web);
+            } else {
+                applyCookies(conn, uri);
+            }
+            int status = conn.getResponseCode();
+            if (status == 401 || status == 403) {
+                writeJson(socket, 401, "{\"code\":\"device.unauthorized\"}");
+                return;
+            }
+            if (status != 200) {
+                writeJson(socket, 502, "{\"code\":\"proxy.upstream_unreachable\"}");
+                return;
+            }
+            String machine = machineOf(readText(conn));
+            if (machine.isEmpty()) {
+                writeJson(socket, 502, "{\"code\":\"device.identity_missing\"}");
+                return;
+            }
+            JSONObject out = new JSONObject();
+            out.put("machine", machine);
+            writeJson(socket, 200, out.toString());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** The machine name in a `GET /device` body, or "" when it has none. */
+    static String machineOf(String body) {
+        try {
+            return new JSONObject(body).optString("machine", "").trim();
+        } catch (JSONException e) {
+            return "";
+        }
     }
 
     private void accountGrant(Socket socket, byte[] body) throws IOException, JSONException {

@@ -15,6 +15,7 @@ const savedRows = vi.hoisted(() => ({
     kind: "lan" | "cloud";
     target: string;
     name: string;
+    machine?: string;
     usedAt: number;
     order: number;
   }[],
@@ -27,6 +28,9 @@ vi.mock("../net/savedConnections", () => ({
   originName: (origin: string) => origin,
   normalizeTarget: (_kind: string, target: string) => target.trim().replace(/\/+$/, ""),
   rememberConnection: () => [],
+  learnConnectionMachine: () => [],
+  machineKey: (machine: string | undefined) => (machine ?? "").trim().toLowerCase(),
+  directDoorForMachine: () => null,
 }));
 
 const { lanDoorsOf, orderedDoors } = await import("./useLink");

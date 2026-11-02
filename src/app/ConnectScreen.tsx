@@ -30,6 +30,7 @@ import {
   parseServerLink,
   pollAccount,
   probeUpstream,
+  readMachineIdentity,
   readProxyConfig,
   refreshProxy,
   signInAccount,
@@ -50,15 +51,18 @@ import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
 import { clearRelayDevice } from "../net/relayStore";
 import {
-  connectionKey,
+  directDoorForMachine,
   forgetCloudConnections,
-  forgetConnection,
+  forgetConnectionGroup,
+  groupConnections,
+  learnConnectionMachine,
   loadConnections,
-  moveConnection,
+  machineKey,
+  moveConnectionGroup,
   normalizeTarget,
   rememberConnection,
 } from "../net/savedConnections";
-import type { SavedConnection } from "../net/savedConnections";
+import type { ConnectionGroup, SavedConnection } from "../net/savedConnections";
 import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
 import { RequestTimeout } from "../net/http";
 import { forgetFleetPeer } from "../net/fleet";
@@ -308,6 +312,50 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     };
   }, []);
 
+  // A LAN door is saved before the far side has said its name. Ask each one
+  // once, so a cloud device and its LAN origin can be drawn as one computer.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    const unknown = loadConnections().filter(
+      (entry) => entry.kind === "lan" && !entry.machine,
+    );
+    if (unknown.length === 0) return;
+    void Promise.all(
+      unknown.map(async (entry) => ({
+        target: entry.target,
+        identity: await readMachineIdentity(entry.target),
+      })),
+    ).then((answers) => {
+      if (cancelled) return;
+      let learned = false;
+      for (const answer of answers) {
+        if (!answer.identity) continue;
+        learnConnectionMachine("lan", answer.target, answer.identity.machine);
+        learned = true;
+      }
+      if (learned) setSaved(loadConnections());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The account names each cloud device; recording that name is what lets a
+  // saved LAN row and this device be recognised as one computer.
+  useEffect(() => {
+    if (devices.length === 0) return;
+    let learned = false;
+    for (const row of loadConnections()) {
+      if (row.kind !== "cloud") continue;
+      const machine = devices.find((device) => device.id === row.target)?.name?.trim();
+      if (!machine || machineKey(row.machine) === machineKey(machine)) continue;
+      learnConnectionMachine("cloud", row.target, machine);
+      learned = true;
+    }
+    if (learned) setSaved(loadConnections());
+  }, [devices]);
+
   const refreshBackground = useCallback(() => {
     void loadBackgroundStatus().then((next) => {
       if (next !== null) setBackground(next);
@@ -529,7 +577,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           setError(`云端通道已打开，但读不到会话：${failure.message}`);
           return;
         }
-        setSaved(rememberConnection("cloud", deviceId, target?.name));
+        setSaved(
+          rememberConnection("cloud", deviceId, target?.name, target?.name),
+        );
         onConnected();
       } catch (failure) {
         // `connectRelay` only replaces the active link after its handshake
@@ -894,19 +944,55 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       : entry.name;
   const currentEntry = saved.find((entry) => current(entry)) ?? null;
 
+  /** One row per computer: a named LAN origin and cloud device share a row. */
+  const groups = groupConnections(saved);
+  const groupHere = (group: ConnectionGroup): boolean => group.rows.some(current);
+  /** The door a tap takes: direct LAN, then LAN, then cloud, then the rest. */
+  const groupDoor = (group: ConnectionGroup): SavedConnection => {
+    const here = group.rows.find(current);
+    if (here) return here;
+    const near = group.machine
+      ? directDoorForMachine(group.rows, group.machine, direct)
+      : null;
+    if (near) return near;
+    return (
+      group.rows.find((row) => row.kind === "lan") ??
+      group.rows.find((row) => row.kind === "cloud") ??
+      group.rows[0]!
+    );
+  };
+  const groupLabel = (group: ConnectionGroup, door: SavedConnection): string =>
+    group.machine || labelOf(door);
+  const groupDetail = (group: ConnectionGroup, door: SavedConnection): string => {
+    const kinds = new Set(group.rows.map((row) => row.kind));
+    const both = kinds.has("lan") && kinds.has("cloud");
+    const transport = both
+      ? "局域网 · 云端"
+      : door.kind === "lan"
+        ? `局域网 · ${door.target}`
+        : "云端 · Reasonix 账号";
+    const near = group.rows.some(
+      (row) =>
+        row.kind === "lan" &&
+        direct.some((origin) => normalizeTarget("lan", origin) === row.target),
+    );
+    return near ? `${transport} · 可直连` : transport;
+  };
+
   /**
    * The saved list is also the retry order, so it is rearranged here as well
    * as in 切换连接. Both write the same record; whichever is open shows the
-   * order the next reconnect will walk.
+   * order the next reconnect will walk. One computer moves as a block: its
+   * two doors must stay together or the next walk could split them.
    */
   const savedDrag = useRowDrag<HTMLElement>({
-    rows: saved.map((entry) => ({
-      key: connectionKey(entry.kind, entry.target),
+    rows: groups.map((group) => ({
+      key: group.key,
       movable: true,
     })),
     enabled: busy === "" && pane === "connect",
     scrollerSelector: ".connect",
-    place: (key, index) => setSaved(moveConnection(key, index)),
+    place: (key, index) => setSaved(moveConnectionGroup(key, index)),
   });
   const relayName =
     config?.mode === "relay" && config.relayDevice
@@ -1029,38 +1115,33 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               ref={savedDrag.listRef}
               data-dragging={savedDrag.state ? "true" : undefined}
             >
-              {saved.map((entry, index) => {
-                const label = labelOf(entry);
-                const here = current(entry);
-                const key = connectionKey(entry.kind, entry.target);
+              {groups.map((group, index) => {
+                const door = groupDoor(group);
+                const label = groupLabel(group, door);
+                const here = groupHere(group);
                 const shift = dragShift(savedDrag.state, index);
                 return (
                   <div
-                    className={`setting saved-row${savedDrag.state?.key === key ? " dragging" : ""}`}
-                    key={key}
-                    data-drag-key={key}
-                    data-drop={dropEdge(savedDrag.state, index, saved.length)}
+                    className={`setting saved-row${savedDrag.state?.key === group.key ? " dragging" : ""}`}
+                    key={group.key}
+                    data-drag-key={group.key}
+                    data-drop={dropEdge(savedDrag.state, index, groups.length)}
                     style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
-                    {...savedDrag.row(key)}
+                    {...savedDrag.row(group.key)}
                   >
                     <button
                       type="button"
                       className="saved-main"
                       disabled={busy !== ""}
                       aria-current={here ? "true" : undefined}
-                      onClick={() => void switchTo(entry)}
+                      onClick={() => void switchTo(door)}
                     >
                       <span className="setting-main">
                         <span className="setting-title">
                           {label}
                           {here ? <span className="saved-current">当前</span> : null}
                         </span>
-                        <span className="setting-sub">
-                          {entry.kind === "lan" ? `局域网 · ${entry.target}` : "云端 · Reasonix 账号"}
-                          {entry.kind === "lan" && direct.includes(entry.target)
-                            ? " · 可直连"
-                            : ""}
-                        </span>
+                        <span className="setting-sub">{groupDetail(group, door)}</span>
                       </span>
                       <span className="chev" aria-hidden="true">
                         ›
@@ -1071,12 +1152,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                       className="saved-forget"
                       aria-label={`移除 ${label}`}
                       onClick={() => {
-                        // Removing a cloud computer is also how a reinstall
-                        // becomes approvable: its old identity goes with it.
-                        if (entry.kind === "cloud") forgetDevice(entry.target);
-                        setSaved(forgetConnection(entry.kind, entry.target));
-                        // The fleet must stop spending a watch slot on it.
-                        void forgetFleetPeer(entry.kind, entry.target).catch(() => {});
+                        for (const row of group.rows) {
+                          // Removing a cloud computer is also how a reinstall
+                          // becomes approvable: its old identity goes with it.
+                          if (row.kind === "cloud") forgetDevice(row.target);
+                          // The fleet must stop spending a watch slot on it.
+                          void forgetFleetPeer(row.kind, row.target).catch(() => {});
+                        }
+                        setSaved(forgetConnectionGroup(group.key));
                       }}
                     >
                       ×

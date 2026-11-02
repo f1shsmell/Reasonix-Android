@@ -244,6 +244,40 @@ export async function disconnectProxy(): Promise<ProxyConfig> {
   return request<ProxyConfig>("/__reasonix/disconnect", { method: "POST" });
 }
 
+// ---- machine identity ----------------------------------------------------
+
+export interface MachineIdentity {
+  /** The computer's own name, as its paired-device route reports it. */
+  machine: string;
+}
+
+/**
+ * Ask a remembered LAN origin which computer it is.
+ *
+ * A paired device's `GET /device` names the machine it reaches, and that name
+ * is the same one the account lists for this computer's cloud device. The read
+ * goes through the proxy rather than straight to the origin: the page is on
+ * `127.0.0.1`, the origin is another host, and a VPN that owns the default
+ * route must still leave a neighbour reachable. `null` when the origin cannot
+ * answer or has no identity to give — the identity is a hint, not a gate.
+ */
+export async function readMachineIdentity(
+  origin: string,
+  timeoutMs = 6_000,
+): Promise<MachineIdentity | null> {
+  try {
+    const body = await request<{ machine?: unknown }>(
+      "/__reasonix/device",
+      { method: "POST", body: JSON.stringify({ origin }) },
+      timeoutMs,
+    );
+    const machine = typeof body.machine === "string" ? body.machine.trim() : "";
+    return machine ? { machine } : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- fleet: the other computers this phone listens to -------------------
 
 /**

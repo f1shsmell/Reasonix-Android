@@ -249,7 +249,17 @@ export function App() {
       .catch(() => {
         // The watch list is a mirror; a failed write must not break the link.
       });
-  }, [link.state.phase, link.state.target, link.state.mode, link.state.name, syncFleet]);
+    // A cloud link may be the same computer as a remembered LAN door; if the
+    // phone is already on that Wi-Fi, prefer the direct one now.
+    if (kind === "cloud") link.preferLan();
+  }, [
+    link.state.phase,
+    link.state.target,
+    link.state.mode,
+    link.state.name,
+    link.preferLan,
+    syncFleet,
+  ]);
 
   // The native watcher discovers every open pane itself; a running or
   // blocked pane on this computer *or another watched one* is the trigger
@@ -541,6 +551,9 @@ export function App() {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       link.kick();
+      // Coming back on the home Wi-Fi is the usual moment a cloud link can
+      // become a direct LAN one.
+      link.preferLan();
       // The desktop may have moved a prompt or finished a turn while the
       // screen was off; the home block and the tree are both snapshots.
       pending.refresh();
@@ -548,7 +561,7 @@ export function App() {
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [boot, link.kick, pending.refresh, reloadTree]);
+  }, [boot, link.kick, link.preferLan, pending.refresh, reloadTree]);
 
   // A live link is checked on a slow timer, and only a route that has really
   // stopped answering (two lost reads in a row) is reopened. Without this,
@@ -557,9 +570,14 @@ export function App() {
   useEffect(() => {
     if (boot !== "ready") return;
     if (link.state.phase !== "connected") return;
-    const timer = window.setInterval(() => link.watch(), LINK_WATCH_MS);
+    const timer = window.setInterval(() => {
+      link.watch();
+      // A phone that came home while the screen stayed on should not wait for
+      // a foreground event to take the faster door.
+      link.preferLan();
+    }, LINK_WATCH_MS);
     return () => window.clearInterval(timer);
-  }, [boot, link.state.phase, link.watch]);
+  }, [boot, link.state.phase, link.watch, link.preferLan]);
 
   // The system's own answer about this phone's network. Losing it stops the
   // retry timer instead of letting it spin against a network that is not

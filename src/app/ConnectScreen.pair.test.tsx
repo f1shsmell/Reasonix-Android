@@ -62,6 +62,7 @@ vi.mock("../net/server", () => ({
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
   probeUpstream: vi.fn(),
+  readMachineIdentity: vi.fn(async () => null),
   ProxyError: class ProxyError extends Error {
     readonly status: number;
     readonly code: string;
