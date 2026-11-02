@@ -45,6 +45,7 @@ export interface RowDragHandlers {
   onPointerMove: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerCancel: () => void;
+  onContextMenu: (event: React.MouseEvent<HTMLElement>) => void;
   onClickCapture: (event: React.MouseEvent<HTMLElement>) => void;
 }
 
@@ -206,6 +207,63 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
 
   useEffect(() => settle, [settle]);
 
+  /** Follow the finger: lift the ghost, then move the gap to the row under it. */
+  const track = useCallback(
+    (current: Live, x: number, y: number) => {
+      if (current.dropping) return;
+      current.y = y;
+      if (!current.armed) {
+        if (Math.hypot(x - current.startX, y - current.startY) > SLOP_PX) settle();
+        return;
+      }
+      placeGhost(current, y - current.startY);
+      const at = measure(current, y);
+      if (at === current.insertAt) return;
+      current.insertAt = at;
+      setState({
+        key: current.key,
+        from: current.from,
+        insertAt: at,
+        height: current.height,
+      });
+    },
+    [measure, settle],
+  );
+
+  /** A released finger: drop into the gap, or settle back where the row was. */
+  const finish = useCallback(
+    (current: Live) => {
+      if (current.dropping) return;
+      const armed = current.armed;
+      const at = current.insertAt;
+      // A slot equal to the row's own, or the one just after it, describes
+      // the position it already occupies: nothing moved, so nothing is
+      // written and the ghost settles straight away instead of playing a
+      // drop animation that would land back on the same row.
+      const unchanged = at === current.from || at === current.from + 1;
+      if (!armed || unchanged) {
+        settle();
+        return;
+      }
+      swallowClick.current = true;
+      current.dropping = true;
+      current.release?.();
+      current.release = null;
+      const ghost = current.ghost;
+      if (ghost) {
+        ghost.style.transition = `transform ${DROP_MS}ms var(--ease-out), opacity ${DROP_MS}ms var(--ease-out)`;
+        ghost.style.transform = `translate3d(0, ${gapTop(current, listRef.current) - current.startTop}px, 0) scale(1)`;
+        ghost.style.opacity = "0.82";
+      }
+      if (typeof navigator.vibrate === "function") navigator.vibrate(8);
+      place(current.key, at);
+      window.setTimeout(() => {
+        if (live.current === current) settle();
+      }, DROP_MS);
+    },
+    [place, settle],
+  );
+
   const arm = useCallback(
     (current: Live) => {
       const list = listRef.current;
@@ -236,27 +294,10 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
       } catch {
         // A synthetic or already-released pointer cannot be captured.
       }
-      // The browser decides between a pan and a drag from the gesture's first
-      // frames, so the row has to claim it the moment the hold succeeds: an
-      // inline `touch-action` applies to the rest of this gesture, where a
-      // stylesheet rule keyed on the drag state would arrive a frame too late.
-      const claimed = current.node.style.touchAction;
+      // The guard that keeps the browser from turning this gesture into a pan
+      // was registered on pointerdown, before any move could arrive. This is
+      // belt and braces for a browser that reads touch-action again late.
       current.node.style.touchAction = "none";
-      const scroller = list.closest<HTMLElement>(scrollerSelector);
-      if (scroller) {
-        const prevent = (event: TouchEvent) => {
-          if (event.cancelable) event.preventDefault();
-        };
-        scroller.addEventListener("touchmove", prevent, { passive: false });
-        current.release = () => {
-          scroller.removeEventListener("touchmove", prevent);
-          current.node.style.touchAction = claimed;
-        };
-      } else {
-        current.release = () => {
-          current.node.style.touchAction = claimed;
-        };
-      }
 
       const ghost = current.node.cloneNode(true) as HTMLElement;
       ghost.classList.remove("dragging");
@@ -279,13 +320,23 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
       if (typeof navigator.vibrate === "function") navigator.vibrate(10);
       setState({ key: current.key, from, insertAt: current.insertAt, height: rect.height });
     },
-    [scrollerSelector, settle],
+    [settle],
   );
 
   const row = useCallback(
     (key: string): RowDragHandlers => ({
       onPointerDown: (event) => {
-        if (!enabled || live.current) return;
+        if (!enabled) return;
+        if (live.current) {
+          // A live captured pointer keeps the gesture: a second finger does
+          // not steal it. Without capture — because the release was lost, the
+          // node was replaced, or this browser never captured — the entry is
+          // stale, and leaving it would block every later long press. Settle
+          // it and start this gesture fresh.
+          const held = live.current.node.hasPointerCapture?.(live.current.pointerId) === true;
+          if (held && live.current.pointerId !== event.pointerId) return;
+          settle();
+        }
         if (!rows.find((candidate) => candidate.key === key)?.movable) return;
         swallowClick.current = false;
         const current: Live = {
@@ -307,6 +358,57 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
           ghost: null,
         };
         live.current = current;
+
+        const node = current.node;
+        const claimed = node.style.touchAction;
+        const scroller = node.closest<HTMLElement>(scrollerSelector);
+        // The guard is registered now, not when the hold succeeds: the first
+        // touchmove after the hold can arrive before a timer callback would
+        // have added it, and that one move is enough for the browser to take
+        // the gesture as a pan and cancel the drag.
+        const guard = (touch: TouchEvent) => {
+          if (
+            live.current === current &&
+            current.armed &&
+            !current.dropping &&
+            touch.cancelable
+          ) {
+            touch.preventDefault();
+          }
+        };
+        scroller?.addEventListener("touchmove", guard, { passive: false });
+
+        // Pointer capture usually keeps move/up on the row, but Android can
+        // retarget a release or drop the capture when a refresh replaces a
+        // node. Window listeners end the gesture even then; the stuck `live`
+        // entry was what made the next long press do nothing.
+        const onMove = (move: PointerEvent) => {
+          if (move.pointerId !== current.pointerId || live.current !== current) return;
+          track(current, move.clientX, move.clientY);
+        };
+        const onUp = (up: PointerEvent) => {
+          if (up.pointerId !== current.pointerId || live.current !== current) return;
+          finish(current);
+        };
+        const onCancel = (cancel: PointerEvent) => {
+          if (cancel.pointerId !== current.pointerId || live.current !== current) return;
+          settle();
+        };
+        const onBlur = () => {
+          if (live.current === current) settle();
+        };
+        window.addEventListener("pointermove", onMove, true);
+        window.addEventListener("pointerup", onUp, true);
+        window.addEventListener("pointercancel", onCancel, true);
+        window.addEventListener("blur", onBlur);
+        current.release = () => {
+          scroller?.removeEventListener("touchmove", guard);
+          window.removeEventListener("pointermove", onMove, true);
+          window.removeEventListener("pointerup", onUp, true);
+          window.removeEventListener("pointercancel", onCancel, true);
+          window.removeEventListener("blur", onBlur);
+          node.style.touchAction = claimed;
+        };
         current.timer = window.setTimeout(() => {
           if (live.current === current) arm(current);
         }, DRAG_HOLD_MS);
@@ -314,53 +416,18 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
       onPointerMove: (event) => {
         const current = live.current;
         if (!current || current.key !== key || event.pointerId !== current.pointerId) return;
-        current.y = event.clientY;
-        if (current.dropping) return;
-        if (!current.armed) {
-          if (Math.hypot(event.clientX - current.startX, event.clientY - current.startY) > SLOP_PX) {
-            settle();
-          }
-          return;
-        }
-        placeGhost(current, event.clientY - current.startY);
-        const at = measure(current, event.clientY);
-        if (at === current.insertAt) return;
-        current.insertAt = at;
-        setState({ key, from: current.from, insertAt: at, height: current.height });
+        track(current, event.clientX, event.clientY);
       },
       onPointerUp: (event) => {
         const current = live.current;
         if (!current || current.key !== key || event.pointerId !== current.pointerId) return;
-        if (current.dropping) return;
-        const armed = current.armed;
-        const at = current.insertAt;
-        // A slot equal to the row's own, or the one just after it, describes
-        // the position it already occupies: nothing moved, so nothing is
-        // written and the ghost settles straight away instead of playing a
-        // drop animation that would land back on the same row.
-        const unchanged = at === current.from || at === current.from + 1;
-        if (!armed || unchanged) {
-          settle();
-          return;
-        }
-        swallowClick.current = true;
-        current.dropping = true;
-        current.release?.();
-        current.release = null;
-        const ghost = current.ghost;
-        if (ghost) {
-          ghost.style.transition = `transform ${DROP_MS}ms var(--ease-out), opacity ${DROP_MS}ms var(--ease-out)`;
-          ghost.style.transform = `translate3d(0, ${gapTop(current, listRef.current) - current.startTop}px, 0) scale(1)`;
-          ghost.style.opacity = "0.82";
-        }
-        if (typeof navigator.vibrate === "function") navigator.vibrate(8);
-        place(key, at);
-        window.setTimeout(() => {
-          if (live.current === current) settle();
-        }, DROP_MS);
+        finish(current);
       },
       onPointerCancel: () => {
         if (live.current?.key === key) settle();
+      },
+      onContextMenu: (event) => {
+        event.preventDefault();
       },
       onClickCapture: (event) => {
         if (!swallowClick.current) return;
@@ -369,7 +436,7 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
         event.preventDefault();
       },
     }),
-    [arm, enabled, measure, place, rows, settle],
+    [arm, enabled, finish, rows, scrollerSelector, settle, track],
   );
 
   const dragging = state !== null;
