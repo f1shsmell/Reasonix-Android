@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   connectionKey,
+  directDoorForMachine,
   forgetCloudConnections,
   forgetConnection,
+  forgetConnectionGroup,
+  groupConnections,
   latestConnection,
+  learnConnectionMachine,
   loadConnections,
+  machineKey,
   moveConnection,
+  moveConnectionGroup,
   normalizeTarget,
   originName,
   rememberConnection,
@@ -219,5 +225,68 @@ describe("reading", () => {
 
   it("answers nothing for a kind that was never recorded", () => {
     expect(latestConnection("lan")).toBeNull();
+  });
+});
+
+describe("machine identity", () => {
+  it("records the computer's own name on the door it came through", () => {
+    const rows = rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    expect(rows[0]).toMatchObject({ machine: "Home Mac" });
+    // A later connect without the name must not erase it.
+    const again = rememberConnection("lan", "http://192.168.5.2:56789", "家里");
+    expect(again[0]?.machine).toBe("Home Mac");
+  });
+
+  it("learns a name after the door was already saved", () => {
+    rememberConnection("lan", "http://192.168.5.2:56789");
+    const rows = learnConnectionMachine("lan", "http://192.168.5.2:56789/", "Home Mac");
+    expect(rows[0]?.machine).toBe("Home Mac");
+    expect(loadConnections()[0]?.machine).toBe("Home Mac");
+  });
+
+  it("compares names the way a person reads them", () => {
+    expect(machineKey("  Home   Mac ")).toBe("home mac");
+    expect(machineKey(undefined)).toBe("");
+  });
+
+  it("draws a LAN origin and a cloud device of one machine as one computer", () => {
+    rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    rememberConnection("cloud", "dev-1", "Home Mac", "home mac");
+    rememberConnection("lan", "http://192.168.7.9:56789", "公司");
+    const groups = groupConnections(loadConnections());
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.machine).toBe("Home Mac");
+    expect(groups[0]?.rows.map((row) => row.kind)).toEqual(["lan", "cloud"]);
+    expect(groups[1]?.rows).toHaveLength(1);
+  });
+
+  it("moves every door of one computer together", () => {
+    rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    rememberConnection("cloud", "dev-1", "Home Mac", "Home Mac");
+    rememberConnection("lan", "http://192.168.7.9:56789", "公司", "Office PC");
+    const key = groupConnections(loadConnections())[0]!.key;
+    const rows = moveConnectionGroup(key, 2);
+    expect(rows.map((row) => row.machine)).toEqual(["Office PC", "Home Mac", "Home Mac"]);
+  });
+
+  it("picks the direct LAN door of the same machine only", () => {
+    rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    rememberConnection("lan", "http://172.16.2.59:57074", "隧道", "Home Mac");
+    const rows = loadConnections();
+    expect(
+      directDoorForMachine(rows, "home mac", ["http://192.168.5.2:56789"])?.target,
+    ).toBe("http://192.168.5.2:56789");
+    expect(
+      directDoorForMachine(rows, "Home Mac", ["http://10.0.0.9:8791"]),
+    ).toBeNull();
+    expect(directDoorForMachine(rows, "Other PC", ["http://192.168.5.2:56789"])).toBeNull();
+  });
+
+  it("forgets every door when the computer is removed", () => {
+    rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    rememberConnection("cloud", "dev-1", "Home Mac", "Home Mac");
+    rememberConnection("lan", "http://192.168.7.9:56789", "公司", "Office PC");
+    const key = groupConnections(loadConnections())[0]!.key;
+    expect(forgetConnectionGroup(key).map((row) => row.machine)).toEqual(["Office PC"]);
   });
 });

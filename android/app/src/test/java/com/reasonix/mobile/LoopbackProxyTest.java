@@ -254,6 +254,16 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void readsTheMachineNameADeviceAnswersWith() {
+        assertEquals("Home Mac", LoopbackProxy.machineOf(
+                "{\"id\":\"paired-1\",\"ordinal\":1,\"machine\":\"Home Mac\"}"));
+        assertEquals("Home Mac", LoopbackProxy.machineOf("{\"machine\":\"  Home Mac  \"}"));
+        // A route that answers without the identity is not this computer.
+        assertEquals("", LoopbackProxy.machineOf("{\"id\":\"paired-1\"}"));
+        assertEquals("", LoopbackProxy.machineOf("not json"));
+    }
+
+    @Test
     public void devicePollFailuresKeepTheServicesCodes() throws Exception {
         JSONObject expired = LoopbackProxy.pollFailure(
                 "{\"error\":{\"code\":\"expired_token\",\"message\":\"expired\"}}");

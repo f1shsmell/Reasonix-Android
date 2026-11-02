@@ -12,8 +12,14 @@ import { linkFailure } from "./link";
 import type { LinkError, LinkStep } from "./link";
 import { ensureRelay, clearRelayRouting, RelayError } from "./relay";
 import { syncFleetPeer } from "./fleet";
-import { rememberConnection } from "./savedConnections";
-import { configureProxy, markRelay, probeUpstream, ProxyError } from "./server";
+import { learnConnectionMachine, rememberConnection } from "./savedConnections";
+import {
+  configureProxy,
+  markRelay,
+  probeUpstream,
+  readMachineIdentity,
+  ProxyError,
+} from "./server";
 
 export interface Door {
   kind: "lan" | "cloud";
@@ -21,6 +27,8 @@ export interface Door {
   target: string;
   /** What to call it in the UI. */
   name?: string;
+  /** The computer's own name, when a saved row or the account already knew it. */
+  machine?: string;
 }
 
 export type DoorResult = { ok: true } | { ok: false; error: LinkError };
@@ -39,7 +47,12 @@ export async function openDoor(
       if (!reach.ok) {
         return { ok: false, error: linkFailure(reach.code, `origin ${door.target}`) };
       }
-      rememberConnection("lan", door.target, door.name);
+      rememberConnection("lan", door.target, door.name, door.machine);
+      // The name arrives after the door is open; recording it late is enough
+      // to recognise this computer's cloud device on the next list.
+      void readMachineIdentity(door.target).then((identity) => {
+        if (identity) learnConnectionMachine("lan", door.target, identity.machine);
+      });
       void syncFleetPeer("lan", door.target, door.name ?? door.target).catch(() => {});
       return { ok: true };
     }
@@ -58,7 +71,7 @@ export async function openDoor(
         clearRelayRouting();
         return { ok: false, error: linkFailure(reach.code, `device ${door.target}`) };
       }
-      rememberConnection("cloud", door.target, door.name);
+      rememberConnection("cloud", door.target, door.name, door.machine);
       void syncFleetPeer("cloud", door.target, door.name ?? door.target).catch(() => {});
       return { ok: true };
     } catch (error) {
