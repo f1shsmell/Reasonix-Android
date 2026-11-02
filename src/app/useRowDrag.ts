@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
+import { vibrate } from "./haptics";
 import { insertAt } from "./projectOrder";
 
 /** How long a row rests before it is picked up. */
@@ -255,7 +256,7 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
         ghost.style.transform = `translate3d(0, ${gapTop(current, listRef.current) - current.startTop}px, 0) scale(1)`;
         ghost.style.opacity = "0.82";
       }
-      if (typeof navigator.vibrate === "function") navigator.vibrate(8);
+      vibrate(8);
       place(current.key, at);
       window.setTimeout(() => {
         if (live.current === current) settle();
@@ -317,7 +318,7 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
       current.ghost = ghost;
       list.setAttribute("data-dragging", "true");
       placeGhost(current, 0);
-      if (typeof navigator.vibrate === "function") navigator.vibrate(10);
+      vibrate(10);
       setState({ key: current.key, from, insertAt: current.insertAt, height: rect.height });
     },
     [settle],

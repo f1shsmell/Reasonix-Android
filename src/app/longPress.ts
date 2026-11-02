@@ -13,6 +13,7 @@
 
 import { useEffect, useRef } from "react";
 import type * as React from "react";
+import { vibrate } from "./haptics";
 
 /** How long a finger rests before the row offers its actions. */
 export const LONG_PRESS_MS = 450;
@@ -56,7 +57,7 @@ export function useLongPress(open: () => void): LongPressHandlers {
       timer.current = window.setTimeout(() => {
         timer.current = null;
         armed.current = true;
-        if (typeof navigator.vibrate === "function") navigator.vibrate(10);
+        vibrate(10);
       }, LONG_PRESS_MS);
     },
     onPointerMove: (event) => {

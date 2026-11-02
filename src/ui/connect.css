@@ -679,6 +679,57 @@ label.setting .setting-title {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- switch ---- */
+
+/* The button carries a full 44 px tap target; the track inside it is the part
+   that is drawn. The negative block margins keep the row the same height the
+   other settings rows use. */
+.toggle {
+  flex: none;
+  width: 52px;
+  height: 44px;
+  margin: -9px -4px -9px auto;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+}
+
+.toggle-track {
+  display: flex;
+  align-items: center;
+  width: 44px;
+  height: 26px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.toggle-thumb {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.toggle[aria-checked="true"] .toggle-track {
+  background: var(--accent);
+}
+
+.toggle[aria-checked="true"] .toggle-thumb {
+  transform: translateX(18px);
+}
+
+.toggle:disabled {
+  opacity: 0.45;
+}
+
 /* The theme control sits inside a row, so it takes the remaining width rather
    than the row's full one. */
 .setting .segmented {

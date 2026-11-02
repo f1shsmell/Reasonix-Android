@@ -31,6 +31,7 @@ import {
   openNotificationSettings,
 } from "../native/turn";
 import { loadConnections, rememberConnection } from "../net/savedConnections";
+import { loadHaptics } from "./haptics";
 import { idleLink } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 
@@ -487,6 +488,23 @@ describe("ConnectScreen", () => {
 
       expect(localStorage.getItem("reasonix.folding.v1")).toBe("compact");
       expect(compact.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("remembers the vibration switch", async () => {
+      await renderPrefs();
+
+      const toggle = container.querySelector(
+        '[role="switch"][aria-label="震动"]',
+      ) as HTMLButtonElement;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+      await act(async () => {
+        toggle.click();
+        await Promise.resolve();
+      });
+
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(loadHaptics()).toBe(false);
     });
 
     it("shows the version the build was given", async () => {
