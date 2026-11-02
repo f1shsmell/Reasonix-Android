@@ -254,6 +254,33 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void aVpnNeverStealsANeighbourFromTheWiFi() {
+        // Auto used to return early whenever a VPN was active, so a LAN share
+        // on the Wi-Fi subnet went through the tunnel and timed out.
+        assertEquals("direct", LoopbackProxy.routeFor("auto", true, true));
+        assertEquals("direct", LoopbackProxy.routeFor("bypass", true, true));
+    }
+
+    @Test
+    public void aMeshVpnAddressStaysOnTheTunnel() {
+        // Private is not the same as a neighbour: only a local link can carry
+        // a 172.16.x mesh address, and this phone is not on one.
+        assertEquals("system", LoopbackProxy.routeFor("auto", false, true));
+        assertEquals("system", LoopbackProxy.routeFor("bypass", false, true));
+    }
+
+    @Test
+    public void withoutAVpnAPrivateTargetSkipsTheHttpProxy() {
+        // With no local VPN the default route reaches the LAN; an HTTP proxy
+        // configured for the internet must not answer for that address.
+        assertEquals("no-proxy", LoopbackProxy.routeFor("auto", false, false));
+        assertEquals("no-proxy", LoopbackProxy.routeFor("bypass", false, false));
+        // System is the person's own route, proxy included.
+        assertEquals("system", LoopbackProxy.routeFor("system", false, false));
+        assertEquals("system", LoopbackProxy.routeFor("system", true, true));
+    }
+
+    @Test
     public void devicePollFailuresKeepTheServicesCodes() throws Exception {
         JSONObject expired = LoopbackProxy.pollFailure(
                 "{\"error\":{\"code\":\"expired_token\",\"message\":\"expired\"}}");
