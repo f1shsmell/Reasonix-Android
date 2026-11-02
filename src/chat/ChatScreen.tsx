@@ -447,6 +447,32 @@ function ghostedByHistory(current: Row[], history: Row[]): Set<string> {
 }
 
 /**
+ * Cached optimistic sends history has already settled.
+ *
+ * A pane closed before `turn_started` arrives caches its local user row; the
+ * kernel's history then carries the same message under its own id. Keeping
+ * both draws the send twice, so match one history copy to each local row.
+ * Oldest first leaves the newest unmatched row in place for a send that is
+ * genuinely still in flight.
+ */
+function ghostedLocalUsers(current: Row[], history: Row[]): Set<string> {
+  const remaining = new Map<string, number>();
+  for (const row of history) {
+    if (row.kind !== "user") continue;
+    remaining.set(row.text, (remaining.get(row.text) ?? 0) + 1);
+  }
+  const ghosts = new Set<string>();
+  for (const row of current) {
+    if (row.kind !== "user" || row.local !== true) continue;
+    const count = remaining.get(row.text) ?? 0;
+    if (count === 0) continue;
+    ghosts.add(row.id);
+    remaining.set(row.text, count - 1);
+  }
+  return ghosts;
+}
+
+/**
  * The transcript on screen: the stored conversation, then the live stream.
  *
  * Both are needed and neither stands alone. The kernel answers a first
@@ -597,7 +623,10 @@ function useTranscript(
           // same conversation twice, and a cached bubble history has already
           // finished is the ghost the phone drew twice.
           setTranscript((current) => {
-            const ghosts = ghostedByHistory(current.rows, fresh);
+            const ghosts = new Set([
+              ...ghostedByHistory(current.rows, fresh),
+              ...ghostedLocalUsers(current.rows, fresh),
+            ]);
             return {
               ...current,
               rows: [
@@ -608,22 +637,26 @@ function useTranscript(
           });
         } else {
           // Prefix the snapshot: a frame that landed while the read was in
-          // flight must not be thrown away or moved above its own turn.
-          setTranscript((current) => ({ ...current, rows: [...fresh, ...current.rows] }));
+          // flight must not be thrown away or moved above its own turn. A
+          // cached optimistic copy history has settled is not such a frame.
+          setTranscript((current) => {
+            const ghosts = ghostedLocalUsers(current.rows, fresh);
+            return { ...current, rows: [...fresh, ...current.rows.filter((row) => !ghosts.has(row.id))] };
+          });
         }
       } else {
         // A gap reload is a replacement, not a prefix. A row still streaming
         // is kept because its remaining deltas have no earlier half; a pending
         // prompt or an unconfirmed send is kept because the kernel still knows
         // about it even though history does not.
-        setTranscript((current) => ({
-          ...current,
-          rows: [
-            ...fresh,
-            ...current.rows.filter(keepUnconfirmed),
-          ],
-          gap: false,
-        }));
+        setTranscript((current) => {
+          const ghosts = ghostedLocalUsers(current.rows, fresh);
+          return {
+            ...current,
+            rows: [...fresh, ...current.rows.filter((row) => !ghosts.has(row.id) && keepUnconfirmed(row))],
+            gap: false,
+          };
+        });
       }
       setHistory({ kind: "loaded" });
     });

@@ -122,9 +122,9 @@ export function resetIds(): void {
 /**
  * A row the phone draws while `POST /submit` is in flight.
  *
- * The stream eventually confirms the turn with `turn_started`, which normally
- * carries the same text. That frame must mark this row confirmed rather than
- * append a second copy: the person should see their words immediately, once.
+ * `turn_started` marks the start of the user's turn but carries no text, so it
+ * confirms the oldest unconfirmed row instead of appending one. A text-bearing
+ * frame from an older kernel still matches by text.
  */
 export function optimisticUser(text: string): UserRow {
   return { kind: "user", id: nextId("local"), text, local: true };
@@ -138,12 +138,16 @@ export function removeLocalUser(transcript: Transcript, id: string): Transcript 
   return rows.length === transcript.rows.length ? transcript : { ...transcript, rows };
 }
 
-/** The oldest local row with this text is the one this turn started. */
-function confirmLocalUser(rows: Row[], text: string): Row[] | null {
+/** The oldest unconfirmed row, optionally narrowed to one text, is this turn. */
+function confirmLocalUser(rows: Row[], text?: string): Row[] | null {
   let at = -1;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    if (row?.kind === "user" && row.local === true && row.text === text) {
+    if (
+      row?.kind === "user" &&
+      row.local === true &&
+      (text === undefined || row.text === text)
+    ) {
       at = index;
       break;
     }
@@ -399,7 +403,10 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
         ...(typeof event.modelRef === "string" ? { modelRef: event.modelRef } : {}),
       };
       const text = typeof event.text === "string" ? event.text : "";
-      if (!text) return next;
+      if (!text) {
+        const confirmed = confirmLocalUser(rows);
+        return confirmed ? { ...next, rows: confirmed } : next;
+      }
       const confirmed = confirmLocalUser(rows, text);
       if (confirmed) return { ...next, rows: confirmed };
       return { ...next, rows: [...rows, { kind: "user", id: nextId("user"), text }] };
