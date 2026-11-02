@@ -50,11 +50,7 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
       snapshot.boundary === null &&
       snapshot.version === null);
 
-  if (empty) {
-    return (
-      <p className="group-note">连上电脑后，这里显示它的用量、工具边界与版本。</p>
-    );
-  }
+  if (empty) return null;
 
   const { usage, context, tools, boundary, version } = snapshot;
   const used = context ? percent(context.used, context.window) : 0;
@@ -137,7 +133,6 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
           </div>
         ) : null}
       </section>
-      <p className="group-note">只读；修改仍在电脑上完成。</p>
     </>
   );
 }

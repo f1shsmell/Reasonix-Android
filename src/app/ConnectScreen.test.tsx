@@ -369,7 +369,7 @@ describe("ConnectScreen", () => {
     await renderScreen();
     await press("账号");
 
-    const deviceRow = row("DESKTOP", "windows", "未开启远程访问");
+    const deviceRow = row("DESKTOP", "windows", "未开启");
     expect(deviceRow.disabled).toBe(true);
     expect(connectRelay).not.toHaveBeenCalled();
   });
@@ -769,8 +769,8 @@ describe("ConnectScreen background", () => {
     await press("偏好");
 
     expect(container.textContent).toContain("后台运行");
-    expect(container.textContent).toContain("已开启，提问和完成会提醒");
-    expect(container.textContent).toContain("受限，锁屏后提醒可能被延迟");
+    expect(container.textContent).toContain("已开启");
+    expect(container.textContent).toContain("受限");
 
     await pressRow("通知", "已开启");
     await pressRow("电池优化", "受限");
