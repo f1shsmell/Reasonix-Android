@@ -1,19 +1,26 @@
 /**
- * The desktop's outline icon set, drawn from the same geometry.
+ * The outline icon set the phone header draws.
  *
- * The phone header used text glyphs (`⚙`, `＋`, `⟳`), which rendered at
- * different weights and, for settings, did not read as settings at all. These
- * paths are copied from Studio's `StudioIcon` so the two clients share one
- * visual language; only the names the phone uses are carried here.
+ * The toolbar used text glyphs (`⚙`, `＋`, `⟳`), which rendered at different
+ * weights and, for settings, did not read as settings at all. These paths are
+ * the app's own geometry: a gear, a compose mark, a paper plane and a refresh
+ * arc, all on the same 24-unit grid and stroke.
  */
 
 import type { SVGProps } from "react";
 
 const PATHS = {
-  settings: "M4 7h16M4 17h16M9 4v6M16 14v6",
-  plus: "M12 5v14M5 12h14",
-  refresh: "M20 7a9 9 0 1 0 1 8M20 3v5h-5",
-  arrow: "M12 20V4m-6 6 6-6 6 6",
+  settings: [
+    "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+    "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  ],
+  send: ["m22 2-7 20-4-9-9-4 20-7z", "M22 2 11 13"],
+  compose: [
+    "M12 20h9",
+    "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z",
+    "M15 5l4 4",
+  ],
+  refresh: ["M21 12a9 9 0 1 1-2.64-6.36", "M21 3v6h-6"],
   down: "m6 9 6 6 6-6",
 } as const;
 
@@ -24,19 +31,23 @@ export function StudioIcon({
   className,
   ...props
 }: SVGProps<SVGSVGElement> & { name: StudioIconName }) {
+  const entry = PATHS[name];
+  const paths = typeof entry === "string" ? [entry] : entry;
   return (
     <svg
       className={["studio-icon", className].filter(Boolean).join(" ")}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.5"
+      strokeWidth="1.7"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
       {...props}
     >
-      <path d={PATHS[name]} />
+      {paths.map((path) => (
+        <path key={path} d={path} />
+      ))}
     </svg>
   );
 }
