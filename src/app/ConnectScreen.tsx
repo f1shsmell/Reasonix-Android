@@ -1278,7 +1278,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
 
         {pane === "prefs" ? (
           <>
-        <p className="group-label">外观</p>
+        <p className="group-label">通用</p>
         <section className="group">
           <div className="setting">
             <span className="setting-title">主题</span>

@@ -252,7 +252,7 @@ vertical scroll and the sideways card strip.
 `ConnectScreen` is the settings screen. Beyond the connection and account
 groups it now carries:
 
-- **外观** — `src/app/theme.ts`. Three choices written as `data-theme` on the
+- **通用 · 主题** — `src/app/theme.ts`. Three choices written as `data-theme` on the
   document root, applied in `main.tsx` before the first paint so a cold start
   does not flash the wrong palette. `auto` **removes** the attribute rather
   than writing `data-theme="auto"`, or the `prefers-color-scheme` block would
