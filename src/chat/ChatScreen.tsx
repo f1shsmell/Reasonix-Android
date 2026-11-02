@@ -18,7 +18,7 @@ import {
 } from "../net/approval";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
-import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "../net/attachments";
+import { MAX_FILE_MB, MAX_IMAGE_MB, isolateImageRefs, uploadFile, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
 import { useStreamHaptics } from "./streamHaptics";
@@ -107,6 +107,23 @@ function imageMessage(code: string): string {
   }
 }
 
+function fileMessage(code: string): string {
+  switch (code) {
+    case "attachment.too_large":
+      return `文件太大，上限 ${MAX_FILE_MB} MB。`;
+    case "attachment.empty_name":
+      return "这个文件没有名字。";
+    case "attachment.write_failed":
+      return "桌面端保存文件失败，检查磁盘空间和写入权限。";
+    case "attachment.shape":
+      return "桌面端返回了无法识别的文件。";
+    case "client.offline":
+      return "上传失败：连不上电脑。";
+    default:
+      return `上传失败：${code}`;
+  }
+}
+
 /** Transport codes are stable, but a person needs a sentence, not a code. */
 function sendErrorText(code: string): string {
   switch (code) {
@@ -120,7 +137,7 @@ function sendErrorText(code: string): string {
 }
 
 /**
- * What the + opens: the two ways to bring an image in, and plan mode.
+ * What the + opens: camera, images, files, and plan mode.
  *
  * Plan mode is not a message; it is a runtime setting, so it is toggled here
  * and read back from `/status`, exactly as the desktop does it.
@@ -131,6 +148,7 @@ function AttachSheet({
   onClose,
   onCamera,
   onImage,
+  onFile,
   onPlan,
 }: {
   plan: boolean | undefined;
@@ -138,6 +156,7 @@ function AttachSheet({
   onClose: () => void;
   onCamera: () => void;
   onImage: () => void;
+  onFile: () => void;
   onPlan: () => void;
 }) {
   const planHint =
@@ -175,6 +194,15 @@ function AttachSheet({
               </span>
               <span>图片</span>
               <small>从相册选择</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onFile}>
+              <span className="attach-glyph" aria-hidden="true">
+                ▤
+              </span>
+              <span>文件</span>
+              <small>日志、PDF 等，最多 {MAX_FILE_MB} MB</small>
             </button>
           </li>
           <li>
@@ -786,7 +814,7 @@ export function ChatScreen({
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
   const [attachments, setAttachments] = useState<
-    { ref: string; name: string; url: string }[]
+    { ref: string; name: string; url?: string; image?: boolean }[]
   >([]);
   const [attachError, setAttachError] = useState("");
   const [attaching, setAttaching] = useState(false);
@@ -828,6 +856,7 @@ export function ChatScreen({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const imageRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const lastRetry = useRef<string>("");
   /** Restored once per mount, after the stored history has been drawn. */
   const restoredReading = useRef(false);
@@ -1194,7 +1223,7 @@ export function ChatScreen({
   // The preview URL is ours to release. This runs on unmount only: rerunning
   // per change would revoke the images that are still in the composer.
   useEffect(() => {
-    const urls = attachments.map((entry) => entry.url);
+    const urls = attachments.flatMap((entry) => (entry.url ? [entry.url] : []));
     return () => {
       for (const url of urls) URL.revokeObjectURL(url);
     };
@@ -1209,7 +1238,7 @@ export function ChatScreen({
       const kept = current.filter((entry) => draft.includes(entry.ref));
       if (kept.length === current.length) return current;
       for (const entry of current) {
-        if (!kept.includes(entry)) URL.revokeObjectURL(entry.url);
+        if (!kept.includes(entry) && entry.url) URL.revokeObjectURL(entry.url);
       }
       return kept;
     });
@@ -1217,6 +1246,10 @@ export function ChatScreen({
 
   const pickImage = useCallback(() => {
     imageRef.current?.click();
+  }, []);
+
+  const pickFile = useCallback(() => {
+    fileRef.current?.click();
   }, []);
 
   const openCamera = useCallback(() => {
@@ -1252,33 +1285,42 @@ export function ChatScreen({
   }, [runtime, plan, planBusy]);
 
   /**
-   * Upload every chosen image, then append their references in one edit.
+   * Upload the chosen files, then append their references in one edit.
    *
    * The picker accepts several at once, and choosing again appends rather than
    * replaces: a phone screenshot flow is "one more thing to show", and making
-   * the person re-pick the first image would be worse than the single-image
+   * the person re-pick the first file would be worse than the single-file
    * limit it replaces. Each upload is independent, so one failure names that
    * file and the others still land.
    */
-  const onImage = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      event.target.value = "";
+  const uploadSelected = useCallback(
+    async (files: File[], allImages: boolean) => {
       if (files.length === 0 || !runtime) return;
       setAttachError("");
       setAttaching(true);
 
-      const uploaded: { ref: string; name: string; url: string }[] = [];
+      const uploaded: { ref: string; name: string; url?: string; image?: boolean }[] = [];
       const failures: string[] = [];
       for (const file of files) {
-        const preview = URL.createObjectURL(file);
-        const result = await uploadImage(runtime.base, file);
+        const image = allImages || file.type.startsWith("image/");
+        const preview = image ? URL.createObjectURL(file) : "";
+        const result = image
+          ? await uploadImage(runtime.base, file)
+          : await uploadFile(runtime.base, file);
         if (!result.ok) {
-          URL.revokeObjectURL(preview);
-          failures.push(`${file.name || "图片"}：${imageMessage(result.code)}`);
+          if (preview) URL.revokeObjectURL(preview);
+          failures.push(
+            `${file.name || (image ? "图片" : "文件")}：${
+              image ? imageMessage(result.code) : fileMessage(result.code)
+            }`,
+          );
           continue;
         }
-        uploaded.push({ ref: result.attachment.ref, name: file.name || "图片", url: preview });
+        uploaded.push({
+          ref: result.attachment.ref,
+          name: file.name || (image ? "图片" : "文件"),
+          ...(preview ? { url: preview, image: true } : {}),
+        });
       }
 
       setAttaching(false);
@@ -1299,11 +1341,29 @@ export function ChatScreen({
     [runtime, grow],
   );
 
+  const onImage = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      void uploadSelected(files, true);
+    },
+    [uploadSelected],
+  );
+
+  const onFile = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      void uploadSelected(files, false);
+    },
+    [uploadSelected],
+  );
+
   const removeAttachment = useCallback((ref: string) => {
     setDraft((current) => current.replace(ref, "").replace(/[ \t]+\n/g, "\n").trimEnd());
     setAttachments((current) => {
       const removed = current.find((entry) => entry.ref === ref);
-      if (removed) URL.revokeObjectURL(removed.url);
+      if (removed?.url) URL.revokeObjectURL(removed.url);
       return current.filter((entry) => entry.ref !== ref);
     });
     setAttachError("");
@@ -1335,7 +1395,7 @@ export function ChatScreen({
         setAttachments((current) => {
           const kept = current.filter((entry) => !sentAttachments.includes(entry));
           for (const entry of current) {
-            if (!kept.includes(entry)) URL.revokeObjectURL(entry.url);
+            if (!kept.includes(entry) && entry.url) URL.revokeObjectURL(entry.url);
           }
           return kept;
         });
@@ -1414,7 +1474,7 @@ export function ChatScreen({
         forgetDraft();
         setDraft("");
         setAttachments((current) => {
-          for (const entry of current) URL.revokeObjectURL(entry.url);
+          for (const entry of current) if (entry.url) URL.revokeObjectURL(entry.url);
           return [];
         });
       }
@@ -1746,18 +1806,31 @@ export function ChatScreen({
           capture="environment"
           onChange={(event) => void onImage(event)}
         />
+        <input
+          ref={fileRef}
+          className="file-input"
+          type="file"
+          multiple
+          onChange={(event) => void onFile(event)}
+        />
         {attachments.length > 0 ? (
           <div className="composer-images">
             {attachments.map((entry, index) => (
               <div className="attachment" key={entry.ref}>
-                <img src={entry.url} alt="已选择的图片" />
+                {entry.url ? (
+                  <img src={entry.url} alt="已选择的图片" />
+                ) : (
+                  <span className="attachment-file" aria-hidden="true">
+                    {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
+                  </span>
+                )}
                 <span className="attachment-index" aria-hidden="true">
                   {index + 1}
                 </span>
                 <span className="attachment-name">{entry.name}</span>
                 <button
                   type="button"
-                  aria-label={`移除图片 ${entry.name}`}
+                  aria-label={`移除附件 ${entry.name}`}
                   onClick={() => removeAttachment(entry.ref)}
                 >
                   ×
@@ -1903,6 +1976,10 @@ export function ChatScreen({
           onImage={() => {
             setAttachSheet(false);
             pickImage();
+          }}
+          onFile={() => {
+            setAttachSheet(false);
+            pickFile();
           }}
           onPlan={() => void togglePlan()}
         />

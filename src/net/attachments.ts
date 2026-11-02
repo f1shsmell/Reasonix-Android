@@ -1,20 +1,22 @@
 /**
- * Images entering a turn.
+ * Files entering a turn.
  *
- * The kernel stores an uploaded image under `.reasonix/attachments` and answers
- * with the `@path` token a message must contain. It sniffs the bytes itself, so
- * this module never decides that a file is an image from its name alone; it only
- * refuses clearly impossible uploads before spending the bytes.
+ * The kernel stores an uploaded file under `.reasonix/attachments` and answers
+ * with the `@path` token a message must contain. Images are sniffed by the
+ * kernel; this module only refuses clearly impossible uploads before spending
+ * the bytes.
  *
- * This uses the JSON endpoint, not `/attachments/upload`: the current kernel
- * refuses the raw route with `request.bad_content_type` once it is reached
- * through the runtime prefix, while the JSON route was verified live. The
- * kernel's own cap for an image is 10 MB, well under the JSON body bound.
+ * Both paths use the JSON endpoint. The raw `/attachments/upload` route is
+ * refused once reached through the runtime prefix (`request.bad_content_type`),
+ * while the JSON route was verified live. The kernel's image cap is 10 MB; its
+ * JSON attachment body allows 25 MB, but the app's proxy caps a request body at
+ * 32 MB and base64 inflates by a third, so files stop at 20 MB.
  */
 
 import { UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "./http";
 
 export const MAX_IMAGE_MB = 10;
+export const MAX_FILE_MB = 20;
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -82,15 +84,12 @@ async function base64Of(file: File): Promise<string> {
   return btoa(binary);
 }
 
-export async function uploadImage(base: string, file: File): Promise<AttachmentResult> {
-  const name = file.name || "image";
-  const mime = mimeFor(name, file.type);
-  if (!mime.startsWith("image/")) {
-    return { ok: false, code: "attachment.unsupported_image" };
-  }
-  if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
-    return { ok: false, code: "attachment.too_large" };
-  }
+async function upload(
+  base: string,
+  name: string,
+  mime: string,
+  file: File,
+): Promise<AttachmentResult> {
   try {
     const data = await base64Of(file);
     const response = await fetchWithTimeout(`${base}/attachments`, {
@@ -115,4 +114,27 @@ export async function uploadImage(base: string, file: File): Promise<AttachmentR
   } catch {
     return { ok: false, code: "client.offline" };
   }
+}
+
+export async function uploadImage(base: string, file: File): Promise<AttachmentResult> {
+  const name = file.name || "image";
+  const mime = mimeFor(name, file.type);
+  if (!mime.startsWith("image/")) {
+    return { ok: false, code: "attachment.unsupported_image" };
+  }
+  if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+    return { ok: false, code: "attachment.too_large" };
+  }
+  return upload(base, name, mime, file);
+}
+
+/** Any file the person picked; the kernel stores it and the turn uses `@path`. */
+export async function uploadFile(base: string, file: File): Promise<AttachmentResult> {
+  const name = file.name || "attachment";
+  if (!name.trim()) return { ok: false, code: "attachment.empty_name" };
+  if (file.size > MAX_FILE_MB * 1024 * 1024) {
+    return { ok: false, code: "attachment.too_large" };
+  }
+  const mime = file.type || "application/octet-stream";
+  return upload(base, name, mime, file);
 }

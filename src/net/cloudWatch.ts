@@ -75,10 +75,30 @@ declare global {
   interface Window {
     __reasonixCloudWatch?: () => void;
     __reasonixCloudWatchResult?: (json: string) => void;
+    __reasonixCloudDecide?: (payload: { path: string; body: string }) => void;
   }
 }
 
-/** Install the native `evaluateJavascript` entry point. */
+async function sendDecision(path: string, body: string): Promise<void> {
+  if (!relayAlive()) {
+    const device = relayDevice();
+    if (!device) throw new Error("relay.offline");
+    await ensureRelay(device);
+  }
+  const response = await fetchWithTimeout(
+    path,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body,
+    },
+    15_000,
+  );
+  if (!response.ok) throw new Error(`http.${response.status}`);
+}
+
+/** Install the native `evaluateJavascript` entry points. */
 export function installCloudWatchBridge(): void {
   if (typeof window === "undefined") return;
   window.__reasonixCloudWatch = () => {
@@ -88,6 +108,18 @@ export function installCloudWatchBridge(): void {
       } catch {
         // The page may be gone under the service.
       }
+    });
+  };
+  window.__reasonixCloudDecide = (payload) => {
+    if (
+      !payload ||
+      typeof payload.path !== "string" ||
+      typeof payload.body !== "string"
+    ) {
+      return;
+    }
+    void sendDecision(payload.path, payload.body).catch(() => {
+      // The notification stays; opening the chat is still the fallback.
     });
   };
 }

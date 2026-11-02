@@ -6,6 +6,9 @@ import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 public class MainActivity extends BridgeActivity {
     /** Whether an activity is resumed; the turn service uses it to stay quiet. */
     public static volatile boolean visible = false;
@@ -86,6 +89,27 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void deliver(String json) {
             TurnService.deliverCloud(json);
+        }
+    }
+
+    /** Hand one decision to the page, which posts it through the relay. */
+    static void requestCloudDecision(String path, String body) {
+        WebView view = webView;
+        if (view == null) return;
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("path", path);
+            payload.put("body", body);
+            String js = "window.__reasonixCloudDecide&&window.__reasonixCloudDecide(" + payload + ")";
+            view.post(() -> {
+                try {
+                    view.evaluateJavascript(js, null);
+                } catch (Throwable ignored) {
+                    // The page was destroyed before the action reached it.
+                }
+            });
+        } catch (JSONException ignored) {
+            // The path and body are built from parsed JSON; this cannot happen.
         }
     }
 }

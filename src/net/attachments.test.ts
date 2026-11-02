@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_IMAGE_MB, isolateImageRefs, uploadImage } from "./attachments";
+import {
+  MAX_FILE_MB,
+  MAX_IMAGE_MB,
+  isolateImageRefs,
+  uploadFile,
+  uploadImage,
+} from "./attachments";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -117,5 +123,46 @@ describe("uploadImage", () => {
       ok: false,
       code: "client.offline",
     });
+  });
+});
+
+describe("uploadFile", () => {
+  it("sends a non-image through the same verified endpoint", async () => {
+    const file = new File(["2026-11-02 log"], "app.log", { type: "text/plain" });
+    const fetchMock = vi.fn().mockResolvedValue(
+      json({ path: ".reasonix/attachments/app.log", ref: "@.reasonix/attachments/app.log" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await uploadFile("/rt/r1", file);
+
+    expect(result).toEqual({
+      ok: true,
+      attachment: {
+        path: ".reasonix/attachments/app.log",
+        ref: "@.reasonix/attachments/app.log",
+      },
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      name: string;
+      mime: string;
+      data: string;
+    };
+    expect(body.name).toBe("app.log");
+    expect(body.mime).toBe("text/plain");
+    expect(body.data).toBeTruthy();
+  });
+
+  it("refuses a file over the app's body limit before spending the bytes", async () => {
+    const file = new File([], "huge.bin");
+    Object.defineProperty(file, "size", { value: MAX_FILE_MB * 1024 * 1024 + 1 });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(uploadFile("/rt/r1", file)).resolves.toEqual({
+      ok: false,
+      code: "attachment.too_large",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
