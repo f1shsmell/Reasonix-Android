@@ -43,8 +43,6 @@ public class TurnPlugin extends Plugin {
         if (root != null && !root.isEmpty()) intent.putExtra(TurnService.EXTRA_ROOT, root);
         String runtime = call.getString("runtimeId");
         if (runtime != null && !runtime.isEmpty()) intent.putExtra(TurnService.EXTRA_RUNTIME, runtime);
-        String mode = call.getString("mode");
-        if (mode != null && !mode.isEmpty()) intent.putExtra(TurnService.EXTRA_MODE, mode);
         launch(intent);
         call.resolve(new JSObject());
     }
@@ -62,14 +60,13 @@ public class TurnPlugin extends Plugin {
         Intent intent = new Intent(getContext(), TurnService.class);
         intent.setAction(TurnService.ACTION_START);
         intent.putExtra(TurnService.EXTRA_CLOUD, true);
-        intent.putExtra(TurnService.EXTRA_MODE, "cloud");
         launch(intent);
         call.resolve(new JSObject());
     }
 
     @PluginMethod
     public void stopCloudWatch(PluginCall call) {
-        getContext().stopService(new Intent(getContext(), TurnService.class));
+        TurnService.stopCloudWatchIfCloud();
         call.resolve(new JSObject());
     }
 

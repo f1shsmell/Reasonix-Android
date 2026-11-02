@@ -15,8 +15,6 @@ export interface TurnLink {
   /** The project root, carried so the notification can open the chat. */
   root?: string;
   runtimeId?: string;
-  /** How the kernel is reached, named in the ongoing notification. */
-  mode?: "lan" | "cloud";
 }
 
 export interface BackgroundStatus {
@@ -73,7 +71,6 @@ export function startTurnNotification(link: TurnLink = {}): void {
   if (link.base) options.base = link.base;
   if (link.root) options.root = link.root;
   if (link.runtimeId) options.runtimeId = link.runtimeId;
-  if (link.mode) options.mode = link.mode;
   void TurnNotifications.start(options).catch(() => {
     // The notification is a convenience; the turn is not.
   });

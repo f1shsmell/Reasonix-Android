@@ -128,7 +128,6 @@ export function App() {
   const link = useLink(connection);
   /** Cloud background reminders; default off and only meaningful on a cloud link. */
   const [cloudWatch, setCloudWatchState] = useState(() => loadCloudWatch());
-  const cloudWatchRunning = useRef(false);
   const pickCloudWatch = useCallback((on: boolean) => {
     saveCloudWatch(on);
     setCloudWatchState(on);
@@ -309,28 +308,23 @@ export function App() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     if (link.state.mode !== "lan" || !hasWatchedTurns) return;
-    startTurnNotification({ mode: "lan" });
+    startTurnNotification();
   }, [link.state.mode, hasWatchedTurns]);
 
   /**
-   * Start the cloud watcher while the app is still in the foreground.
+   * Keep the shared service in the mode the link and the switch ask for.
    *
-   * Android 12+ refuses a foreground-service start from the background, so the
-   * switch has to arm it here. The service itself skips polling while the app
-   * is visible and takes over when it goes away.
-   *
-   * Both watchers share TurnService. When the link changes to LAN with a turn
-   * to watch, the LAN effect above has already re-armed the service; stopping
-   * it here would kill that watch, so the stop is skipped.
+   * A process-local ref is not evidence that the service matches it: an
+   * activity can be recreated while a cloud watcher keeps running, and the LAN
+   * link would then leave it in cloud mode. The native stop is a no-op unless
+   * the service is actually a cloud watcher, so reconciling on every mode
+   * change cannot kill a LAN watch.
    */
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    const wanted = cloudWatch && link.state.mode === "cloud";
-    if (wanted === cloudWatchRunning.current) return;
-    cloudWatchRunning.current = wanted;
-    if (wanted) startCloudWatch();
-    else if (!(link.state.mode === "lan" && hasWatchedTurns)) stopCloudWatch();
-  }, [cloudWatch, link.state.mode, hasWatchedTurns]);
+    if (cloudWatch && link.state.mode === "cloud") startCloudWatch();
+    else stopCloudWatch();
+  }, [cloudWatch, link.state.mode]);
 
   const [actionError, setActionError] = useState("");
   /** A peer notification waits for the boot link to settle before switching. */
@@ -404,7 +398,6 @@ export function App() {
           base: opened.runtime.base,
           root,
           runtimeId: opened.runtime.id,
-          ...(link.state.mode ? { mode: link.state.mode } : {}),
         });
       }
       setActionError("");

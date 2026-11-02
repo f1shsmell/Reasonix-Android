@@ -728,7 +728,7 @@ describe("App", () => {
     await renderApp();
     await settle();
 
-    expect(startTurnNotification).toHaveBeenCalledWith({ mode: "lan" });
+    expect(startTurnNotification).toHaveBeenCalled();
   });
 
   it("opens another computer's blocked conversation by switching to it", async () => {
@@ -869,7 +869,6 @@ describe("App", () => {
       base: "/rt/r9",
       root: "/work/app",
       runtimeId: "r9",
-      mode: "lan",
     });
     expect(container.querySelector(".dispatch-sheet")).toBeNull();
     expect(container.querySelector('[data-testid="chat"]')).toBeNull();
