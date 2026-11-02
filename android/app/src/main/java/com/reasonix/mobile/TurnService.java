@@ -886,6 +886,10 @@ public class TurnService extends Service {
             connection = open(path);
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
+            // Name the app's own page: the proxy still refuses a foreign
+            // Origin before routing a write.
+            connection.setRequestProperty("Origin", "http://127.0.0.1:" + LoopbackProxy.PORT);
+            connection.setRequestProperty("Referer", "http://127.0.0.1:" + LoopbackProxy.PORT + "/");
             connection.setRequestProperty("Content-Type", "application/json");
             byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(data.length);
