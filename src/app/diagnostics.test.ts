@@ -13,6 +13,18 @@ vi.mock("../native/turn", () => ({
     manufacturer: "Google",
     exempt: false,
     notifications: true,
+    cloud: {
+      active: true,
+      cloud: true,
+      visible: false,
+      pending: false,
+      misses: 0,
+      watches: 1,
+      code: "ok",
+      runtimes: 1,
+      statuses: 1,
+      asks: 1,
+    },
   })),
 }));
 vi.mock("../native/networkWatch", () => ({
@@ -55,6 +67,8 @@ describe("buildDiagnostics", () => {
     expect(text).toContain("Stream: open");
     expect(text).toContain("wifi");
     expect(text).toContain("Cloud background reminders: on");
+    expect(text).toContain("Cloud watch: active");
+    expect(text).toContain("Cloud sweep: last=ok · runtimes=1 · statuses=1 · asks=1");
     expect(text).not.toContain("token");
     expect(text).not.toContain("cookie");
   });

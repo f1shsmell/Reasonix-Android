@@ -26,6 +26,7 @@ export async function buildDiagnostics(input: DiagnosticInput): Promise<string> 
     readNetworkStatus(),
   ]);
   const { link, snapshot, cloudWatch } = input;
+  const cloud = native?.cloud;
   const error = link.error;
   const route = [link.phase, link.mode, link.target, link.name]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
@@ -51,6 +52,14 @@ export async function buildDiagnostics(input: DiagnosticInput): Promise<string> 
         : "unavailable"
     }`,
     `Cloud background reminders: ${cloudWatch ? "on" : "off"}`,
+    `Cloud watch: ${
+      cloud?.active ? (cloud.cloud ? "active" : "lan") : "inactive"
+    } · visible=${cloud?.visible ? "yes" : "no"} · pending=${cloud?.pending ? "yes" : "no"} · watches=${
+      cloud?.watches ?? 0
+    } · misses=${cloud?.misses ?? 0}`,
+    `Cloud sweep: last=${cloud?.code || "none"} · runtimes=${
+      cloud?.runtimes ?? 0
+    } · statuses=${cloud?.statuses ?? 0} · asks=${cloud?.asks ?? 0}`,
     `At: ${new Date().toISOString()}`,
   ];
   return lines.join("\n");

@@ -142,6 +142,12 @@ public class TurnService extends Service {
     private volatile boolean cloudPending = false;
     private volatile int cloudGeneration = 0;
     private volatile int cloudMisses = 0;
+    /** The last sweep's outcome, for diagnostics and the summary. */
+    private volatile String cloudLastCode = "";
+    private volatile long cloudLastAt = 0;
+    private volatile int cloudLastRuntimes = 0;
+    private volatile int cloudLastStatuses = 0;
+    private volatile int cloudLastAsks = 0;
     private PowerManager.WakeLock cloudWakeLock;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService decisions = Executors.newSingleThreadExecutor();
@@ -430,15 +436,21 @@ public class TurnService extends Service {
      * Ask the WebView for one cloud snapshot.
      *
      * The relay is a WebView transport; native code only evaluates the bridge
-     * installed by `net/cloudWatch.ts`. The visible app polls itself, so this
-     * is skipped while the activity is on screen.
+     * installed by `net/cloudWatch.ts`. A sweep runs even while the activity is
+     * visible so the summary stays current, and the wake lock is taken every
+     * time because the visibility flag cannot prove the page will run.
      */
     private void pollCloud() {
         if (stopping || !cloud) return;
-        if (MainActivity.visible) return;
         if (cloudPending) return;
         if (!MainActivity.requestCloudSweep()) {
+            cloudLastCode = "bridge.unavailable";
+            cloudLastAt = System.currentTimeMillis();
+            cloudLastRuntimes = 0;
+            cloudLastStatuses = 0;
+            cloudLastAsks = 0;
             if (++cloudMisses >= 2) stopSelf();
+            else refreshRunning();
             return;
         }
         cloudPending = true;
@@ -448,10 +460,39 @@ public class TurnService extends Service {
             if (!cloudPending || generation != cloudGeneration || stopping) return;
             cloudPending = false;
             releaseCloudWakeLock();
+            cloudLastCode = "client.timeout";
+            cloudLastAt = System.currentTimeMillis();
+            cloudLastRuntimes = 0;
+            cloudLastStatuses = 0;
+            cloudLastAsks = 0;
             cloudMisses = 0;
+            Log.d(TAG, "cloud sweep timed out");
             notePoll(false);
             refreshRunning();
         }, CLOUD_TIMEOUT_MS);
+    }
+
+    /** The cloud watcher's last sweep, for the About page's diagnostics. */
+    static JSONObject cloudStatus() {
+        JSONObject out = new JSONObject();
+        TurnService service = active;
+        if (service == null) return out;
+        try {
+            out.put("active", true);
+            out.put("cloud", service.cloud);
+            out.put("visible", MainActivity.visible);
+            out.put("pending", service.cloudPending);
+            out.put("misses", service.cloudMisses);
+            out.put("watches", service.watches.size());
+            out.put("code", service.cloudLastCode);
+            out.put("at", service.cloudLastAt);
+            out.put("runtimes", service.cloudLastRuntimes);
+            out.put("statuses", service.cloudLastStatuses);
+            out.put("asks", service.cloudLastAsks);
+        } catch (Exception ignored) {
+            // Every field above is a scalar or a size; none can fail.
+        }
+        return out;
     }
 
     /** The WebView's result bridge; called on its own thread. */
@@ -481,7 +522,13 @@ public class TurnService extends Service {
         cloudPending = false;
         releaseCloudWakeLock();
         CloudSnapshot snapshot = CloudSnapshot.parse(json);
+        cloudLastAt = System.currentTimeMillis();
+        cloudLastCode = snapshot.ok ? "ok" : (snapshot.code.isEmpty() ? "watch.failed" : snapshot.code);
         if (!snapshot.ok) {
+            cloudLastRuntimes = 0;
+            cloudLastStatuses = 0;
+            cloudLastAsks = 0;
+            Log.d(TAG, "cloud sweep failed: " + cloudLastCode);
             cloudMisses = 0;
             notePoll(false);
             refreshRunning();
@@ -505,10 +552,19 @@ public class TurnService extends Service {
             Watch gone = watches.remove(id);
             if (gone != null) finishWatch(gone);
         }
+        int asks = 0;
         for (Watch watch : watches.values()) {
             String status = snapshot.statuses.get(watch.runtime);
-            if (status != null) applyStatus(watch, AskStatus.parse(status));
+            if (status == null) continue;
+            AskStatus parsed = AskStatus.parse(status);
+            asks += parsed.count;
+            applyStatus(watch, parsed);
         }
+        cloudLastRuntimes = snapshot.runtimes.size();
+        cloudLastStatuses = snapshot.statuses.size();
+        cloudLastAsks = asks;
+        Log.d(TAG, "cloud sweep ok: runtimes=" + cloudLastRuntimes
+                + " statuses=" + cloudLastStatuses + " asks=" + asks);
         cloudMisses = 0;
         notePoll(true);
         refreshRunning();
@@ -1039,10 +1095,16 @@ public class TurnService extends Service {
                         : waiting + " 个待处理");
             } else if (running > 0) {
                 text = where + running + " 个会话运行中";
+            } else if (!watches.isEmpty()) {
+                text = "没有正在运行的会话";
+            } else if (!"cloud".equals(mode)) {
+                text = "正在准备…";
+            } else if (cloudLastCode.isEmpty()) {
+                text = "后台提醒已开启，App 在后台时留意";
+            } else if (!"ok".equals(cloudLastCode)) {
+                text = "云端提醒暂时读不到会话";
             } else {
-                text = watches.isEmpty()
-                        ? ("cloud".equals(mode) ? "后台提醒已开启，App 在后台时留意" : "正在准备…")
-                        : "没有正在运行的会话";
+                text = "云端提醒：没有打开的会话";
             }
         }
         String channel = "cloud".equals(mode) ? CHANNEL_CLOUD : CHANNEL_RUNNING;
