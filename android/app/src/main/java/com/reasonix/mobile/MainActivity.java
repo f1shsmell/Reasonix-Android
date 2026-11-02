@@ -26,6 +26,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PairPlugin.class);
         registerPlugin(RelaySocketPlugin.class);
         registerPlugin(TurnPlugin.class);
+        registerPlugin(UpdaterPlugin.class);
         super.onCreate(savedInstanceState);
         WebView view = getBridge() == null ? null : getBridge().getWebView();
         ownWebView = view;

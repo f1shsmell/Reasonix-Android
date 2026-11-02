@@ -19,15 +19,19 @@
 2. **写发布说明**：新增 `release-notes/android/X.Y.Z.md`。
    - 分「新增 / 变更 / 修复」，写给用户看，不写实现流水账。
    - 关联 issue 或提交（如 `关联 #123`）。
-3. **合并到 main**，CI 全绿。
-4. **打标签**：在 main 的发布提交上 `git tag -a vX.Y.Z -m "Reasonix For Android X.Y.Z"`，推送 tag。
-5. **release 工作流**会先校验，再构建并发布：
+3. **生成更新清单**：`npm run manifest`。它读取版本号、`versionCode` 和发布说明，
+   写入仓库根 `latest.json`（tag、资产名、说明与下载镜像）。应用内更新和镜像都读
+   这份文件，所以它必须和这次发布同时提交。
+4. **合并到 main**，CI 全绿。
+5. **打标签**：在 main 的发布提交上 `git tag -a vX.Y.Z -m "Reasonix For Android X.Y.Z"`，推送 tag。
+6. **release 工作流**会先校验，再构建并发布：
    - tag 必须是 `vX.Y.Z`（可带预发布后缀）；
    - tag 必须在 `main` 上；
    - 必须存在 `release-notes/android/X.Y.Z.md`；
    - `package.json` 与 `android/gradle.properties` 的版本必须等于 tag；
+   - `latest.json` 的 tag、version、versionCode、APK 名和说明必须与这次发布一致；
    - GitHub Release 的正文直接使用这份发布说明，不自动生成。
-6. 发布失败可用 `workflow_dispatch` 输入**已存在的 tag** 重跑；重跑会替换同名资产，不会另起一个版本。
+7. 发布失败可用 `workflow_dispatch` 输入**已存在的 tag** 重跑；重跑会替换同名资产，不会另起一个版本。
    勾选 `dry_run` 则只还原密钥、构建 `assembleRelease` 并验签，不发布、不碰已有资产。
 
 ## 签名
@@ -49,4 +53,6 @@ Release 用固定密钥签名，密钥不进仓库：
 - 不要为单个修复升版本或打 tag。
 - 不要从功能分支发版。
 - 不要在没有发布说明或版本号不一致时强行发版；工作流会拒绝。
+- 不要手改 `latest.json` 的 tag、versionCode、APK 名或说明；这些由 `npm run manifest`
+  生成并被工作流校验。要换下载镜像时只改 `mirrors` 数组，不动版本字段。
 - 不要手改已发布资产；出问题发下一个 patch。

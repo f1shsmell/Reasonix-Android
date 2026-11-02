@@ -81,6 +81,55 @@ jobs:
           { echo "tag=$tag"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
           echo "releasing $tag at $sha"
 
+      - name: Check latest.json describes this release
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          sha, version = os.environ["SHA"], os.environ["VERSION"]
+
+          def read(path):
+              return subprocess.check_output(["git", "show", f"{sha}:{path}"]).decode("utf-8")
+
+          props = read("android/gradle.properties")
+          code = next(
+              (int(line.split("=", 1)[1]) for line in props.splitlines()
+               if line.startswith("reasonix.versionCode=")),
+              0,
+          )
+          try:
+              raw = read("latest.json")
+          except subprocess.CalledProcessError:
+              # v0.2.1 predates the in-app updater; its recovery rebuild has no manifest.
+              legacy = tuple(int(part) for part in version.split("-")[0].split("."))
+              if legacy <= (0, 2, 1):
+                  print(f"::warning::tag {version} predates latest.json; publishing without it")
+                  sys.exit(0)
+              print("::error::latest.json is missing from the tagged commit; run npm run manifest")
+              sys.exit(1)
+          manifest = json.loads(raw)
+          notes = read(f"release-notes/android/{version}.md").replace("\r\n", "\n").strip()
+          apk = f"reasonix-for-android-{version}.apk"
+          problems = []
+          if manifest.get("tag") != f"v{version}":
+              problems.append(f"tag is {manifest.get('tag')!r}, expected v{version}")
+          if manifest.get("version") != version:
+              problems.append(f"version is {manifest.get('version')!r}, expected {version}")
+          if manifest.get("versionCode") != code:
+              problems.append(f"versionCode is {manifest.get('versionCode')!r}, expected {code}")
+          if manifest.get("apk") != apk:
+              problems.append(f"apk is {manifest.get('apk')!r}, expected {apk}")
+          if str(manifest.get("notes", "")).replace("\r\n", "\n").strip() != notes:
+              problems.append("notes do not match the release note file")
+          if problems:
+              print("::error::latest.json does not describe this release: " + "; ".join(problems))
+              sys.exit(1)
+          print(f"latest.json matches {version} (versionCode {code})")
+          PY
+
   build:
     name: Build APK
     needs: resolve
@@ -140,11 +189,13 @@ jobs:
         run: |
           asset="reasonix-for-android-${VERSION}.apk"
           notes="release-notes/android/${VERSION}.md"
+          files=("$asset")
+          if [[ -f latest.json ]]; then files+=("latest.json"); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$asset" --clobber
+            gh release upload "$TAG" "${files[@]}" --clobber
             gh release edit "$TAG" --notes-file "$notes"
           else
-            gh release create "$TAG" "$asset" \
+            gh release create "$TAG" "${files[@]}" \
               --title "Reasonix For Android ${VERSION}" \
               --notes-file "$notes" \
               --verify-tag

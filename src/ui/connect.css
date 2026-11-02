@@ -679,6 +679,42 @@ label.setting .setting-title {
   font-variant-numeric: tabular-nums;
 }
 
+/* The update row keeps the settings row shape while it downloads: the meter
+   sits under the subtitle in the main column, so the value column stays put. */
+.update-setting .setting-title {
+  white-space: normal;
+}
+
+/* Checking and downloading disable the row; the progress it reports is still
+   the point of the row, so it does not fade like a dead button. */
+.update-setting:disabled {
+  opacity: 1;
+}
+
+.update-setting .setting-sub {
+  white-space: normal;
+}
+
+.update-setting.error .setting-title {
+  color: var(--bad);
+}
+
+.update-meter {
+  display: block;
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.update-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
 /* ---- switch ---- */
 
 /* The button carries a full 44 px tap target; the track inside it is the part

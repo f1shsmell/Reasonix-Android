@@ -62,6 +62,12 @@ vi.mock("../native/turn", () => ({
   openBatterySettings: vi.fn(),
   openNotificationSettings: vi.fn(),
 }));
+vi.mock("../native/update", () => ({
+  checkForUpdate: vi.fn(),
+  installUpdate: vi.fn(),
+  launchInstaller: vi.fn(),
+  onUpdateProgress: vi.fn(async () => ({ remove: vi.fn() })),
+}));
 vi.mock("../net/relayStore", () => ({ clearRelayDevice: vi.fn() }));
 vi.mock("../net/fleet", () => ({ forgetFleetPeer: vi.fn(async () => {}) }));
 vi.mock("../net/relay", () => ({
