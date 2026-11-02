@@ -77,6 +77,8 @@ import {
 import type { BackgroundStatus } from "../native/turn";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
+import { loadHaptics, saveHaptics, vibrate } from "./haptics";
+import { Switch } from "./Switch";
 import { FOLD_CHOICES, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
@@ -188,6 +190,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [netPolicy, setNetPolicyState] = useState<NetPolicy>(() => loadNetPolicy());
   /** What Enter does in the composer: send, or a line break for hardware keyboards. */
   const [enterPref, setEnterPrefState] = useState<EnterPref>(() => loadEnterPref());
+  /** Whether held rows, picked-up projects and streamed answers buzz. */
+  const [haptics, setHapticsState] = useState(() => loadHaptics());
   /** Computers this phone has connected to before, newest first. */
   const [saved, setSaved] = useState<SavedConnection[]>(() => loadConnections());
   /** What the system allows in the background; null where it cannot answer. */
@@ -411,6 +415,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const pickEnterPref = useCallback((pref: EnterPref) => {
     setEnterPrefState(pref);
     saveEnterPref(pref);
+  }, []);
+
+  const pickHaptics = useCallback((enabled: boolean) => {
+    setHapticsState(enabled);
+    saveHaptics(enabled);
+    // Turning it on is the one moment a sample is useful: it proves the
+    // switch reached the device.
+    if (enabled) vibrate(10);
   }, []);
 
   const connect = useCallback(
@@ -1266,7 +1278,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
 
         {pane === "prefs" ? (
           <>
-        <p className="group-label">外观</p>
+        <p className="group-label">通用</p>
         <section className="group">
           <div className="setting">
             <span className="setting-title">主题</span>
@@ -1294,6 +1306,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               options={ENTER_CHOICES}
               onChange={pickEnterPref}
             />
+          </div>
+          <div className="setting">
+            <span className="setting-title">震动</span>
+            <Switch checked={haptics} onChange={pickHaptics} ariaLabel="震动" />
           </div>
         </section>
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Haptics, ImpactStyle } from "@capacitor/haptics";
+import { hapticTick } from "../app/haptics";
 import type { Row } from "./transcript";
 
 /**
@@ -71,6 +71,6 @@ export function useStreamHaptics(rows: readonly Row[]): void {
     previous.current = latest;
     if (!tick) return;
     lastTickAt.current = now;
-    void Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined);
+    void hapticTick();
   }, [rows]);
 }
