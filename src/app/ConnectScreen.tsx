@@ -87,6 +87,8 @@ import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
 import { swipeDirection } from "./swipe";
+import { useUpdater } from "./useUpdater";
+import { UpdateRow } from "./UpdateRow";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
@@ -187,6 +189,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** Which half of settings is showing: the computer, or this phone. */
   const [pane, setPane] = useState<Pane>("connect");
+  /** The About row: check for a release while the phone's preferences are open. */
+  const updater = useUpdater(pane === "prefs");
   /** The direction the pane arrived from, so the slide reads as movement. */
   const [paneDir, setPaneDir] = useState<"none" | "forward" | "back">("none");
   /** How the proxy reaches a LAN computer while a VPN is active. */
@@ -1365,6 +1369,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             <span className="setting-title">版本</span>
             <span className="setting-value">{__APP_VERSION__}</span>
           </div>
+          {Capacitor.isNativePlatform() ? (
+            <UpdateRow status={updater.status} onAction={updater.act} />
+          ) : null}
         </section>
           </>
         ) : null}
