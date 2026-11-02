@@ -36,7 +36,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       sha: ${{ steps.release.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
       - uses: actions/setup-node@v7
