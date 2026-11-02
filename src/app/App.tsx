@@ -12,7 +12,12 @@ import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import { submit } from "../net/submit";
 import type { SubmitResult } from "../net/submit";
-import { startTurnNotification, startCloudWatch, stopCloudWatch } from "../native/turn";
+import {
+  setNotificationOptions,
+  startTurnNotification,
+  startCloudWatch,
+  stopCloudWatch,
+} from "../native/turn";
 import type { ProxyConfig } from "../net/server";
 import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice, loadStandDown } from "../net/relayStore";
@@ -27,6 +32,10 @@ import { useLink } from "./useLink";
 import { useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
 import { loadCloudWatch, saveCloudWatch } from "./cloudWatchPref";
+import {
+  loadNotificationOptions,
+  saveNotificationOptions,
+} from "./notificationOptionsPref";
 import { buildDiagnostics } from "./diagnostics";
 import { openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
@@ -124,6 +133,18 @@ export function App() {
     saveCloudWatch(on);
     setCloudWatchState(on);
   }, []);
+  /** Inline ask options; off means one 去回答 action that opens the conversation. */
+  const [notificationOptions, setNotificationOptionsState] = useState(
+    () => loadNotificationOptions(),
+  );
+  const pickNotificationOptions = useCallback((on: boolean) => {
+    saveNotificationOptions(on);
+    setNotificationOptionsState(on);
+  }, []);
+  useEffect(() => {
+    setNotificationOptions(notificationOptions);
+  }, [notificationOptions]);
+  const [chatFocusAsk, setChatFocusAsk] = useState(false);
   const buildDiagnosticsText = useCallback(
     () => buildDiagnostics({ link: link.state, snapshot, cloudWatch }),
     [link.state, snapshot, cloudWatch],
@@ -396,6 +417,7 @@ export function App() {
   /** Leaving a conversation returns to its project, not to the project list. */
   const closeRuntime = useCallback(() => {
     setOpenRuntime(null);
+    setChatFocusAsk(false);
     reloadTree();
   }, [reloadTree]);
 
@@ -458,6 +480,7 @@ export function App() {
       setChatProject(parsed.root);
     }
     setChatTitle(parsed.title ?? null);
+    setChatFocusAsk(parsed.focusAsk === true);
     setOpenRuntime(parsed.runtimeId);
     void connection.refresh();
   }, [boot, link]);
@@ -740,6 +763,8 @@ export function App() {
         machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
+        notificationOptions={notificationOptions}
+        onNotificationOptionsChange={pickNotificationOptions}
         buildDiagnostics={buildDiagnosticsText}
       />
     );
@@ -761,6 +786,8 @@ export function App() {
         machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
+        notificationOptions={notificationOptions}
+        onNotificationOptionsChange={pickNotificationOptions}
         buildDiagnostics={buildDiagnosticsText}
       />
     );
@@ -774,6 +801,8 @@ export function App() {
         {...(chatTitle ? { title: chatTitle } : {})}
         onBack={closeRuntime}
         mode={link.state.mode}
+        focusAsk={chatFocusAsk}
+        onFocusConsumed={() => setChatFocusAsk(false)}
         {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
       />
     );

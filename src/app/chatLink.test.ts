@@ -22,6 +22,13 @@ describe("parseChatLink", () => {
     });
   });
 
+  it("carries the ask focus a decision notification asks for", () => {
+    expect(parseChatLink("reasonix://chat?runtime=r1&focus=ask")).toEqual({
+      runtimeId: "r1",
+      focusAsk: true,
+    });
+  });
+
   it("accepts a link that only names the runtime", () => {
     expect(parseChatLink("reasonix://chat?runtime=r1")).toEqual({ runtimeId: "r1" });
   });

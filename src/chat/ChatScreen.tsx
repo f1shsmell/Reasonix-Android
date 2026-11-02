@@ -58,6 +58,9 @@ export interface ChatScreenProps {
   onNewSession?: () => void;
   /** How the kernel is reached, named in the ongoing notification. */
   mode?: "lan" | "cloud" | undefined;
+  /** A decision notification asked the screen to land on the waiting prompt. */
+  focusAsk?: boolean;
+  onFocusConsumed?: () => void;
 }
 
 /**
@@ -824,6 +827,8 @@ export function ChatScreen({
   onBack,
   onNewSession,
   mode,
+  focusAsk,
+  onFocusConsumed,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
@@ -1079,6 +1084,15 @@ export function ChatScreen({
       setAtBottom(true);
     }
   }, [history, readingId]);
+
+  // A notification's 去回答 names the waiting prompt: after history has drawn,
+  // land on the newest rows instead of restoring an older reading position.
+  useEffect(() => {
+    if (!focusAsk || history.kind !== "loaded") return;
+    scrollToBottom(false);
+    setAtBottom(true);
+    onFocusConsumed?.();
+  }, [focusAsk, history.kind, scrollToBottom, onFocusConsumed]);
 
   const persistReading = useCallback(() => {
     const list = listRef.current;

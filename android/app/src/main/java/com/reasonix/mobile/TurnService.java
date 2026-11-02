@@ -71,6 +71,9 @@ public class TurnService extends Service {
     private static final String CHANNEL_CLOUD = "turn_cloud";
     private static final String CHANNEL_DONE = "turn_done";
     private static final String CHANNEL_ASK = "turn_ask";
+    /** Phone-local notification choices, written by the settings switch. */
+    static final String PREFS_NOTIFY = "turn_notify";
+    static final String KEY_SHOW_OPTIONS = "show_options";
     private static final int RUNNING_ID = 4101;
     /**
      * Ask and done notifications are per runtime. Four non-overlapping bands
@@ -472,6 +475,15 @@ public class TurnService extends Service {
         }, CLOUD_TIMEOUT_MS);
     }
 
+    /** Rebuild the next ask after the phone-local display choice changes. */
+    static void notificationOptionsChanged() {
+        TurnService service = active;
+        if (service == null) return;
+        for (Watch watch : service.watches.values()) watch.askSignature = "";
+        service.mainHandler.post(service::refreshRunning);
+        if (service.cloud) service.pollCloudSoon();
+    }
+
     /** The cloud watcher's last sweep, for the About page's diagnostics. */
     static JSONObject cloudStatus() {
         JSONObject out = new JSONObject();
@@ -831,14 +843,24 @@ public class TurnService extends Service {
     }
 
     private Notification buildAsk(Watch watch, AskStatus status) {
-        String heading = watch.title.isEmpty() ? "需要你处理" : watch.title;
-        PendingIntent open = openChat(watch, askRequest(watch.key));
+        String heading = status.heading.isEmpty() ? "需要你处理" : status.heading;
+        String body;
+        if (status.question.isEmpty()) {
+            body = status.count > 1 ? status.text : "点开查看并处理";
+        } else {
+            body = status.question;
+            if (status.count > 1) body += "（还有 " + (status.count - 1) + " 个）";
+        }
+        String session = watch.title.isEmpty()
+                ? (watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
+                : watch.title;
+        PendingIntent open = openChat(watch, askRequest(watch.key), true);
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ASK)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(heading)
-                .setContentText(status.text)
-                .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
-                .setStyle(new Notification.BigTextStyle().bigText(status.text))
+                .setContentText(body)
+                .setSubText(session)
+                .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
                 // A prompt can carry code and paths; the lock screen says only
@@ -846,7 +868,9 @@ public class TurnService extends Service {
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicAsk())
                 .setContentIntent(open);
-        AskStatus.Choice choice = watch.readOnly ? null : status.choice;
+        boolean showOptions = getSharedPreferences(PREFS_NOTIFY, MODE_PRIVATE)
+                .getBoolean(KEY_SHOW_OPTIONS, false);
+        AskStatus.Choice choice = watch.readOnly || !showOptions ? null : status.choice;
         if (choice == null) {
             builder.addAction(R.drawable.ic_notification, "去回答", open);
         } else {
@@ -1135,13 +1159,13 @@ public class TurnService extends Service {
                 .setAutoCancel(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(publicDone())
-                .setContentIntent(openChat(watch, doneRequest(watch.key)))
+                .setContentIntent(openChat(watch, doneRequest(watch.key), false))
                 .build();
         manager.notify(doneId(watch.key), notification);
     }
 
     /** Open the conversation that was blocked; fall back to the app. */
-    private PendingIntent openChat(Watch watch, int requestCode) {
+    private PendingIntent openChat(Watch watch, int requestCode, boolean focusAsk) {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
         Intent intent;
@@ -1152,6 +1176,7 @@ public class TurnService extends Service {
             if (!watch.peer.isEmpty()) {
                 link += "&peer=" + Uri.encode(watch.peer) + "&peerName=" + Uri.encode(watch.peerName);
             }
+            if (focusAsk) link += "&focus=ask";
             intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link), this, MainActivity.class);
         } else {
             intent = new Intent(this, MainActivity.class);

@@ -15,7 +15,10 @@ import java.util.List;
  * unit-tested without a Service.
  */
 final class AskStatus {
-    static final AskStatus EMPTY = new AskStatus("", "", 0, false, null);
+    static final AskStatus EMPTY = new AskStatus("", "", 0, false, null, "", "");
+
+    /** Action labels wider than this are ellipsized by the system. */
+    private static final int MAX_ACTION_LABEL = 5;
 
     /** Changes when the set of decisions or their questions changes. */
     final String signature;
@@ -26,6 +29,10 @@ final class AskStatus {
     final boolean running;
     /** The first decision, when it can be settled from the notification. */
     final Choice choice;
+    /** What the notification title says: answer, approve, recover. */
+    final String heading;
+    /** The first question's prompt, or its header when no prompt exists. */
+    final String question;
 
     /**
      * One decision's inline actions.
@@ -50,12 +57,21 @@ final class AskStatus {
         }
     }
 
-    private AskStatus(String signature, String text, int count, boolean running, Choice choice) {
+    private AskStatus(
+            String signature,
+            String text,
+            int count,
+            boolean running,
+            Choice choice,
+            String heading,
+            String question) {
         this.signature = signature;
         this.text = text;
         this.count = count;
         this.running = running;
         this.choice = choice;
+        this.heading = heading;
+        this.question = question;
     }
 
     boolean empty() {
@@ -71,10 +87,12 @@ final class AskStatus {
             // A working turn with nothing blocked is not a notification, but
             // its running state is what lets the watcher notice completion.
             if (decisions == null || decisions.length() == 0) {
-                return new AskStatus("", "", 0, running, null);
+                return new AskStatus("", "", 0, running, null, "", "");
             }
             StringBuilder signature = new StringBuilder();
             String first = "";
+            String heading = "";
+            String question = "";
             int count = 0;
             Choice firstChoice = null;
             for (int index = 0; index < decisions.length(); index++) {
@@ -83,22 +101,25 @@ final class AskStatus {
                 count++;
                 String id = decision.optString("id", "");
                 String kind = decision.optString("kind", "");
-                String question = firstQuestion(decision);
+                String prompt = firstQuestion(decision);
                 if (count == 1) {
-                    first = label(kind) + (question.isEmpty() ? "" : " · " + question);
+                    heading = label(kind);
+                    question = prompt;
+                    first = heading + (question.isEmpty() ? "" : " · " + question);
                     firstChoice = choiceOf(decision);
                 }
-                signature.append(id).append('|').append(kind).append('|').append(question).append(';');
+                signature.append(id).append('|').append(kind).append('|').append(prompt).append(';');
                 if (count == 1 && firstChoice != null) {
                     signature.append("options=");
                     for (String option : firstChoice.options) signature.append(option).append(',');
                     signature.append(';');
                 }
             }
-            if (count == 0) return new AskStatus("", "", 0, running, null);
+            if (count == 0) return new AskStatus("", "", 0, running, null, "", "");
             String text = first.isEmpty() ? "有新的问题等你处理" : first;
             if (count > 1) text += "（还有 " + (count - 1) + " 个）";
-            return new AskStatus(signature.toString(), text, count, running, firstChoice);
+            return new AskStatus(
+                    signature.toString(), text, count, running, firstChoice, heading, question);
         } catch (Exception ignored) {
             // A status this build cannot read is not a decision; never alert on it.
             return EMPTY;
@@ -128,7 +149,9 @@ final class AskStatus {
         for (int index = 0; index < raw.length(); index++) {
             JSONObject option = raw.optJSONObject(index);
             String label = option == null ? "" : option.optString("label", "").trim();
-            if (!label.isEmpty()) labels.add(label);
+            if (label.isEmpty()) continue;
+            if (label.length() > MAX_ACTION_LABEL) return null;
+            labels.add(label);
         }
         if (labels.isEmpty() || labels.size() > 3) return null;
         String questionId = question.optString("id", "");
@@ -141,9 +164,12 @@ final class AskStatus {
         if (questions == null || questions.length() == 0) return "";
         JSONObject question = questions.optJSONObject(0);
         if (question == null) return "";
-        String header = question.optString("header", "").trim();
-        if (!header.isEmpty()) return header;
-        return question.optString("prompt", "").trim();
+        // The header is the tab title; the prompt is what was actually asked.
+        // The notification body must carry the prompt, or a terse header reads
+        // as the whole question.
+        String prompt = question.optString("prompt", "").trim();
+        if (!prompt.isEmpty()) return prompt;
+        return question.optString("header", "").trim();
     }
 
     static String label(String kind) {

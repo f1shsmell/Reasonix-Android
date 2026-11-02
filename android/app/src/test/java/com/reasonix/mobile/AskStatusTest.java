@@ -14,7 +14,9 @@ public class AskStatusTest {
 
         assertFalse(status.empty());
         assertEquals(1, status.count);
-        assertEquals("需要你回答 · 用哪个方案", status.text);
+        assertEquals("需要你回答 · 选一个", status.text);
+        assertEquals("需要你回答", status.heading);
+        assertEquals("选一个", status.question);
         assertTrue(status.signature.contains("d1"));
     }
 
@@ -24,6 +26,8 @@ public class AskStatusTest {
                 "{\"decisions\":[{\"id\":\"d2\",\"kind\":\"tool_approval\"}]}");
 
         assertEquals("需要你批准", status.text);
+        assertEquals("需要你批准", status.heading);
+        assertEquals("", status.question);
     }
 
     @Test
@@ -113,9 +117,13 @@ public class AskStatusTest {
         AskStatus freeText = AskStatus.parse(
                 "{\"decisions\":[{\"id\":\"d5\",\"kind\":\"ask\",\"questions\":[{"
                         + "\"id\":\"q1\",\"prompt\":\"说说看\"}]}]}");
+        AskStatus longLabel = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d6\",\"kind\":\"ask\",\"questions\":[{"
+                        + "\"id\":\"q1\",\"options\":[{\"label\":\"这是一个很长的选项\"}]}]}]}");
 
         assertEquals(null, multi.choice);
         assertEquals(null, longList.choice);
         assertEquals(null, freeText.choice);
+        assertEquals(null, longLabel.choice);
     }
 }

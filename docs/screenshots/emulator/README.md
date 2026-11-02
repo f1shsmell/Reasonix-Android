@@ -18,6 +18,11 @@ and attachment is synthetic: `demo`, `示例项目`, `示例会话` and a two-li
 | `09-approval-actions.png` | Approval notification with allow / deny / session |
 | `10-question-choices.png` | Single-question notification with inline choices |
 | `11-question-answered.png` | Service notice after answering 「茶」 inline |
+| `16-notify-options-light.png` | Preferences with 通知里显示选项 off, light theme |
+| `17-notify-options-dark.png` | Same, dark theme |
+| `18-notify-answer-only.png` | Default ask notification: fixed title, full prompt, one 去回答 action |
+| `19-notify-options.png` | Same ask with short inline options enabled |
+| `20-notify-options-on-dark.png` | The switch on, dark theme |
 
 The update row checked the v0.2.2 manifest from this emulator and reported the
 installed build as current. Notification images use the system shade over the

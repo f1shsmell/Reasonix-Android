@@ -73,6 +73,18 @@ public class TurnPlugin extends Plugin {
         call.resolve(new JSObject());
     }
 
+    /** Whether ask notifications may inline their options or only open the chat. */
+    @PluginMethod
+    public void setNotificationOptions(PluginCall call) {
+        boolean show = Boolean.TRUE.equals(call.getBoolean("showOptions", false));
+        getContext().getSharedPreferences(TurnService.PREFS_NOTIFY, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(TurnService.KEY_SHOW_OPTIONS, show)
+                .apply();
+        TurnService.notificationOptionsChanged();
+        call.resolve(new JSObject());
+    }
+
     private void launch(Intent intent) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
