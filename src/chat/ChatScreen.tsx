@@ -954,7 +954,6 @@ export function ChatScreen({
       base: runtime.base,
       root: runtime.root,
       runtimeId,
-      ...(mode ? { mode } : {}),
     });
   }, [transcript.running, title, runtime?.name, runtime?.base, runtime?.root, runtimeId, mode]);
 

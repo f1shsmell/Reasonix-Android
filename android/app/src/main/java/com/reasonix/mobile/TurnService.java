@@ -56,7 +56,6 @@ public class TurnService extends Service {
     static final String EXTRA_BASE = "base";
     static final String EXTRA_ROOT = "root";
     static final String EXTRA_RUNTIME = "runtime";
-    static final String EXTRA_MODE = "mode";
     static final String EXTRA_CLOUD = "cloud";
     static final String ACTION_DECIDE = "com.reasonix.mobile.TURN_DECIDE";
     static final String EXTRA_DECISION = "decision";
@@ -138,8 +137,6 @@ public class TurnService extends Service {
 
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
-    /** "lan" or "cloud"; names the link in the ongoing summary. */
-    private volatile String mode = "";
     /** True for the persistent cloud watcher; false for a LAN turn. */
     private volatile boolean cloud = false;
     private volatile boolean cloudPending = false;
@@ -203,9 +200,6 @@ public class TurnService extends Service {
                 releaseWifiLock();
             }
         }
-        String nextMode = extra(intent, EXTRA_MODE);
-        if (!nextMode.isEmpty()) mode = nextMode;
-        if (cloud) mode = "cloud";
         // A start from the open chat seeds one pane; discovery adds the rest
         // and replaces this row with the kernel's own labels when it answers.
         String nextBase = extra(intent, EXTRA_BASE);
@@ -473,6 +467,12 @@ public class TurnService extends Service {
             notePoll(false);
             refreshRunning();
         }, CLOUD_TIMEOUT_MS);
+    }
+
+    /** Stop the cloud watcher, leaving a LAN watcher untouched. */
+    static void stopCloudWatchIfCloud() {
+        TurnService service = active;
+        if (service != null && service.cloud) service.stopSelf();
     }
 
     /** Rebuild the next ask after the phone-local display choice changes. */
@@ -1116,7 +1116,7 @@ public class TurnService extends Service {
         if (pollFailures >= OFFLINE_AFTER) {
             text = "连接中断，正在重试…";
         } else {
-            String where = "cloud".equals(mode) ? "云端 · " : "lan".equals(mode) ? "局域网 · " : "";
+            String where = cloud ? "云端 · " : "局域网 · ";
             if (waiting > 0) {
                 text = where + (running > 0
                         ? running + " 个运行中 · " + waiting + " 个待处理"
@@ -1125,7 +1125,7 @@ public class TurnService extends Service {
                 text = where + running + " 个会话运行中";
             } else if (!watches.isEmpty()) {
                 text = "没有正在运行的会话";
-            } else if (!"cloud".equals(mode)) {
+            } else if (!cloud) {
                 text = "正在准备…";
             } else if (cloudLastCode.isEmpty()) {
                 text = "后台提醒已开启，App 在后台时留意";
@@ -1135,7 +1135,7 @@ public class TurnService extends Service {
                 text = "云端提醒：没有打开的会话";
             }
         }
-        String channel = "cloud".equals(mode) ? CHANNEL_CLOUD : CHANNEL_RUNNING;
+        String channel = cloud ? CHANNEL_CLOUD : CHANNEL_RUNNING;
         return new Notification.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
