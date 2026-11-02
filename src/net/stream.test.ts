@@ -105,6 +105,22 @@ describe("RuntimeStream", () => {
     expect(FakeSource.latest?.url).toContain("lastEventId=12");
   });
 
+  it("retries now, keeping the cursor, when the network is back", () => {
+    const { handlers, states } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+
+    FakeSource.latest?.emit({ kind: "text", text: "a" }, "5");
+    const failed = FakeSource.latest;
+    failed?.fail();
+    expect(states.at(-1)?.kind).toBe("retrying");
+
+    stream.retryNow();
+
+    expect(FakeSource.latest).not.toBe(failed);
+    expect(FakeSource.latest?.url).toContain("lastEventId=5");
+  });
+
   it("stops retrying once the caller closes it", () => {
     const { handlers, states } = makeHandlers();
     const stream = new RuntimeStream("/rt/r1/events", handlers);

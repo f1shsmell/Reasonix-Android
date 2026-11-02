@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TouchEvent as ReactTouchEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
-import { Network } from "@capacitor/network";
+import { onNetworkChange } from "../native/networkWatch";
 import { Browser } from "@capacitor/browser";
 import { Clipboard } from "@capacitor/clipboard";
 import {
@@ -32,7 +32,6 @@ import {
   probeUpstream,
   readMachineIdentity,
   readProxyConfig,
-  refreshProxy,
   signInAccount,
   signOutAccount,
   startAccount,
@@ -716,11 +715,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     if (!Capacitor.isNativePlatform()) return;
     let cancelled = false;
     let remove: (() => void) | undefined;
-    void Network.addListener("networkStatusChange", (status) => {
+    void onNetworkChange((status) => {
       if (!status.connected) return;
-      // The phone may have moved networks; the proxy retries the remembered
-      // origins and this screen picks up whichever one answered.
-      void refreshProxy().then((next) => {
+      // Read, do not refresh: `/refresh` probes the remembered origins and
+      // may re-point the proxy at another computer. Choosing a door belongs to
+      // the link machine, which verifies it and updates the target; this screen
+      // only keeps its copy of the ordered candidates current.
+      void readProxyConfig().then((next) => {
         if (next === null) return;
         setConfig(next);
         setAccount(next.account);
@@ -728,11 +729,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       });
     }).then((handle) => {
       if (cancelled) {
-        void handle.remove();
+        void handle?.remove();
         return;
       }
       remove = () => {
-        void handle.remove();
+        void handle?.remove();
       };
     });
     return () => {
