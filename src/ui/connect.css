@@ -442,6 +442,24 @@ button.setting {
   cursor: pointer;
 }
 
+/* A surface under a master switch: indented so the nesting is visible, with a
+   hairline guide drawn on the padding the indent creates. Shared by the
+   vibration rows and the notification rows — both group independent choices
+   under one switch, so they read the same way. */
+.setting.sub {
+  padding-left: 26px;
+  position: relative;
+}
+
+.setting.sub::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 10px;
+  bottom: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
 button.setting:active:not(:disabled) {
   background: rgba(var(--fg-rgb), 0.05);
   @supports (color: color-mix(in srgb, red, blue)) {
