@@ -300,6 +300,37 @@ describe("ConnectScreen native pairing", () => {
     expect(onConnected).not.toHaveBeenCalled();
   });
 
+  it("stops waiting when the pairing page never answers at all", async () => {
+    // The plugin's callback holds a `PluginCall`. When the activity is rebuilt
+    // or the WebView reloads, that call is dead and `pairResult` returns
+    // without settling — the promise never resolves. Without a deadline of its
+    // own the screen stays on "正在配对" forever, which is what a phone
+    // scanning a second computer's code was doing.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(NativePair.pair).mockReturnValue(new Promise(() => {}));
+      await renderScreen();
+      await pairAt(second, "code-1");
+
+      // Still waiting: the page has not answered and the deadline has not
+      // passed, so nothing should have been decided yet.
+      expect(configureProxy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        // 20 s, written out rather than imported: this is the behaviour being
+        // held, so raising `PAIR_DEADLINE_MS` should fail here too.
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+
+      // The deadline fired, the exchange below still ran, and the screen is
+      // no longer spinning.
+      expect(configureProxy).toHaveBeenCalledWith(second, "code-1");
+      expect(container.textContent).not.toContain("正在配对");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a code a network failure did not spend", async () => {
     vi.mocked(configureProxy).mockRejectedValue(new ProxyError(502, "device.pair_unreachable"));
     await renderScreen();
