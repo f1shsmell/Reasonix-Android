@@ -18,7 +18,15 @@ import type { RefObject } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
-import { placeProject, removeSession, renameSession, setPinned, treeWriteMessage } from "../net/pin";
+import {
+  moveSessionTo,
+  placeProject,
+  removeSession,
+  renameSession,
+  setArchived,
+  setPinned,
+  treeWriteMessage,
+} from "../net/pin";
 import type { TreeWrite } from "../net/pin";
 import { linkSummary, linkTone } from "../net/link";
 import type { LinkState } from "../net/link";
@@ -893,6 +901,18 @@ export function Home({
     return result;
   };
 
+  const moveTo = async (row: RecentRow, target: string): Promise<TreeWrite> => {
+    const result = await moveSessionTo(row.session.path, target);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
+  const toggleArchive = async (row: RecentRow): Promise<TreeWrite> => {
+    const result = await setArchived(row.session.path, true);
+    if (result.ok) onRefresh();
+    return result;
+  };
+
   /**
    * Put one project where it was dropped.
    *
@@ -1149,6 +1169,8 @@ export function Home({
           projectName={menu.project.name}
           when={relativeTime(menu.session.lastActiveAt)}
           pinned={menu.session.pinned === true}
+          projects={tree.projects}
+          projectRoot={menu.project.root}
           busy={busy === menu.session.path}
           deleteWarning={deleteWarning(menu.session)}
           onClose={() => setMenu(null)}
@@ -1159,6 +1181,8 @@ export function Home({
           }}
           onTogglePin={() => togglePin(menu)}
           onRename={(title) => rename(menu, title)}
+          onMoveTo={(target) => moveTo(menu, target)}
+          onToggleArchive={() => toggleArchive(menu)}
           onRemove={() => remove(menu)}
         />
       ) : null}

@@ -3,13 +3,19 @@
  *
  * The sheet is shared by the recent list and a project's conversation list.
  * Both show the same stored transcript, so both must offer the same decisions:
- * open, rename, pin, delete. The writes go to the kernel and the caller
- * re-reads the tree; this sheet only reports the result and closes on success.
+ * open, rename, pin, move, archive, delete. The writes go to the kernel and
+ * the caller re-reads the tree; this sheet only reports the result and closes
+ * on success.
+ *
+ * An archived row has a shorter menu. It is not in the active lists anywhere,
+ * so rename and pin would edit a row the person is looking at only through the
+ * archive; what that row needs is a way back out, and a way to open it.
  */
 
 import { useState } from "react";
 import type { TreeWrite } from "../net/pin";
 import { treeWriteMessage } from "../net/pin";
+import type { TreeProject } from "../wire/tree";
 import { useBackCloser } from "./backStack";
 
 export interface SessionSheetProps {
@@ -18,6 +24,15 @@ export interface SessionSheetProps {
   /** A relative timestamp, already formatted by the caller. */
   when?: string | undefined;
   pinned: boolean;
+  /** The row sits in the archive, not in the active lists. */
+  archived?: boolean;
+  /**
+   * The projects a move may name, minus none: the caller passes what it has
+   * and the sheet hides the row's own project by root.
+   */
+  projects?: TreeProject[];
+  /** This conversation's project root, so the move list can skip it. */
+  projectRoot?: string;
   /** The row is opening a pane; opening again would race it. */
   busy?: boolean;
   /**
@@ -30,22 +45,29 @@ export interface SessionSheetProps {
   onOpen: () => void;
   onTogglePin: () => Promise<TreeWrite>;
   onRename: (title: string) => Promise<TreeWrite>;
+  onMoveTo?: (projectRoot: string) => Promise<TreeWrite>;
+  onToggleArchive?: () => Promise<TreeWrite>;
   onRemove: () => Promise<TreeWrite>;
 }
 
-type Mode = "actions" | "rename" | "delete";
+type Mode = "actions" | "rename" | "delete" | "move";
 
 export function SessionSheet({
   title,
   projectName,
   when,
   pinned,
+  archived = false,
+  projects,
+  projectRoot,
   busy = false,
   deleteWarning = "删除后这个会话的转录会从电脑上移除，不能撤销。正在运行的会话不能删除。",
   onClose,
   onOpen,
   onTogglePin,
   onRename,
+  onMoveTo,
+  onToggleArchive,
   onRemove,
 }: SessionSheetProps) {
   const [mode, setMode] = useState<Mode>("actions");
@@ -70,6 +92,9 @@ export function SessionSheet({
   const rename = nextTitle.trim();
   const canRename = !working && rename !== "" && rename !== title.trim();
 
+  const heading =
+    mode === "rename" ? "重命名会话" : mode === "delete" ? "删除会话" : mode === "move" ? "移动到项目" : title;
+
   return (
     <div className="sheet-backdrop" role="presentation" onPointerDown={onClose}>
       <section
@@ -81,14 +106,12 @@ export function SessionSheet({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="sheet-head">
-          <h2>{mode === "rename" ? "重命名会话" : mode === "delete" ? "删除会话" : title}</h2>
+          <h2>{heading}</h2>
           <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
             ×
           </button>
         </div>
-        <p className="meta">
-          {[projectName, when].filter(Boolean).join(" · ")}
-        </p>
+        <p className="meta">{[projectName, when].filter(Boolean).join(" · ")}</p>
 
         {error ? <div className="notice error">{error}</div> : null}
 
@@ -99,21 +122,46 @@ export function SessionSheet({
                 打开会话
               </button>
             </li>
-            <li>
-              <button type="button" onClick={() => setMode("rename")} disabled={working}>
-                重命名
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                aria-pressed={pinned}
-                disabled={working}
-                onClick={() => void run(onTogglePin)}
-              >
-                {pinned ? "取消置顶" : "置顶会话"}
-              </button>
-            </li>
+            {archived ? null : (
+              <>
+                <li>
+                  <button type="button" onClick={() => setMode("rename")} disabled={working}>
+                    重命名
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    aria-pressed={pinned}
+                    disabled={working}
+                    onClick={() => void run(onTogglePin)}
+                  >
+                    {pinned ? "取消置顶" : "置顶会话"}
+                  </button>
+                </li>
+                {onMoveTo && projects && projects.length > 0 ? (
+                  <li>
+                    <button type="button" onClick={() => setMode("move")} disabled={working}>
+                      移动到项目…
+                    </button>
+                  </li>
+                ) : null}
+                {onToggleArchive ? (
+                  <li>
+                    <button type="button" disabled={working} onClick={() => void run(onToggleArchive)}>
+                      归档会话
+                    </button>
+                  </li>
+                ) : null}
+              </>
+            )}
+            {archived && onToggleArchive ? (
+              <li>
+                <button type="button" disabled={working} onClick={() => void run(onToggleArchive)}>
+                  取消归档
+                </button>
+              </li>
+            ) : null}
             <li>
               <button
                 type="button"
@@ -153,6 +201,35 @@ export function SessionSheet({
                 onClick={() => void run(() => onRename(rename))}
               >
                 {working ? "正在保存…" : "保存"}
+              </button>
+            </div>
+          </>
+        ) : null}
+
+        {mode === "move" ? (
+          <>
+            <p className="sheet-warning">
+              会话会连同标题一起移过去；移动后它会从「{projectName}」的列表里消失。
+            </p>
+            <ul className="sheet-actions move-list">
+              {(projects ?? [])
+                .filter((project) => project.root !== projectRoot)
+                .map((project) => (
+                  <li key={project.root}>
+                    <button
+                      type="button"
+                      disabled={working}
+                      onClick={() => void run(() => onMoveTo?.(project.root) ?? Promise.resolve({ ok: true }))}
+                    >
+                      <span className="move-name">{project.name}</span>
+                      <span className="move-root">{project.root}</span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+            <div className="sheet-foot">
+              <button type="button" onClick={() => setMode("actions")} disabled={working}>
+                取消
               </button>
             </div>
           </>

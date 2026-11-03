@@ -854,6 +854,17 @@ pre.frame {
   color: var(--fg-dim);
 }
 
+/* The section-head variant: a toggle beside the heading, not a full-width row. */
+.more.inline {
+  width: auto;
+  min-height: var(--tap);
+  padding: 0 8px;
+}
+
+.archived-empty {
+  padding: 10px 2px;
+}
+
 /* ---- a row's folded children ---- */
 
 /* The fold is the row's sibling, so it sits outside the row's own button and
@@ -1157,6 +1168,27 @@ pre.frame {
 
 .sheet-actions button[aria-pressed="true"] {
   color: var(--accent);
+}
+
+/* The move sheet's project rows: a two-line button, the project's name with
+   its root under it, since names collide and the root is what disambiguates.
+   Capped so a long project list scrolls instead of stretching the sheet. */
+.move-list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.move-list .move-name {
+  display: block;
+}
+
+.move-list .move-root {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-size: 12px;
 }
 
 /* ---- dispatch ---- */
