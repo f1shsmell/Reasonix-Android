@@ -34,6 +34,8 @@ import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
 import type { Row, Transcript } from "./transcript";
+// TEMPORARY: ghost-message trace. Delete with src/chat/trace.ts.
+import { traceEvent } from "./trace";
 import { dropCachedRows, loadCachedRows, scheduleSaveRows } from "./transcriptCache";
 import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "./Rows";
 import type { PromptHandlers } from "./Rows";
@@ -670,7 +672,20 @@ function useTranscript(
 
   useEffect(() => {
     if (!lastEvent) return;
-    setTranscript((current) => reduce(current, lastEvent));
+    setTranscript((current) => {
+      const next = reduce(current, lastEvent);
+      // TEMPORARY: ghost-message trace. Delete with src/chat/trace.ts.
+      const before = current.rows.length;
+      const after = next.rows.length;
+      const last = next.rows[after - 1];
+      traceEvent(
+        sessionPath,
+        lastEvent,
+        after,
+        after === before ? (last?.kind === "assistant" ? last.id : null) : null,
+      );
+      return next;
+    });
   }, [lastEvent]);
 
   // Keep the copy current. The cache holds what the screen shows, streaming
