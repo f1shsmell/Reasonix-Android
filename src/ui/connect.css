@@ -442,9 +442,10 @@ button.setting {
   cursor: pointer;
 }
 
-/* A surface under a master switch: indented so the nesting is visible, and a
-   hairline of its own so the group still reads as rows rather than one block.
-   The guide line is drawn on the padding, which is where the indent is. */
+/* A surface under a master switch: indented so the nesting is visible, with a
+   hairline guide drawn on the padding the indent creates. Shared by the
+   vibration rows and the notification rows — both group independent choices
+   under one switch, so they read the same way. */
 .setting.sub {
   padding-left: 26px;
   position: relative;

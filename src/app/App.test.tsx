@@ -188,6 +188,7 @@ vi.mock("../native/turn", () => ({
   stopTurnNotification: vi.fn(),
   startCloudWatch: vi.fn(),
   setNotificationOptions: vi.fn(),
+  applyNotificationPrefs: vi.fn(),
   readNativeDiagnostics: vi.fn(async () => null),
   stopCloudWatch: vi.fn(),
   loadBackgroundStatus: vi.fn(async () => null),

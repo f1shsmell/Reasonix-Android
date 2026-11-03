@@ -56,6 +56,12 @@ interface TurnNotificationsPlugin {
   startCloudWatch(): Promise<void>;
   stopCloudWatch(): Promise<void>;
   setNotificationOptions(options: { showOptions: boolean }): Promise<void>;
+  setNotificationPrefs(options: {
+    ongoing?: boolean;
+    ask?: boolean;
+    done?: boolean;
+    headsUp?: boolean;
+  }): Promise<void>;
   backgroundStatus(): Promise<BackgroundStatus>;
   diagnostics(): Promise<NativeDiagnostics>;
   openBatterySettings(): Promise<void>;
@@ -103,6 +109,26 @@ export function setNotificationOptions(showOptions: boolean): void {
   if (!Capacitor.isNativePlatform()) return;
   void TurnNotifications.setNotificationOptions({ showOptions }).catch(() => {
     // The next app start writes the choice again.
+  });
+}
+
+/**
+ * Push the notification choices to the service.
+ *
+ * Only the fields given are sent, so a caller that changed one switch does not
+ * have to know the others. The service posts notifications while the WebView
+ * is gone, which is why this is a push rather than something it reads from the
+ * page: by the time a background turn finishes there is no page left to ask.
+ */
+export function applyNotificationPrefs(prefs: {
+  ongoing?: boolean;
+  ask?: boolean;
+  done?: boolean;
+  headsUp?: boolean;
+}): void {
+  if (!Capacitor.isNativePlatform()) return;
+  void TurnNotifications.setNotificationPrefs(prefs).catch(() => {
+    // The next app start writes the choices again.
   });
 }
 

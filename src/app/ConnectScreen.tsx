@@ -86,6 +86,7 @@ import type { NetPolicy } from "./netpref";
 import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
+import type { NotificationPrefs } from "./notifyPref";
 import { swipeDirection } from "./swipe";
 import { useUpdater } from "./useUpdater";
 import { UpdateRow } from "./UpdateRow";
@@ -108,6 +109,9 @@ export interface ConnectScreenProps {
   /** Inline ask options in the notification; off means one 去回答 action. */
   notificationOptions?: boolean;
   onNotificationOptionsChange?: (on: boolean) => void;
+  /** Which notification surfaces post, and whether ask interrupts. */
+  notifyPrefs?: NotificationPrefs;
+  onNotifyPrefChange?: (name: keyof NotificationPrefs, on: boolean) => void;
   /** The About page's copy-diagnostics text, built by App from its live state. */
   buildDiagnostics?: () => Promise<string>;
 }
@@ -173,7 +177,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, buildDiagnostics }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, notifyPrefs, onNotifyPrefChange, buildDiagnostics }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -1469,6 +1473,85 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             </div>
           ) : null}
         </section>
+
+        {Capacitor.isNativePlatform() && onNotifyPrefChange ? (
+          <>
+            <p className="group-label">通知</p>
+            <section className="group">
+              {/*
+                The people who most need these switches are the ones a
+                permanent icon annoys, so the ongoing row leads and says what
+                "off" actually does: the service keeps running, the icon goes.
+                Calling it "关闭" would promise a teardown that cannot happen.
+              */}
+              <div className="setting">
+                <span className="setting-main">
+                  <span className="setting-title">常驻通知</span>
+                  <span className="setting-sub">
+                    关闭后不出现在状态栏，后台提醒仍然工作
+                  </span>
+                </span>
+                <Switch
+                  checked={notifyPrefs?.ongoing ?? false}
+                  onChange={(on) => onNotifyPrefChange("ongoing", on)}
+                  ariaLabel="常驻通知"
+                />
+              </div>
+              <div className="setting sub">
+                <span className="setting-main">
+                  <span className="setting-title">需要你处理</span>
+                  <span className="setting-sub">有提问、批准或恢复选择等你回答时提醒</span>
+                </span>
+                <Switch
+                  checked={notifyPrefs?.ask ?? true}
+                  onChange={(on) => onNotifyPrefChange("ask", on)}
+                  ariaLabel="需要你处理的通知"
+                />
+              </div>
+              <div className="setting sub">
+                <span className="setting-main">
+                  <span className="setting-title">弹窗提醒</span>
+                  <span className="setting-sub">
+                    关闭后只进通知栏，不弹出横幅
+                  </span>
+                </span>
+                <Switch
+                  checked={notifyPrefs?.headsUp ?? true}
+                  onChange={(on) => onNotifyPrefChange("headsUp", on)}
+                  ariaLabel="弹窗提醒"
+                  disabled={!(notifyPrefs?.ask ?? true)}
+                />
+              </div>
+              <div className="setting sub">
+                <span className="setting-main">
+                  <span className="setting-title">会话完成</span>
+                  <span className="setting-sub">一轮跑完时提醒</span>
+                </span>
+                <Switch
+                  checked={notifyPrefs?.done ?? true}
+                  onChange={(on) => onNotifyPrefChange("done", on)}
+                  ariaLabel="会话完成的通知"
+                />
+              </div>
+              {onNotificationOptionsChange ? (
+                <div className="setting sub">
+                  <span className="setting-main">
+                    <span className="setting-title">在通知里显示选项</span>
+                    <span className="setting-sub">
+                      关闭时只显示「去回答」，点击直接进入该会话
+                    </span>
+                  </span>
+                  <Switch
+                    checked={notificationOptions ?? false}
+                    onChange={onNotificationOptionsChange}
+                    ariaLabel="通知里显示选项"
+                    disabled={!(notifyPrefs?.ask ?? true)}
+                  />
+                </div>
+              ) : null}
+            </section>
+          </>
+        ) : null}
 
         {background ? (
           <>

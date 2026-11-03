@@ -13,6 +13,7 @@ import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import { submit } from "../net/submit";
 import type { SubmitResult } from "../net/submit";
 import {
+  applyNotificationPrefs,
   setNotificationOptions,
   startTurnNotification,
   startCloudWatch,
@@ -36,6 +37,11 @@ import {
   loadNotificationOptions,
   saveNotificationOptions,
 } from "./notificationOptionsPref";
+import {
+  loadNotificationPrefs,
+  saveNotificationPref,
+} from "./notifyPref";
+import type { NotificationPrefs } from "./notifyPref";
 import { buildDiagnostics } from "./diagnostics";
 import { openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
@@ -143,6 +149,32 @@ export function App() {
   useEffect(() => {
     setNotificationOptions(notificationOptions);
   }, [notificationOptions]);
+  /**
+   * Which notification surfaces post, and whether ask interrupts.
+   *
+   * Kept in React state so the settings rows redraw, and pushed to the service
+   * on every change: the service is what posts while the WebView is gone, so a
+   * choice that only lived here would stop applying the moment the screen
+   * closed.
+   */
+  const [notifyPrefs, setNotifyPrefsState] = useState<NotificationPrefs>(() =>
+    loadNotificationPrefs(),
+  );
+  const pickNotifyPref = useCallback(
+    (name: keyof NotificationPrefs, on: boolean) => {
+      saveNotificationPref(name, on);
+      setNotifyPrefsState((current) => ({ ...current, [name]: on }));
+      applyNotificationPrefs({ [name]: on });
+    },
+    [],
+  );
+  // The stored choices live in this WebView's localStorage; the service reads
+  // its own copy, which a fresh install has not filled in yet. Pushing them
+  // once on mount is what keeps the two in step for a phone that updates from
+  // a build without these switches.
+  useEffect(() => {
+    applyNotificationPrefs(loadNotificationPrefs());
+  }, []);
   const [chatFocusAsk, setChatFocusAsk] = useState(false);
   const buildDiagnosticsText = useCallback(
     () => buildDiagnostics({ link: link.state, snapshot, cloudWatch }),
@@ -788,6 +820,8 @@ export function App() {
         onCloudWatchChange={pickCloudWatch}
         notificationOptions={notificationOptions}
         onNotificationOptionsChange={pickNotificationOptions}
+        notifyPrefs={notifyPrefs}
+        onNotifyPrefChange={pickNotifyPref}
         buildDiagnostics={buildDiagnosticsText}
       />
     );
@@ -811,6 +845,8 @@ export function App() {
         onCloudWatchChange={pickCloudWatch}
         notificationOptions={notificationOptions}
         onNotificationOptionsChange={pickNotificationOptions}
+        notifyPrefs={notifyPrefs}
+        onNotifyPrefChange={pickNotifyPref}
         buildDiagnostics={buildDiagnosticsText}
       />
     );
