@@ -8,19 +8,15 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { compactCount, loadMachine } from "../net/machine";
+import { loadMachine } from "../net/machine";
 import type { MachineSnapshot } from "../net/machine";
+import { compactCount } from "./format";
 
 const MODE_LABEL: Record<string, string> = {
   ask: "逐次询问",
   allow: "默认允许",
   deny: "默认拒绝",
 };
-
-function percent(used: number, window: number): number {
-  if (window <= 0) return 0;
-  return Math.min(100, Math.max(0, Math.round((used / window) * 100)));
-}
 
 export function MachinePanel({ base }: { base?: string | undefined }) {
   const [snapshot, setSnapshot] = useState<MachineSnapshot | null>(null);
@@ -45,15 +41,13 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
   const empty =
     snapshot === null ||
     (snapshot.usage === null &&
-      snapshot.context === null &&
       snapshot.tools === null &&
       snapshot.boundary === null &&
       snapshot.version === null);
 
   if (empty) return null;
 
-  const { usage, context, tools, boundary, version } = snapshot;
-  const used = context ? percent(context.used, context.window) : 0;
+  const { usage, tools, boundary, version } = snapshot;
   const enabled = tools ? tools.total - tools.disabled.length : 0;
 
   return (
@@ -71,25 +65,6 @@ export function MachinePanel({ base }: { base?: string | undefined }) {
               </span>
             </span>
             <span className="setting-value">{compactCount(usage.tokens)} tokens</span>
-          </div>
-        ) : null}
-
-        {context ? (
-          <div className="setting">
-            <span className="setting-main">
-              <span className="setting-title">上下文</span>
-              <span className="setting-sub">
-                {compactCount(context.used)} / {compactCount(context.window)}
-                {context.compactAt > 0
-                  ? ` · 到 ${compactCount(context.compactAt)} 自动压缩`
-                  : " · 不自动压缩"}
-                {context.boundary ? ` · ${context.boundary}` : ""}
-              </span>
-              <span className="machine-bar" aria-hidden="true">
-                <i style={{ width: `${used}%` }} />
-              </span>
-            </span>
-            <span className="setting-value">{used}%</span>
           </div>
         ) : null}
 

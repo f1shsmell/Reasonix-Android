@@ -25,3 +25,17 @@ export function relativeTime(ms: number | undefined, now = Date.now()): string {
     ? `${month} 月 ${day} 日`
     : `${date.getFullYear()} 年 ${month} 月 ${day} 日`;
 }
+
+/**
+ * A token count at a glance: 1_234_567 reads as 1.2M.
+ *
+ * Two screens show these — a machine's 30-day spend and a conversation's
+ * window — so this lives with the other formatting rather than beside either
+ * one. One decimal is enough: the exact number changes every turn and nobody
+ * acts on the difference between 1.2M and 1.23M.
+ */
+export function compactCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 100) / 10}k`;
+  return String(value);
+}

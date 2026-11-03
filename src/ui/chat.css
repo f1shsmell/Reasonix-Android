@@ -1852,3 +1852,89 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ---- context sheet ---- */
+
+/* The two halves of the gauge: the number a person came for, and the ratio
+   that makes it mean something. Tabular figures keep the total from shifting
+   as a turn grows it. */
+.context-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.context-total {
+  flex: 1;
+  font-size: 22px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.context-percent {
+  color: var(--fg-dim);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-bar {
+  display: block;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.context-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-fill), var(--ok));
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+/* One row per class, the label left and its cost right: a table without the
+   rules, because four numbers do not need a grid. */
+.context-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.context-rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  font-size: 14px;
+}
+
+.context-rows li + li {
+  border-top: 1px solid var(--line-soft);
+}
+
+.context-rows li span:last-child {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The one action in the sheet, so it carries the accent rather than sitting
+   among settings rows. */
+.context-compact {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent-fill);
+  color: var(--on-fill);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.context-compact:disabled {
+  opacity: 0.6;
+}
+

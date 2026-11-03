@@ -18,13 +18,6 @@ export interface MachineUsage {
   topModel: string;
 }
 
-export interface MachineContext {
-  used: number;
-  window: number;
-  compactAt: number;
-  boundary: string;
-}
-
 export interface MachineTools {
   total: number;
   disabled: string[];
@@ -45,7 +38,6 @@ export interface MachineVersion {
 
 export interface MachineSnapshot {
   usage: MachineUsage | null;
-  context: MachineContext | null;
   tools: MachineTools | null;
   boundary: MachineBoundary | null;
   version: MachineVersion | null;
@@ -78,9 +70,12 @@ function money(value: unknown): string[] {
 
 /** Read everything the panel can show; a failed read is a missing section. */
 export async function loadMachine(base = ""): Promise<MachineSnapshot> {
-  const [usage, context, tools, boundary, version] = await Promise.all([
+  // The context gauge is deliberately absent: it is a per-conversation number,
+  // and this panel only knows a machine. Reading it from a runtime picked off
+  // the list showed whichever pane happened to be first — somebody else's
+  // window. It lives in the conversation's own sheet now (`ContextSheet`).
+  const [usage, tools, boundary, version] = await Promise.all([
     read<Record<string, unknown>>(`${base}/usage?days=30`),
-    read<Record<string, unknown>>(`${base}/context`),
     read<Record<string, unknown>>(`${base}/tools`),
     read<Record<string, unknown>>(`${base}/permissions`),
     read<Record<string, unknown>>(`${base}/studio/versions`),
@@ -94,14 +89,6 @@ export async function loadMachine(base = ""): Promise<MachineSnapshot> {
           turns: typeof usage.turns === "number" ? usage.turns : 0,
           cost: money(usage.cost),
           topModel: typeof usage.top_model === "string" ? usage.top_model : "",
-        }
-      : null,
-    context: context
-      ? {
-          used: typeof context.used === "number" ? context.used : 0,
-          window: typeof context.window === "number" ? context.window : 0,
-          compactAt: typeof context.compact_at === "number" ? context.compact_at : 0,
-          boundary: typeof context.boundary === "string" ? context.boundary : "",
         }
       : null,
     tools: tools
@@ -130,10 +117,4 @@ export async function loadMachine(base = ""): Promise<MachineSnapshot> {
         }
       : null,
   };
-}
-
-export function compactCount(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 100) / 10}k`;
-  return String(value);
 }
