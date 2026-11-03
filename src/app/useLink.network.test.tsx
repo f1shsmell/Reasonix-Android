@@ -180,4 +180,34 @@ describe("useLink network changes", () => {
     expect(fake.quickCheck).not.toHaveBeenCalled();
     expect(latest?.state.phase).toBe("connected");
   });
+
+  it("wakes the stream on a foreground, where no network change fires", async () => {
+    // A resume is not a network change: the key is identical, so noteNetwork
+    // returns early and never reaches the stream. Only reassess covers this,
+    // which is the case that left a backgrounded phone stuck.
+    await mount();
+    fake.wakeStream.mockClear();
+    fake.quickCheck.mockClear();
+
+    act(() => latest?.reassess());
+    await flush();
+
+    expect(fake.quickCheck).toHaveBeenCalledTimes(1);
+    expect(fake.wakeStream).toHaveBeenCalledTimes(1);
+    expect(latest?.state.phase).toBe("connected");
+  });
+
+  it("does not probe on a foreground while a check is already running", async () => {
+    // A burst of resumes must not stack probes.
+    await mount();
+    fake.quickCheck.mockClear();
+
+    act(() => {
+      latest?.reassess();
+      latest?.reassess();
+    });
+    await flush();
+
+    expect(fake.quickCheck).toHaveBeenCalledTimes(1);
+  });
 });

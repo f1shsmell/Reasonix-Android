@@ -156,6 +156,17 @@ export interface Link {
    * opened settings" and "the computer is gone".
    */
   watch: () => void;
+  /**
+   * Verify the live route after a foreground, and repair the stream when it
+   * still answers.
+   *
+   * Distinct from `check`: a route that answers is not proof the event stream
+   * is alive. A phone frozen in the background comes back with a connection
+   * whose peer closed it long ago, and nothing reports that — so a reachable
+   * route also wakes the stream. A route that no longer answers goes to a
+   * fresh attempt instead of waiting out a backoff.
+   */
+  reassess: () => void;
   /** The settings screen swapped the upstream and then could not verify it. */
   noteFailed: (error: LinkError) => void;
   /**
@@ -907,6 +918,7 @@ export function useLink(connection: Connection): Link {
     retry,
     switchTo,
     preferLan,
+    reassess,
     noteConnected,
     noteFailed,
     noteNetwork,
