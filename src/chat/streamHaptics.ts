@@ -3,21 +3,24 @@ import { hapticTick } from "../app/haptics";
 import type { Row } from "./transcript";
 
 /**
- * A tick of haptic feedback while an answer streams.
+ * A tick when an answer starts, and one when it ends.
  *
- * A stream the person cannot see yet (another pane, a locked screen) must
- * stay silent; only the pane that is on screen mounts this. Vibration runs
- * through Capacitor's Haptics plugin, which resolves to a no-op in the
- * browser, so the tests never need to stub a device.
+ * Not while it is being written. A delta arrives tens of times a second, so
+ * ticking on growth made a long reply buzz continuously — the phone felt like
+ * it was doing something it was not, and the feedback carried no information:
+ * one more word is not one more event. The two edges do carry information, so
+ * those are the two beats.
+ *
+ * A stream the person cannot see yet (another pane, a locked screen) must stay
+ * silent; only the pane that is on screen mounts this. Vibration runs through
+ * Capacitor's Haptics plugin, which resolves to a no-op in the browser, so the
+ * tests never need to stub a device.
  */
 
 export interface StreamMark {
   readonly id: string;
   readonly textLength: number;
 }
-
-/** A fast stream reads as texture, not a buzz. */
-export const STREAM_HAPTIC_THROTTLE_MS = 320;
 
 /** The answer currently growing, or null when this pane has none. */
 export function latestStreamingAssistant(rows: readonly Row[]): StreamMark | null {
@@ -30,47 +33,40 @@ export function latestStreamingAssistant(rows: readonly Row[]): StreamMark | nul
   return null;
 }
 
+/** Which edge, if either, this transition crossed. */
+export type StreamEdge = "start" | "end" | null;
+
 /**
- * Whether this transition deserves a tick.
+ * Whether this transition is one of the two beats.
  *
- * A new stream always ticks — the answer started. Growth of the same stream
- * ticks at most once per throttle window. A stream that stopped, finished,
- * or merely shed rows (a rebuild, a cache merge) never ticks.
+ * `start` is a stream that was not there before — including a new one
+ * replacing the previous, since that is a second answer beginning. `end` is a
+ * stream that stopped: it finished, failed, or was replaced by a settled row.
+ * Growth of a stream that was already running is deliberately not an edge.
  */
-export function shouldTickStreamHaptic(input: {
+export function streamEdge(input: {
   previous: StreamMark | null;
   latest: StreamMark | null;
-  lastTickAt: number;
-  now: number;
-}): boolean {
+}): StreamEdge {
   const { previous, latest } = input;
-  if (latest === null) return false;
-  if (previous?.id !== latest.id) return true;
-  if (latest.textLength <= previous.textLength) return false;
-  return input.now - input.lastTickAt >= STREAM_HAPTIC_THROTTLE_MS;
+  if (latest !== null && (previous === null || previous.id !== latest.id)) return "start";
+  if (latest === null && previous !== null) return "end";
+  return null;
 }
 
-/** Mount while the conversation is on screen to tick as its answer streams. */
+/** Mount while the conversation is on screen to tick at each answer's edges. */
 export function useStreamHaptics(rows: readonly Row[]): void {
   // The first rows this hook sees only seed the mark: opening a pane
   // mid-stream must not buzz about an answer that started without us.
   const seeded = useRef(false);
   const previous = useRef<StreamMark | null>(null);
-  const lastTickAt = useRef(0);
 
   useEffect(() => {
     const latest = latestStreamingAssistant(rows);
-    const now = Date.now();
-    const tick = seeded.current && shouldTickStreamHaptic({
-      previous: previous.current,
-      latest,
-      lastTickAt: lastTickAt.current,
-      now,
-    });
+    const edge = seeded.current ? streamEdge({ previous: previous.current, latest }) : null;
     seeded.current = true;
     previous.current = latest;
-    if (!tick) return;
-    lastTickAt.current = now;
-    void hapticTick();
+    if (edge === null) return;
+    void hapticTick("stream");
   }, [rows]);
 }

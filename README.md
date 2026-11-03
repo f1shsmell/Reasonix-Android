@@ -157,7 +157,7 @@ cd android && ./gradlew assembleDebug
 | `android/` | Capacitor 壳、LoopbackProxy、扫码 / 登录 / 配对 / 保活等原生插件 |
 | `docs/` | 交接文档、计划、自建说明与界面渲染图 |
 
-更多文档：[交接与决策](docs/HANDOFF.md)、[自建与排障](docs/SELF_HOST.md)、[发版流程](RELEASING.md)。
+更多文档：[交接与决策](docs/HANDOFF.md)、[自建与排障](docs/SELF_HOST.md)、[已知限制](docs/KNOWN_LIMITATIONS.md)、[发版流程](RELEASING.md)。
 
 ## 第三方声明
 

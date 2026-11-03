@@ -296,4 +296,60 @@ describe("Connection", () => {
     expect(connection.current.reach.kind).toBe("unauthorized");
     expect(connection.lost).toBe(false);
   });
+
+  it("rebuilds an open stream instead of leaving it alone", async () => {
+    // The bug this covers: a phone frozen in the background comes back to a
+    // connection whose peer already closed it. No error fired, so the state
+    // still reads "open" — and the old wakeStream returned early exactly for
+    // that case, which is why the conversation stopped updating.
+    class Source {
+      static latest: Source | null = null;
+      url: string;
+      onopen: (() => void) | null = null;
+      onmessage: ((message: { data: string; lastEventId: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      closed = false;
+      constructor(url: string) {
+        this.url = url;
+        Source.latest = this;
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    vi.stubGlobal("EventSource", Source);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const connection = new Connection();
+    await connection.refresh();
+    connection.attach("r1");
+    const first = Source.latest;
+    first?.onopen?.();
+    expect(connection.current.stream.kind).toBe("open");
+
+    connection.wakeStream();
+
+    expect(Source.latest).not.toBe(first);
+    expect(first?.closed).toBe(true);
+    expect(connection.current.stream.kind).toBe("open");
+  });
+
+  it("leaves a stream alone when it is neither open nor retrying", async () => {
+    // Detached, the connection has no stream to rebuild: waking must not throw
+    // or invent one.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
+    const connection = new Connection();
+
+    expect(connection.current.stream.kind).toBe("idle");
+    expect(() => connection.wakeStream()).not.toThrow();
+    expect(connection.current.stream.kind).toBe("idle");
+  });
 });

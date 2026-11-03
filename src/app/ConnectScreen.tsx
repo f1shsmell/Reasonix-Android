@@ -76,7 +76,7 @@ import {
 import type { BackgroundStatus } from "../native/turn";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
 import type { ThemeChoice } from "./theme";
-import { loadHaptics, saveHaptics, vibrate } from "./haptics";
+import { hapticSample, loadSurfaceChoice, loadHaptics, saveHapticSurface, saveHaptics } from "./haptics";
 import { Switch } from "./Switch";
 import { FOLD_CHOICES, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
@@ -207,6 +207,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [enterPref, setEnterPrefState] = useState<EnterPref>(() => loadEnterPref());
   /** Whether held rows, picked-up projects and streamed answers buzz. */
   const [haptics, setHapticsState] = useState(() => loadHaptics());
+  /** Gesture feedback: a long press arming, a row being picked up and dropped. */
+  const [hapticDrag, setHapticDragState] = useState(() => loadSurfaceChoice("drag"));
+  /** Stream feedback: the two edges of an answer, not the text between them. */
+  const [hapticStream, setHapticStreamState] = useState(() => loadSurfaceChoice("stream"));
   /** The copy-diagnostics row's last result. */
   const [diagStatus, setDiagStatus] = useState("");
   /** Computers this phone has connected to before, newest first. */
@@ -438,8 +442,19 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     setHapticsState(enabled);
     saveHaptics(enabled);
     // Turning it on is the one moment a sample is useful: it proves the
-    // switch reached the device.
-    if (enabled) vibrate(10);
+    // switch reached the device. It bypasses the per-surface switches, or
+    // turning on a master whose sub-switches are all off would look broken.
+    if (enabled) void hapticSample();
+  }, []);
+
+  const pickHapticDrag = useCallback((enabled: boolean) => {
+    setHapticDragState(enabled);
+    saveHapticSurface("drag", enabled);
+  }, []);
+
+  const pickHapticStream = useCallback((enabled: boolean) => {
+    setHapticStreamState(enabled);
+    saveHapticSurface("stream", enabled);
   }, []);
 
   const connect = useCallback(
@@ -1329,6 +1344,34 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <div className="setting">
             <span className="setting-title">震动</span>
             <Switch checked={haptics} onChange={pickHaptics} ariaLabel="震动" />
+          </div>
+          {/* The two surfaces under the master switch. Off is off: a row here
+              cannot re-enable feedback the master just silenced, so the rows
+              are disabled rather than merely inert — a switch that moves and
+              changes nothing is the worse lie. */}
+          <div className="setting sub">
+            <span className="setting-main">
+              <span className="setting-title">拖拽与长按</span>
+              <span className="setting-sub">长按呼出操作、拖动排序时震动</span>
+            </span>
+            <Switch
+              checked={hapticDrag}
+              onChange={pickHapticDrag}
+              ariaLabel="拖拽与长按震动"
+              disabled={!haptics}
+            />
+          </div>
+          <div className="setting sub">
+            <span className="setting-main">
+              <span className="setting-title">回答开始与结束</span>
+              <span className="setting-sub">只在开头和结尾震一次，生成过程中不震</span>
+            </span>
+            <Switch
+              checked={hapticStream}
+              onChange={pickHapticStream}
+              ariaLabel="回答开始与结束震动"
+              disabled={!haptics}
+            />
           </div>
           {Capacitor.isNativePlatform() && onNotificationOptionsChange ? (
             <div className="setting">

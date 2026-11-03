@@ -51,6 +51,14 @@ const connectionMock = vi.hoisted(() => {
     subscribe: vi.fn(() => () => {}),
     attach: vi.fn(),
     detach: vi.fn(),
+    /**
+     * The two calls a foreground makes. Kept on the shared object so a test
+     * can assert what a resume actually asked for: `quickCheck` verifies the
+     * route, `wakeStream` is what rebuilds a stream the route check cannot
+     * see is dead.
+     */
+    quickCheck: vi.fn(async () => true),
+    wakeStream: vi.fn(),
     // Mirrors the real contract closely enough for the screens: the return
     // value is *this* read's answer, one lost read is tolerated and leaves the
     // snapshot alone, and a second one in a row is what flips `reach` to
@@ -92,13 +100,14 @@ vi.mock("../net/connection", async (importOriginal) => ({
     refresh = connectionMock.refresh;
     attach = connectionMock.attach;
     detach = connectionMock.detach;
-    quickCheck = vi.fn(async () => true);
-    wakeStream = vi.fn();
+    quickCheck = connectionMock.quickCheck;
+    wakeStream = connectionMock.wakeStream;
   },
 }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: vi.fn(() => true) } }));
 const appMock = vi.hoisted(() => ({
   back: null as (() => void) | null,
+  state: null as ((state: { isActive: boolean }) => void) | null,
   exitApp: vi.fn(),
   launchUrl: null as string | null,
   networkWatch: null as ((status: NetworkStatus) => void) | null,
@@ -107,6 +116,7 @@ vi.mock("@capacitor/app", () => ({
   App: {
     addListener: vi.fn(async (event: string, handler: () => void) => {
       if (event === "backButton") appMock.back = handler;
+      if (event === "appStateChange") appMock.state = handler as (state: { isActive: boolean }) => void;
       return { remove: vi.fn() };
     }),
     exitApp: appMock.exitApp,
@@ -267,6 +277,7 @@ beforeEach(() => {
   localStorage.clear();
   relayStoreMock.loadRelayDevice.mockReturnValue(null);
   appMock.back = null;
+  appMock.state = null;
   appMock.exitApp.mockClear();
   appMock.launchUrl = null;
   appMock.networkWatch = null;
@@ -646,6 +657,37 @@ describe("App", () => {
     // machine opens once the phone has a network again.
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.9.9:51234");
     expect(container.querySelector(".linkbar")?.textContent).toContain("局域网已连接");
+  });
+
+  // A foreground is the only notice a stream frozen in the background gets:
+  // the network key did not change, so noteNetwork returns early and no error
+  // ever fires. The route is verified and the stream rebuilt.
+  it("rebuilds the stream when the app comes back to the foreground", async () => {
+    await renderApp();
+    connectionMock.quickCheck.mockClear();
+    connectionMock.wakeStream.mockClear();
+
+    await act(async () => {
+      appMock.state?.({ isActive: true });
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(connectionMock.quickCheck).toHaveBeenCalled();
+    expect(connectionMock.wakeStream).toHaveBeenCalled();
+  });
+
+  it("does not probe again when the app goes to the background", async () => {
+    await renderApp();
+    connectionMock.quickCheck.mockClear();
+
+    await act(async () => {
+      appMock.state?.({ isActive: false });
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(connectionMock.quickCheck).not.toHaveBeenCalled();
   });
 
   it("opens the conversation a decision notification names", async () => {

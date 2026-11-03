@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  latestStreamingAssistant,
-  shouldTickStreamHaptic,
-  STREAM_HAPTIC_THROTTLE_MS,
-  type StreamMark,
-} from "./streamHaptics";
+import { latestStreamingAssistant, streamEdge, type StreamMark } from "./streamHaptics";
 import type { AssistantRow, Row } from "./transcript";
 
 function assistant(id: string, text: string, streaming = true): AssistantRow {
@@ -35,72 +30,32 @@ describe("latestStreamingAssistant", () => {
   });
 });
 
-describe("shouldTickStreamHaptic", () => {
-  it("ticks when a new stream starts", () => {
-    expect(
-      shouldTickStreamHaptic({
-        previous: null,
-        latest: mark("a1", 0),
-        lastTickAt: 0,
-        now: 1000,
-      }),
-    ).toBe(true);
+describe("streamEdge", () => {
+  it("ticks the start of an answer", () => {
+    expect(streamEdge({ previous: null, latest: mark("a1", 0) })).toBe("start");
   });
 
-  it("ticks when a different stream replaces the old one", () => {
-    expect(
-      shouldTickStreamHaptic({
-        previous: mark("a1", 100),
-        latest: mark("a2", 0),
-        lastTickAt: 1000,
-        now: 1100,
-      }),
-    ).toBe(true);
+  it("ticks the start of a second answer", () => {
+    expect(streamEdge({ previous: mark("a1", 100), latest: mark("a2", 0) })).toBe("start");
   });
 
-  it("does not tick before the text grows", () => {
-    expect(
-      shouldTickStreamHaptic({
-        previous: mark("a1", 100),
-        latest: mark("a1", 100),
-        lastTickAt: 0,
-        now: 5000,
-      }),
-    ).toBe(false);
+  it("ticks the end of an answer", () => {
+    expect(streamEdge({ previous: mark("a1", 100), latest: null })).toBe("end");
   });
 
-  it("does not tick when the stream disappeared", () => {
-    expect(
-      shouldTickStreamHaptic({
-        previous: mark("a1", 100),
-        latest: null,
-        lastTickAt: 0,
-        now: 5000,
-      }),
-    ).toBe(false);
+  it("stays silent while the answer grows", () => {
+    // The bug this replaces: ticking on growth made a long reply buzz the
+    // whole way through, which reads as broken rather than responsive.
+    expect(streamEdge({ previous: mark("a1", 100), latest: mark("a1", 120) })).toBeNull();
+    expect(streamEdge({ previous: mark("a1", 100), latest: mark("a1", 5000) })).toBeNull();
   });
 
-  it("does not tick when the text shrank", () => {
-    expect(
-      shouldTickStreamHaptic({
-        previous: mark("a1", 100),
-        latest: mark("a1", 50),
-        lastTickAt: 0,
-        now: 5000,
-      }),
-    ).toBe(false);
+  it("stays silent when nothing streams on either side", () => {
+    expect(streamEdge({ previous: null, latest: null })).toBeNull();
   });
 
-  it("rate-limits growth to one tick per window", () => {
-    const grew = {
-      previous: mark("a1", 100),
-      latest: mark("a1", 120),
-    };
-    expect(
-      shouldTickStreamHaptic({ ...grew, lastTickAt: 1000, now: 1000 + STREAM_HAPTIC_THROTTLE_MS - 1 }),
-    ).toBe(false);
-    expect(
-      shouldTickStreamHaptic({ ...grew, lastTickAt: 1000, now: 1000 + STREAM_HAPTIC_THROTTLE_MS }),
-    ).toBe(true);
+  it("stays silent when the same stream merely shrinks", () => {
+    // A rebuilt or re-merged transcript can shed text without an answer ending.
+    expect(streamEdge({ previous: mark("a1", 100), latest: mark("a1", 50) })).toBeNull();
   });
 });

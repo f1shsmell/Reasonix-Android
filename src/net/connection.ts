@@ -225,10 +225,37 @@ export class Connection {
     }
   }
 
-  /** A stream waiting out its backoff should retry now that the network is back. */
+  /**
+   * Bring the stream back after something said the route is usable again.
+   *
+   * Two states need different repairs. A retrying stream is only waiting out a
+   * backoff, so it retries at once. An open one may be a connection whose peer
+   * went away while the app was frozen: no error ever fired, `readyState` still
+   * says OPEN, and this call is the only notice it will get — hence `reopen`
+   * rather than a no-op, which is what let a backgrounded phone come back to a
+   * conversation that never updated again.
+   */
   wakeStream(): void {
-    if (this.snapshot.stream.kind !== "retrying") return;
-    this.stream?.retryNow();
+    const kind = this.snapshot.stream.kind;
+    if (kind === "retrying") {
+      this.stream?.retryNow();
+      return;
+    }
+    if (kind === "open") this.stream?.reopen();
+  }
+
+  /**
+   * How long the stream has been silent, in ms, or 0 when it is not open.
+   *
+   * A live stream says something in reply to every reconnect and every turn
+   * that starts, and the kernel sends a watermark when a client attaches. What
+   * it does not do is send an error when the peer disappears — so on a phone
+   * that stayed on one screen, silence is the only signal that the connection
+   * died. The caller decides how much silence is too much.
+   */
+  streamIdleFor(now = Date.now()): number {
+    if (this.snapshot.stream.kind !== "open") return 0;
+    return this.stream?.idleFor(now) ?? 0;
   }
 
   /**

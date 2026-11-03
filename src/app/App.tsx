@@ -652,6 +652,36 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [boot, link.state.phase, link.watch, link.preferLan]);
 
+  // A phone frozen in the background comes back holding a stream whose peer
+  // went away while nothing was watching. No error fires and the status still
+  // reads "connected", so the pane would never update again; a resume is the
+  // only notice it gets. `reassess` verifies the route and rebuilds a stream
+  // that still answers, and no-ops when the link is not connected or another
+  // check is already running.
+  //
+  // This is not `noteNetwork`: a foreground is not a network change, and the
+  // route comparison there returns early unless the network actually moved.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    let remove: (() => void) | undefined;
+    void NativeApp.addListener("appStateChange", (state) => {
+      if (state.isActive) link.reassess();
+    }).then((handle) => {
+      if (cancelled) {
+        void handle.remove();
+        return;
+      }
+      remove = () => {
+        void handle.remove();
+      };
+    });
+    return () => {
+      cancelled = true;
+      remove?.();
+    };
+  }, [link.reassess]);
+
   // The platform's own answer about this phone's network. A default network
   // returning starts a fresh walk; a change while the boolean stays true
   // (Wi-Fi A→B, cellular→Wi-Fi) is passed through as a change too, so the link
