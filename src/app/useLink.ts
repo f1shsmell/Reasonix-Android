@@ -46,6 +46,18 @@ function reachCode(reach: ConnectionSnapshot["reach"]): string {
   return reach.kind === "unauthorized" ? "device.unauthorized" : "client.offline";
 }
 
+/**
+ * How long an open stream may stay silent before it is treated as dead.
+ *
+ * The kernel answers a fresh attach with a watermark and streams deltas while a
+ * turn runs, so a healthy connection is only quiet when nothing is happening.
+ * Three poll ticks is chosen to be well clear of a turn that is merely thinking:
+ * the cost of waiting too long is a frozen conversation, and the cost of
+ * rebuilding too eagerly is one reconnect — cheap, and idempotent through the
+ * cursor.
+ */
+const STREAM_IDLE_MS = 15_000;
+
 /** Every LAN address worth trying, the ones this phone can reach directly first. */
 export function lanDoorsOf(config: ProxyConfig | null): string[] {
   const saved = loadConnections()
@@ -156,6 +168,17 @@ export interface Link {
    * opened settings" and "the computer is gone".
    */
   watch: () => void;
+  /**
+   * Verify the live route after a foreground, and repair the stream when it
+   * still answers.
+   *
+   * Distinct from `check`: a route that answers is not proof the event stream
+   * is alive. A phone frozen in the background comes back with a connection
+   * whose peer closed it long ago, and nothing reports that — so a reachable
+   * route also wakes the stream. A route that no longer answers goes to a
+   * fresh attempt instead of waiting out a backoff.
+   */
+  reassess: () => void;
   /** The settings screen swapped the upstream and then could not verify it. */
   noteFailed: (error: LinkError) => void;
   /**
@@ -522,7 +545,22 @@ export function useLink(connection: Connection): Link {
         failed(linkFailure("device.unauthorized"), stateRef.current);
         return;
       }
-      if (!connection.lost) return;
+      if (!connection.lost) {
+        // The route answers, but the stream may still be dead: a peer that
+        // closes the socket leaves `readyState` on OPEN and fires no error, so
+        // a phone sitting on one screen kept showing a frozen conversation
+        // until the screen was closed and reopened. Silence is the only
+        // evidence available, and this is the timer that can act on it.
+        if (
+          connection.streamIdleFor() >= STREAM_IDLE_MS &&
+          !standDown.current &&
+          !active.current &&
+          stateRef.current.phase === "connected"
+        ) {
+          connection.wakeStream();
+        }
+        return;
+      }
       if (standDown.current || active.current) return;
       if (stateRef.current.phase !== "connected") return;
       backoff.current.reset();
@@ -907,6 +945,7 @@ export function useLink(connection: Connection): Link {
     retry,
     switchTo,
     preferLan,
+    reassess,
     noteConnected,
     noteFailed,
     noteNetwork,

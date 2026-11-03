@@ -76,6 +76,7 @@ function fakeConnection() {
     refresh: vi.fn(async () => true),
     resetFailures: vi.fn(),
     wakeStream: vi.fn(),
+    streamIdleFor: vi.fn(() => 0),
   };
 }
 
@@ -179,5 +180,81 @@ describe("useLink network changes", () => {
 
     expect(fake.quickCheck).not.toHaveBeenCalled();
     expect(latest?.state.phase).toBe("connected");
+  });
+
+  it("wakes the stream on a foreground, where no network change fires", async () => {
+    // A resume is not a network change: the key is identical, so noteNetwork
+    // returns early and never reaches the stream. Only reassess covers this,
+    // which is the case that left a backgrounded phone stuck.
+    await mount();
+    fake.wakeStream.mockClear();
+    fake.quickCheck.mockClear();
+
+    act(() => latest?.reassess());
+    await flush();
+
+    expect(fake.quickCheck).toHaveBeenCalledTimes(1);
+    expect(fake.wakeStream).toHaveBeenCalledTimes(1);
+    expect(latest?.state.phase).toBe("connected");
+  });
+
+  it("does not probe on a foreground while a check is already running", async () => {
+    // A burst of resumes must not stack probes.
+    await mount();
+    fake.quickCheck.mockClear();
+
+    act(() => {
+      latest?.reassess();
+      latest?.reassess();
+    });
+    await flush();
+
+    expect(fake.quickCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useLink stream health", () => {
+  it("rebuilds a stream that has gone quiet while the route still answers", async () => {
+    // The case this covers: the peer closed the socket, no error fired, and the
+    // phone sat on one screen showing a frozen conversation until it was closed
+    // and reopened. The HTTP probe keeps succeeding, so only the silence says
+    // anything is wrong.
+    await mount();
+    fake.wakeStream.mockClear();
+    fake.streamIdleFor.mockReturnValue(20_000);
+
+    act(() => latest?.watch());
+    await flush();
+
+    expect(fake.wakeStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a stream alone when it spoke recently", async () => {
+    // A turn that is merely thinking is not a dead connection: rebuilding on
+    // every quiet moment would reconnect for no reason and interrupt the turn.
+    await mount();
+    fake.wakeStream.mockClear();
+    fake.streamIdleFor.mockReturnValue(2_000);
+
+    act(() => latest?.watch());
+    await flush();
+
+    expect(fake.wakeStream).not.toHaveBeenCalled();
+  });
+
+  it("does not rebuild while the route itself is gone", async () => {
+    // A lost route already has its own repair; waking a stream on top of it
+    // would race the reconnect the lost branch is about to start. Only the
+    // silence check is under test here — a reconnect that follows may call
+    // wakeStream itself, which is a different path.
+    await mount();
+    fake.streamIdleFor.mockClear();
+    fake.streamIdleFor.mockReturnValue(60_000);
+    fake.lost = true;
+
+    act(() => latest?.watch());
+    await flush();
+
+    expect(fake.streamIdleFor).not.toHaveBeenCalled();
   });
 });

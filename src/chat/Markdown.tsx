@@ -13,10 +13,13 @@ import { isValidElement, memo } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { CopyButton } from "./CopyButton";
 import { highlightCode } from "./highlight";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 
 /** The source text under a React node, used for the copy button. */
 function textOf(node: ReactNode): string {
@@ -74,7 +77,11 @@ const components: Components = {
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={components}
+      >
         {text}
       </ReactMarkdown>
     </div>
