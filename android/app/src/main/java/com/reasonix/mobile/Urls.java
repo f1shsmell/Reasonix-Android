@@ -2,7 +2,7 @@ package com.reasonix.mobile;
 
 import java.net.URI;
 
-/** URL checks shared by the two WebView activities. */
+/** URL checks shared by the WebView activities. */
 final class Urls {
     private Urls() {
     }

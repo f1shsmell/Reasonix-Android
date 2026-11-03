@@ -62,6 +62,14 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:exported="false" />
 
+        <activity
+            android:name=".WebModeActivity"
+            android:label="Reasonix 完整界面"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="false" />
+
         <service
             android:name=".TurnService"
             android:exported="false"
