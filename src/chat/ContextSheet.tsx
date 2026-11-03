@@ -29,18 +29,43 @@ function percent(used: number, window: number): number {
   return Math.min(100, Math.max(0, Math.round((used / window) * 100)));
 }
 
+/**
+ * Why a read failed.
+ *
+ * Kept apart from the fold's wording below: the same 500 means two different
+ * things on the two routes, and a read that timed out has nothing to do with
+ * summarising anything.
+ */
+function readFailure(code: string): string {
+  switch (code) {
+    case "client.offline":
+      return "连不上电脑，检查连接后重试。";
+    case "client.timeout":
+      return "等电脑回应超时，检查连接后重试。";
+    case "runtime.gone":
+      return "这个会话已经关掉了，回列表里重新打开。";
+    default:
+      return `读不到上下文用量：${code}`;
+  }
+}
+
 /** Why a fold was refused, in words the person can act on. */
-function refusal(code: string): string {
+function foldFailure(code: string): string {
   switch (code) {
     case "client.offline":
       return "连不上电脑，检查连接后重试。";
     case "client.timeout":
       return "等电脑回应超时。压缩要模型先做一次总结，慢的时候会久一些。";
     case "http.409":
-      return "这一轮还在跑，等它停下来再压缩。";
-    case "turn/busy":
-    case "agent.fail_busy":
-      return "这一轮还在跑，等它停下来再压缩。";
+      // The kernel answers 409 when the fold was declined — there is nothing
+      // worth folding in this transcript. It is not a busy signal: that one
+      // is a 500 (see below).
+      return "这次没有可压缩的内容。";
+    case "http.500":
+      // A running turn is reported here too, and the kernel words it as a
+      // plain-text body rather than a code. Both cases ask for the same thing,
+      // so the sentence covers both without parsing that text.
+      return "压缩没完成。如果这一轮还在跑，等它停下来再试。";
     default:
       return `压缩不了：${code}`;
   }
@@ -75,7 +100,7 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
     setError("");
     void loadContext(base).then((result) => {
       if (!result.ok) {
-        setError(refusal(result.code));
+        setError(readFailure(result.code));
         return;
       }
       setContext(result.context);
@@ -92,7 +117,7 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
     const result = await compactContext(base);
     setBusy(false);
     if (!result.ok) {
-      setError(refusal(result.code));
+      setError(foldFailure(result.code));
       return;
     }
     if (!result.compacted) {

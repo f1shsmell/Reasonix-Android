@@ -116,7 +116,10 @@ describe("compactContext", () => {
     });
   });
 
-  it("reports a busy refusal with its code, so the sheet can say to wait", async () => {
+  it("reports a 409 as the declined-fold status the kernel uses for it", async () => {
+    // `compact.go` answers 409 when the fold was declined (nothing worth
+    // folding) and 500 for a running turn. The sheet words each one, so this
+    // only has to carry the status through unchanged.
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(json({ code: "http.409" }, 409)),
@@ -124,7 +127,15 @@ describe("compactContext", () => {
 
     const result = await compactContext("/rt/r1");
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, code: "http.409" });
+  });
+
+  it("reports a running turn as the 500 the kernel answers", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 500 })));
+
+    const result = await compactContext("/rt/r1");
+
+    expect(result).toEqual({ ok: false, code: "http.500" });
   });
 
   it("survives a refusal that is not JSON", async () => {
