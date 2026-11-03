@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.PowerManager;
@@ -79,6 +80,37 @@ public class TurnPlugin extends Plugin {
                 .putBoolean(TurnService.KEY_SHOW_OPTIONS, show)
                 .apply();
         TurnService.notificationOptionsChanged();
+        call.resolve(new JSObject());
+    }
+
+    /**
+     * Which notification surfaces the phone posts.
+     *
+     * Every field is optional: a caller that only changed one switch sends one
+     * field, and the rest keep whatever the service already had. The values
+     * live in SharedPreferences rather than in the WebView because the service
+     * posts notifications while the WebView is gone.
+     */
+    @PluginMethod
+    public void setNotificationPrefs(PluginCall call) {
+        SharedPreferences.Editor editor = getContext()
+                .getSharedPreferences(TurnService.PREFS_NOTIFY, Context.MODE_PRIVATE)
+                .edit();
+        Boolean ongoing = call.getBoolean("ongoing");
+        Boolean ask = call.getBoolean("ask");
+        Boolean done = call.getBoolean("done");
+        Boolean headsUp = call.getBoolean("headsUp");
+        if (ongoing != null) editor.putBoolean(TurnService.KEY_NOTIFY_ONGOING, ongoing);
+        if (ask != null) editor.putBoolean(TurnService.KEY_NOTIFY_ASK, ask);
+        if (done != null) editor.putBoolean(TurnService.KEY_NOTIFY_DONE, done);
+        if (headsUp != null) editor.putBoolean(TurnService.KEY_NOTIFY_HEADS_UP, headsUp);
+        editor.apply();
+        // Whether an ask is affected decides how much has to be rebuilt: the
+        // ongoing notification always is (its channel may have moved), while an
+        // ask on screen only has to be dropped when one of its own switches
+        // changed. `done` needs nothing — it describes turns that are over.
+        boolean askTouched = ask != null || headsUp != null;
+        TurnService.notificationPrefsChanged(askTouched);
         call.resolve(new JSObject());
     }
 

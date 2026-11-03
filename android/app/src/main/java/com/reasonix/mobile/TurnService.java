@@ -67,12 +67,40 @@ public class TurnService extends Service {
 
     private static final String TAG = "ReasonixTurn";
     private static final String CHANNEL_RUNNING = "turn_running";
+    /**
+     * The silent twin of {@link #CHANNEL_RUNNING}.
+     *
+     * A foreground service must carry a notification, so "off" cannot mean
+     * "absent": it means a channel whose importance is MIN, which keeps the
+     * service alive without taking a slot in the status bar or making a sound.
+     * A separate channel rather than one with mutable importance, because
+     * Android fixes a channel's importance at creation — and after the person
+     * touches it, not even that.
+     */
+    private static final String CHANNEL_RUNNING_QUIET = "turn_running_quiet";
     private static final String CHANNEL_CLOUD = "turn_cloud";
+    private static final String CHANNEL_CLOUD_QUIET = "turn_cloud_quiet";
     private static final String CHANNEL_DONE = "turn_done";
     private static final String CHANNEL_ASK = "turn_ask";
+    /**
+     * The ask channel that waits in the shade instead of heads-up.
+     *
+     * Whether a notification interrupts is a channel property, not something a
+     * builder can set per post, so the choice is made by choosing a channel:
+     * {@link #CHANNEL_ASK} for heads-up, this one for quiet.
+     */
+    private static final String CHANNEL_ASK_QUIET = "turn_ask_quiet";
     /** Phone-local notification choices, written by the settings switch. */
     static final String PREFS_NOTIFY = "turn_notify";
     static final String KEY_SHOW_OPTIONS = "show_options";
+    /** Whether the ongoing notification is visible; off keeps it, but silent. */
+    static final String KEY_NOTIFY_ONGOING = "notify_ongoing";
+    /** Whether a blocked turn posts an ask notification at all. */
+    static final String KEY_NOTIFY_ASK = "notify_ask";
+    /** Whether a finished turn posts a done notification. */
+    static final String KEY_NOTIFY_DONE = "notify_done";
+    /** Whether ask notifications may heads-up rather than wait in the shade. */
+    static final String KEY_NOTIFY_HEADS_UP = "notify_heads_up";
     private static final int RUNNING_ID = 4101;
     /**
      * Ask and done notifications are per runtime. Four non-overlapping bands
@@ -484,6 +512,54 @@ public class TurnService extends Service {
         if (service.cloud) service.pollCloudSoon();
     }
 
+    /**
+     * Apply a change to which notifications are posted, or how.
+     *
+     * Only the surfaces the change can affect are touched. Cancelling every ask
+     * on any change would drop a question that is on screen because someone
+     * toggled「会话完成」, and the phone would show the notification vanish and
+     * come back — the switches are independent, so the repairs are too.
+     *
+     * `done` needs no repair at all: it describes turns that already finished,
+     * and the switch is about the next one.
+     */
+    static void notificationPrefsChanged(boolean askTouched) {
+        TurnService service = active;
+        if (service == null) return;
+        // The ongoing notification is already on screen and has no poll to wait
+        // for, so it is rebuilt here; only the channel it posts on changes.
+        service.mainHandler.post(service::refreshRunning);
+        if (!askTouched) return;
+        // Everything that can touch an ask runs as one UI-thread task: the
+        // cancel and the signature reset have to land together, or a poll
+        // running at the same moment compares against a signature that is
+        // about to be cleared and skips the prompt.
+        service.mainHandler.post(service::dropAsksForResync);
+    }
+
+    /**
+     * Drop the asks a changed switch invalidated.
+     *
+     * Nothing is re-posted from here. The next poll already knows how to post
+     * an ask on the channel the switches now name — it compares the status
+     * signature, which cancelling clears, so the prompt comes back as new.
+     * That costs at most one poll interval (5s on a LAN, 60s on a cloud link),
+     * and the alternative was worse: an eager `pollAll` counts idle sweeps and
+     * stops the service after two of them, so nudging it on every switch flip
+     * could end the background watcher mid-visit to settings — turning a
+     * preference change into lost ask and done notifications. It also ran a
+     * socket request off the poll cadence, and its cloud twin depends on a
+     * WebView bridge that answers on its own schedule.
+     *
+     * `cancelAsks` iterates a copy rather than the map, which is why the switches
+     * reuse it instead of walking `watches` here: a poll can add or drop an
+     * entry while this runs on the UI thread.
+     */
+    private void dropAsksForResync() {
+        if (stopping) return;
+        cancelAsks();
+    }
+
     /** The cloud watcher's last sweep, for the About page's diagnostics. */
     static JSONObject cloudStatus() {
         JSONObject out = new JSONObject();
@@ -836,6 +912,14 @@ public class TurnService extends Service {
             if (!watch.askSignature.isEmpty()) cancelAsk(watch);
             return;
         }
+        if (!notifyPref(KEY_NOTIFY_ASK, true)) {
+            // Off means nothing is posted, and an ask already waiting in the
+            // shade is removed: a switch that stopped new prompts but left old
+            // ones on screen would read as broken. The signature is cleared so
+            // turning it back on posts the current prompt again at once.
+            if (!watch.askSignature.isEmpty()) cancelAsk(watch);
+            return;
+        }
         if (status.signature.equals(watch.askSignature)) return;
         if (!manager.areNotificationsEnabled()) return;
         watch.askSignature = status.signature;
@@ -855,7 +939,7 @@ public class TurnService extends Service {
                 ? (watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
                 : watch.title;
         PendingIntent open = openChat(watch, askRequest(watch.key), true);
-        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ASK)
+        Notification.Builder builder = new Notification.Builder(this, askChannel())
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(heading)
                 .setContentText(body)
@@ -987,7 +1071,7 @@ public class TurnService extends Service {
 
     /** The lock-screen stand-in: no session title, no question text. */
     private Notification publicAsk() {
-        return new Notification.Builder(this, CHANNEL_ASK)
+        return new Notification.Builder(this, askChannel())
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
                 .setContentText("有会话需要你处理")
@@ -1090,11 +1174,23 @@ public class TurnService extends Service {
                 CHANNEL_RUNNING, "运行中的会话", NotificationManager.IMPORTANCE_LOW);
         running.setShowBadge(false);
         manager.createNotificationChannel(running);
+        // The twin the ongoing notification moves to when the person turns it
+        // off: still required by startForeground, but no icon and no sound.
+        NotificationChannel quiet = new NotificationChannel(
+                CHANNEL_RUNNING_QUIET, "运行中的会话（静默）", NotificationManager.IMPORTANCE_MIN);
+        quiet.setShowBadge(false);
+        quiet.setSound(null, null);
+        manager.createNotificationChannel(quiet);
         NotificationChannel cloud = new NotificationChannel(
                 CHANNEL_CLOUD, "云端后台提醒", NotificationManager.IMPORTANCE_LOW);
         cloud.setDescription("App 在后台时留意云端会话");
         cloud.setShowBadge(false);
         manager.createNotificationChannel(cloud);
+        NotificationChannel cloudQuiet = new NotificationChannel(
+                CHANNEL_CLOUD_QUIET, "云端后台提醒（静默）", NotificationManager.IMPORTANCE_MIN);
+        cloudQuiet.setShowBadge(false);
+        cloudQuiet.setSound(null, null);
+        manager.createNotificationChannel(cloudQuiet);
         NotificationChannel done = new NotificationChannel(
                 CHANNEL_DONE, "会话完成", NotificationManager.IMPORTANCE_DEFAULT);
         manager.createNotificationChannel(done);
@@ -1103,6 +1199,36 @@ public class TurnService extends Service {
         ask.setDescription("有提问、批准或恢复选择等你回答");
         ask.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         manager.createNotificationChannel(ask);
+        // The same prompt, waiting quietly. Two channels rather than one whose
+        // importance changes, because Android fixes importance at creation and
+        // honours a change only while the person has not touched the channel.
+        NotificationChannel askQuiet = new NotificationChannel(
+                CHANNEL_ASK_QUIET, "需要你处理（不弹窗）", NotificationManager.IMPORTANCE_DEFAULT);
+        askQuiet.setDescription("同样的提醒，但不以横幅弹出");
+        askQuiet.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        manager.createNotificationChannel(askQuiet);
+    }
+
+    /** Whether a phone-local notification switch is on. */
+    private boolean notifyPref(String key, boolean fallback) {
+        return getSharedPreferences(PREFS_NOTIFY, MODE_PRIVATE).getBoolean(key, fallback);
+    }
+
+    /**
+     * The channel the ongoing notification posts on.
+     *
+     * Off does not cancel the notification — a foreground service cannot exist
+     * without one — so it moves to the MIN-importance twin instead.
+     */
+    private String runningChannel() {
+        boolean silent = !notifyPref(KEY_NOTIFY_ONGOING, false);
+        if (cloud) return silent ? CHANNEL_CLOUD_QUIET : CHANNEL_CLOUD;
+        return silent ? CHANNEL_RUNNING_QUIET : CHANNEL_RUNNING;
+    }
+
+    /** The ask channel, which is how heads-up is chosen at all. */
+    private String askChannel() {
+        return notifyPref(KEY_NOTIFY_HEADS_UP, true) ? CHANNEL_ASK : CHANNEL_ASK_QUIET;
     }
 
     private Notification buildRunning() {
@@ -1135,7 +1261,7 @@ public class TurnService extends Service {
                 text = "云端提醒：没有打开的会话";
             }
         }
-        String channel = cloud ? CHANNEL_CLOUD : CHANNEL_RUNNING;
+        String channel = runningChannel();
         return new Notification.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Reasonix")
@@ -1150,6 +1276,10 @@ public class TurnService extends Service {
     private void notifyFinished(Watch watch) {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null || !manager.areNotificationsEnabled()) return;
+        // Off means the notification is not posted. A done already in the shade
+        // is left alone: it reports something that really finished, and the
+        // switch is about future turns rather than erasing history.
+        if (!notifyPref(KEY_NOTIFY_DONE, true)) return;
         String heading = watch.title == null || watch.title.isEmpty() ? "Reasonix" : watch.title;
         Notification notification = new Notification.Builder(this, CHANNEL_DONE)
                 .setSmallIcon(R.drawable.ic_notification)
