@@ -65,6 +65,16 @@ describe("Markdown", () => {
     expect(container.querySelector("script")).toBeNull();
   });
 
+  it("renders inline and block math via KaTeX", () => {
+    render("行内 $E = mc^2$ 公式。\n\n$$\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n$$");
+    const math = container.querySelectorAll(".katex");
+    expect(math.length).toBeGreaterThanOrEqual(2);
+    // KaTeX 渲染后不再有裸 "$$" 定界符；原始 LaTeX 会保留在 annotation 里，
+    // 因此只断言定界符消失和可视节点（.katex-html）生成。
+    expect(container.textContent).not.toContain("$$");
+    expect(container.querySelector(".katex-html")).toBeTruthy();
+  });
+
   it("highlights fenced code and offers a copy action", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
