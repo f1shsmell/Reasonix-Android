@@ -245,6 +245,20 @@ export class Connection {
   }
 
   /**
+   * How long the stream has been silent, in ms, or 0 when it is not open.
+   *
+   * A live stream says something in reply to every reconnect and every turn
+   * that starts, and the kernel sends a watermark when a client attaches. What
+   * it does not do is send an error when the peer disappears — so on a phone
+   * that stayed on one screen, silence is the only signal that the connection
+   * died. The caller decides how much silence is too much.
+   */
+  streamIdleFor(now = Date.now()): number {
+    if (this.snapshot.stream.kind !== "open") return 0;
+    return this.stream?.idleFor(now) ?? 0;
+  }
+
+  /**
    * A pane can move when the kernel is reached through another origin or the
    * relay; keeping a stream on its old URL would silently stop delivering
    * events while the list above it refreshed.

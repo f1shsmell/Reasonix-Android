@@ -175,6 +175,73 @@ describe("RuntimeStream", () => {
     expect(cursors).toEqual([9]);
   });
 
+  it("reports how long an open connection has been silent", () => {
+    // Silence is the only evidence left when a peer closes the socket and the
+    // browser never sees an error, so the caller needs to be able to measure it.
+    const { handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+
+    // Not open yet: there is nothing to measure.
+    expect(stream.idleFor(1_000_000)).toBe(0);
+
+    stream.start();
+    FakeSource.latest?.onopen?.();
+    const opened = Date.now();
+
+    // Nothing has arrived since opening, so the clock runs from the open.
+    expect(stream.idleFor(opened + 1_000)).toBeGreaterThanOrEqual(900);
+    expect(stream.idleFor(opened + 20_000)).toBeGreaterThanOrEqual(19_000);
+  });
+
+  it("measures silence from the last frame, not from the open", () => {
+    const { handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    FakeSource.latest?.onopen?.();
+    FakeSource.latest?.emit({ kind: "text", text: "a" }, "1");
+
+    const after = Date.now();
+    // A frame just landed, so the connection is not idle yet.
+    expect(stream.idleFor(after)).toBeLessThan(1_000);
+    expect(stream.idleFor(after + 30_000)).toBeGreaterThanOrEqual(29_000);
+  });
+
+  it("stops measuring once the connection is replaced", () => {
+    // A reopen closes the old source; until the new one opens there is no
+    // connection to measure, and reporting idleness for a replaced socket would
+    // have the caller rebuild a stream that was just rebuilt.
+    const { handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    FakeSource.latest?.onopen?.();
+
+    const later = Date.now() + 60_000;
+    expect(stream.idleFor(later)).toBeGreaterThan(0);
+
+    stream.stop();
+    expect(stream.idleFor(later)).toBe(0);
+  });
+
+  it("measures from the new open, not the one it replaced", () => {
+    // A reconnect is not a fresh silence: the old connection's clock must not
+    // carry over, or the idle check would tear down a stream that had just
+    // been rebuilt.
+    const { handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    FakeSource.latest?.onopen?.();
+
+    const longAfter = Date.now() + 120_000;
+    expect(stream.idleFor(longAfter)).toBeGreaterThan(100_000);
+
+    stream.reopen();
+    // The replacement has not opened yet: nothing to measure.
+    expect(stream.idleFor(longAfter)).toBe(0);
+
+    FakeSource.latest?.onopen?.();
+    expect(stream.idleFor(Date.now())).toBeLessThan(1_000);
+  });
+
   it("ignores a late error from a connection it already replaced", () => {
     // `close()` does not cancel an error already queued on the old source. If
     // that handler ran it would null the *new* source and leak the connection,

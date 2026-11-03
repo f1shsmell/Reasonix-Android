@@ -35,6 +35,15 @@ export class RuntimeStream {
   private timer: number | null = null;
   private stopped = false;
   private lastEventId: number;
+  /**
+   * When the last frame arrived, and when this connection opened.
+   *
+   * A stream can be dead while its `readyState` still says OPEN: the peer went
+   * away and nothing reached the browser to say so. All that is left is
+   * silence, so silence is what this records.
+   */
+  private lastFrameAt = 0;
+  private openedAt = 0;
 
   constructor(url: string, handlers: StreamHandlers, initialCursor = 0) {
     this.url = url;
@@ -45,6 +54,18 @@ export class RuntimeStream {
   /** The id to resume from on the next cold start. */
   get cursor(): number {
     return this.lastEventId;
+  }
+
+  /**
+   * How long this connection has been silent, in ms, or 0 when it is not open.
+   *
+   * Measured from the last frame, or from when the connection opened if nothing
+   * has arrived yet — a connection that opened and then said nothing is exactly
+   * as suspect as one that went quiet.
+   */
+  idleFor(now: number): number {
+    if (this.source === null || this.openedAt === 0) return 0;
+    return now - Math.max(this.lastFrameAt, this.openedAt);
   }
 
   start(): void {
@@ -129,6 +150,12 @@ export class RuntimeStream {
       return;
     }
     this.source = source;
+    // A new source has not opened yet, so there is nothing to measure: the
+    // clock restarts at `onopen`. Leaving the previous timestamps would make a
+    // just-reconnected stream look silent since the last connection, and the
+    // idle check would tear it down the moment it was rebuilt.
+    this.openedAt = 0;
+    this.lastFrameAt = 0;
 
     // Every handler checks it still owns this stream. A `close()` does not
     // cancel an error or a message already queued on the old source, and a
@@ -138,11 +165,14 @@ export class RuntimeStream {
     source.onopen = () => {
       if (this.source !== source) return;
       this.attempt = 0;
+      this.openedAt = Date.now();
+      this.lastFrameAt = 0;
       this.handlers.onState({ kind: "open" });
     };
 
     source.onmessage = (message: MessageEvent<string>) => {
       if (this.source !== source) return;
+      this.lastFrameAt = Date.now();
       const id = message.lastEventId;
       if (id) {
         const parsed = Number(id);
