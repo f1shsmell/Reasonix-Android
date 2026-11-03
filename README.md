@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/f1shsmell/Reasonix-Android/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/f1shsmell/Reasonix-Android/ci.yml?branch=main&amp;style=flat-square&amp;label=CI" alt="CI"></a>
   <a href="https://github.com/f1shsmell/Reasonix-Android/releases"><img src="https://img.shields.io/github/v/release/f1shsmell/Reasonix-Android?style=flat-square&amp;label=release" alt="最新版本"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/f1shsmell/Reasonix-Android?style=flat-square" alt="MIT License"></a>
+  <a href="https://github.com/f1shsmell/Reasonix-Android/blob/main/LICENSE"><img src="https://img.shields.io/github/license/f1shsmell/Reasonix-Android?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8.0+">
 </p>
 
@@ -17,7 +17,7 @@
   &nbsp;·&nbsp;
   <a href="#安装">安装与更新</a>
   &nbsp;·&nbsp;
-  <a href="docs/KNOWN_LIMITATIONS.md">已知限制</a>
+  <a href="https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md">已知限制</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/f1shsmell/Reasonix-Android/issues">反馈问题</a>
 </p>
