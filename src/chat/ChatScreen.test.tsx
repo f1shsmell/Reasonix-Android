@@ -77,15 +77,26 @@ afterEach(() => {
 const runtime: RuntimeView = { id: "r1", base: "/rt/r1", root: "/w", name: "w" };
 const other: RuntimeView = { id: "r2", base: "/rt/r2", root: "/w2", name: "w2" };
 
+/**
+ * The queue's numbering, as the real `Connection` issues it: every frame gets
+ * a number one higher than the last, and the screen folds whatever it has not
+ * seen yet. A fixed number here would make the second event look like a
+ * repeat of the first, and the fold would skip it.
+ */
+let nextEventSeq = 0;
+
 function snapshot(
   lastEvent?: EventPayload,
   runtimes: RuntimeView[] = [runtime],
   reach: ConnectionSnapshot["reach"] = { kind: "ok" },
 ): ConnectionSnapshot {
+  const seq = lastEvent ? (nextEventSeq += 1) : nextEventSeq;
   return {
     reach,
     runtimes,
     stream: { kind: "open" },
+    events: lastEvent ? [{ seq, event: lastEvent }] : [],
+    eventSeq: seq,
     ...(lastEvent ? { lastEvent } : {}),
   };
 }
@@ -94,6 +105,7 @@ function snapshot(
 const connection = {
   attach: () => {},
   detach: () => {},
+  drainEvents: () => {},
 } as unknown as Connection;
 
 function json(body: unknown, status = 200): Response {
@@ -206,6 +218,34 @@ describe("ChatScreen history", () => {
     expect(text.indexOf("老问题")).toBeGreaterThanOrEqual(0);
     expect(text.indexOf("老问题")).toBeLessThan(text.indexOf("老回答"));
     expect(text.indexOf("老回答")).toBeLessThan(text.indexOf("新回答"));
+  });
+
+  it("folds every frame of a burst, not only the last", async () => {
+    // A relay poll answers with a whole backlog and hands each frame over
+    // synchronously, so React commits the burst as one render. Keeping only
+    // the newest frame dropped every delta but the final one — and the kernel
+    // never replays a droppable `text` frame, so that text was lost.
+    stubKernel({ history: [] });
+    render(snapshot());
+    await flush();
+
+    const base = snapshot();
+    const frames = ["第一段", "第二段", "第三段"].map((text) => {
+      nextEventSeq += 1;
+      return { seq: nextEventSeq, event: { kind: "text" as const, text } };
+    });
+    render({
+      ...base,
+      events: frames,
+      eventSeq: nextEventSeq,
+      lastEvent: frames[frames.length - 1]!.event,
+    });
+    await flush();
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("第一段");
+    expect(text).toContain("第二段");
+    expect(text).toContain("第三段");
   });
 
   it("says the history could not be read without failing the screen", async () => {
@@ -556,6 +596,49 @@ describe("ChatScreen todos", () => {
     );
     await flush();
     expect(todoCalls(fetchMock)).toBe(afterFirst);
+  });
+
+  it("reads a todo_progress that shares a burst with text", async () => {
+    // A relay poll delivers a whole backlog at once, so a progress frame and
+    // the deltas that follow it land in one task and commit as one render.
+    // `lastEvent` keeps only the newest, which is the text — reading the
+    // checklist from there missed the progress entirely and left it lagging
+    // until the next frame.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [{ content: "第一步", status: "completed" }];
+    const progress: EventPayload = {
+      kind: "todo_progress",
+      todoProgress: { kind: "advance", progressRevision: 1 },
+    };
+    const text: EventPayload = { kind: "text", text: "做好了" };
+    nextEventSeq += 1;
+    const first = { seq: nextEventSeq, event: progress };
+    nextEventSeq += 1;
+    const second = { seq: nextEventSeq, event: text };
+    render({
+      ...snapshot(),
+      events: [first, second],
+      eventSeq: nextEventSeq,
+      lastEvent: text,
+    });
+    await flush();
+
+    // The list was re-read and moved on, even though the newest frame in the
+    // burst says nothing about todos.
+    expect(container.textContent).toContain("1/1");
   });
 
   it("keeps the conversation when the list cannot be read", async () => {

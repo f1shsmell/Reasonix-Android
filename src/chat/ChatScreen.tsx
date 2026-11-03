@@ -7,7 +7,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Connection, ConnectionSnapshot } from "../net/connection";
+import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
 import {
@@ -506,6 +506,7 @@ type HistoryState =
 const OLDER_RETRY_COOLDOWN_MS = 10_000;
 
 function useTranscript(
+  connection: Connection,
   snapshot: ConnectionSnapshot,
   runtimeId: string,
   base: string | undefined,
@@ -559,7 +560,17 @@ function useTranscript(
    */
   const hydrated = useRef(false);
   const historyDone = useRef(false);
-  const lastEvent = snapshot.lastEvent;
+  /**
+   * The last frame seq folded into the transcript.
+   *
+   * Frames are queued, not overwritten, because one relay poll delivers a
+   * whole burst and React commits the burst as a single render. Folding from
+   * this watermark is what makes a burst arrive whole: an effect keyed on the
+   * newest frame alone ran once per burst and kept only the last delta.
+   *
+   * Seeded to -1 so the first effect folds whatever is already queued.
+   */
+  const foldedThrough = useRef(-1);
 
   const reload = useCallback(() => setReloadToken((token) => token + 1), []);
 
@@ -668,10 +679,18 @@ function useTranscript(
     };
   }, [base, runtimeId, reloadToken]);
 
+  const queued = snapshot.events;
+  const queuedSeq = snapshot.eventSeq;
   useEffect(() => {
-    if (!lastEvent) return;
-    setTranscript((current) => reduce(current, lastEvent));
-  }, [lastEvent]);
+    if (queued.length === 0) return;
+    const unseen = queued.filter((entry) => entry.seq > foldedThrough.current);
+    if (unseen.length === 0) return;
+    foldedThrough.current = unseen[unseen.length - 1]!.seq;
+    setTranscript((current) => unseen.reduce((acc, entry) => reduce(acc, entry.event), current));
+    // Only the drained frames are acknowledged; anything queued after this
+    // render stays for the next one.
+    connection.drainEvents(foldedThrough.current);
+  }, [queued, queuedSeq, connection]);
 
   // Keep the copy current. The cache holds what the screen shows, streaming
   // rows included; the history read overwrites them the moment it lands. A
@@ -761,6 +780,7 @@ interface TodoList {
 
 function useTodos(
   base: string | undefined,
+  events: readonly QueuedEvent[],
   lastEvent: EventPayload | undefined,
 ): { todos: WireTodo[]; state: TodosState } {
   const [list, setList] = useState<TodoList | null>(null);
@@ -768,7 +788,21 @@ function useTodos(
   const seenRevision = useRef("");
   const failed = useRef(false);
   const request = useRef(0);
-  const progress = lastEvent?.kind === "todo_progress" ? lastEvent.todoProgress : undefined;
+  /**
+   * The newest `todo_progress` in the queue, not in `lastEvent`.
+   *
+   * Frames arrive in bursts and `lastEvent` keeps only the newest: a progress
+   * frame followed by any text delta in the same burst would never be read,
+   * and the checklist would lag until the next one. Scanning the queue finds
+   * it wherever it sits.
+   */
+  const progress = (() => {
+    for (let at = events.length - 1; at >= 0; at -= 1) {
+      const event = events[at]?.event;
+      if (event?.kind === "todo_progress") return event.todoProgress;
+    }
+    return lastEvent?.kind === "todo_progress" ? lastEvent.todoProgress : undefined;
+  })();
   const revision = todoRevision(progress);
 
   useEffect(() => {
@@ -832,12 +866,17 @@ export function ChatScreen({
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
+    connection,
     snapshot,
     runtimeId,
     runtime?.base,
     runtime?.sessionPath,
   );
-  const { todos, state: todosState } = useTodos(runtime?.base, snapshot.lastEvent);
+  const { todos, state: todosState } = useTodos(
+    runtime?.base,
+    snapshot.events,
+    snapshot.lastEvent,
+  );
   /** The stored transcript's identity; a pane id is only the fallback. */
   const readingId = readingKey(runtime?.sessionPath, runtimeId);
   // App keys this screen by runtimeId, so this initial value is that pane's

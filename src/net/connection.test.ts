@@ -1,6 +1,50 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "./connection";
 
+interface FakeSource {
+  onopen: (() => void) | null;
+  onmessage: ((message: { data: string; lastEventId: string }) => void) | null;
+  onerror: (() => void) | null;
+  close(): void;
+}
+
+/**
+ * A connection attached to one runtime, with a source the test can drive.
+ *
+ * Every frame has to come through the stream: `onEvent` is the only door into
+ * the queue, which is what makes these tests exercise the same path a phone
+ * does rather than a shortcut the real code never takes.
+ */
+async function attached(): Promise<{ connection: Connection; source: FakeSource }> {
+  let latest: FakeSource | null = null;
+  class Source {
+    onopen: (() => void) | null = null;
+    onmessage: ((message: { data: string; lastEventId: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      latest = this as unknown as FakeSource;
+    }
+    close() {}
+  }
+  vi.stubGlobal("EventSource", Source);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+
+  const connection = new Connection();
+  await connection.refresh();
+  connection.attach("r1");
+  const source = latest;
+  if (!source) throw new Error("attach did not open a source");
+  return { connection, source };
+}
+
 /** Reachability and stream health are separate facts and must not merge. */
 describe("Connection", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -351,5 +395,114 @@ describe("Connection", () => {
     expect(connection.current.stream.kind).toBe("idle");
     expect(() => connection.wakeStream()).not.toThrow();
     expect(connection.current.stream.kind).toBe("idle");
+  });
+
+  it("keeps every frame of a burst, not just the last", async () => {
+    // One relay poll answers with a whole backlog and hands each frame over
+    // synchronously, so a burst commits as a single render. Keeping only the
+    // newest frame made every delta but the last vanish, and a droppable
+    // `text` frame is never replayed.
+    const { connection, source } = await attached();
+
+    for (const [at, text] of ["A", "B", "C"].entries()) {
+      source.onmessage?.({
+        data: JSON.stringify({ kind: "text", text }),
+        lastEventId: String(at + 1),
+      });
+    }
+
+    expect(connection.current.events.map((entry) => entry.event)).toEqual([
+      { kind: "text", text: "A" },
+      { kind: "text", text: "B" },
+      { kind: "text", text: "C" },
+    ]);
+    expect(connection.current.events.map((entry) => entry.seq)).toEqual([1, 2, 3]);
+    // The newest frame is still readable on its own for consumers that only
+    // want a notification.
+    expect(connection.current.lastEvent).toEqual({ kind: "text", text: "C" });
+  });
+
+  it("numbers frames across the whole connection, not per burst", async () => {
+    // A consumer decides what is new by comparing against the last number it
+    // folded, so the numbering must never go backwards or restart.
+    const { connection, source } = await attached();
+
+    source.onmessage?.({ data: JSON.stringify({ kind: "text", text: "A" }), lastEventId: "1" });
+    expect(connection.current.eventSeq).toBe(1);
+
+    connection.drainEvents(1);
+    source.onmessage?.({ data: JSON.stringify({ kind: "text", text: "B" }), lastEventId: "2" });
+
+    expect(connection.current.eventSeq).toBe(2);
+    expect(connection.current.events.map((entry) => entry.seq)).toEqual([2]);
+  });
+
+  it("holds the queue to its bound, dropping the oldest frames", async () => {
+    // A screen that stops reading must not grow this without end. The loss is
+    // the same one the kernel already makes for deltas.
+    const { connection, source } = await attached();
+
+    for (let at = 0; at < 600; at += 1) {
+      source.onmessage?.({
+        data: JSON.stringify({ kind: "text", text: `d${at}` }),
+        lastEventId: String(at + 1),
+      });
+    }
+
+    expect(connection.current.events).toHaveLength(512);
+    // The newest frame is still the newest.
+    expect(connection.current.eventSeq).toBe(600);
+    expect(connection.current.events.at(-1)?.seq).toBe(600);
+    // The oldest kept frame follows the dropped ones.
+    expect(connection.current.events[0]?.seq).toBe(600 - 512 + 1);
+  });
+
+  it("clears the queue on detach but keeps the numbering", async () => {
+    // A new pane must not fold the previous pane's frames, and rewinding the
+    // number would make frames already folded look fresh again.
+    const { connection, source } = await attached();
+
+    source.onmessage?.({ data: JSON.stringify({ kind: "text", text: "A" }), lastEventId: "1" });
+    source.onmessage?.({ data: JSON.stringify({ kind: "text", text: "B" }), lastEventId: "2" });
+    expect(connection.current.events).toHaveLength(2);
+
+    connection.detach();
+
+    expect(connection.current.events).toEqual([]);
+    expect(connection.current.lastEvent).toBeUndefined();
+    expect(connection.current.eventSeq).toBe(2);
+  });
+
+  it("drains only the frames a consumer has folded", async () => {
+    const { connection, source } = await attached();
+
+    for (let at = 0; at < 4; at += 1) {
+      source.onmessage?.({
+        data: JSON.stringify({ kind: "text", text: `d${at}` }),
+        lastEventId: String(at + 1),
+      });
+    }
+
+    connection.drainEvents(2);
+
+    expect(connection.current.events.map((entry) => entry.seq)).toEqual([3, 4]);
+  });
+
+  it("drains everything without raising the event number", async () => {
+    // Draining is a read, not a frame: it must not look like new input to a
+    // listener, or the fold would run again on the same frames.
+    const { connection, source } = await attached();
+    source.onmessage?.({ data: JSON.stringify({ kind: "text", text: "A" }), lastEventId: "1" });
+
+    let notified = 0;
+    connection.subscribe(() => {
+      notified += 1;
+    });
+
+    connection.drainEvents(1);
+
+    expect(connection.current.events).toEqual([]);
+    expect(connection.current.eventSeq).toBe(1);
+    expect(notified).toBe(1); // subscribe's own immediate call, nothing more
   });
 });
