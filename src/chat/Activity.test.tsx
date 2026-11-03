@@ -58,6 +58,8 @@ describe("tool labels and summaries", () => {
   it("names the common tools the way a person reads them", () => {
     expect(toolLabel("bash")).toBe("执行命令");
     expect(toolLabel("read_file")).toBe("读取文件");
+    expect(toolLabel("spawn_agents")).toBe("派发子任务");
+    expect(toolLabel("read_subagent_result")).toBe("读取子任务结果");
     expect(toolLabel("something_new")).toBe("something_new");
   });
 
@@ -67,6 +69,20 @@ describe("tool labels and summaries", () => {
     );
     expect(toolSummary(toolRow({ args: '{"path":"a.ts"}' }))).toBe("a.ts");
     expect(toolSummary(toolRow({ args: "plain text", name: "x" }))).toBe("plain text");
+  });
+
+  it("reads a spawned task list as the first task's own title", () => {
+    expect(
+      toolSummary(
+        toolRow({
+          name: "spawn_agents",
+          args: '{"tasks":[{"title":"调研缓存层","task":"阅读 internal/cache 并总结"}]}',
+        }),
+      ),
+    ).toBe("调研缓存层");
+    expect(
+      toolSummary(toolRow({ name: "spawn_agents", args: '{"tasks":[{"task":"只有正文"}]}' })),
+    ).toBe("只有正文");
   });
 
   it("answers an empty summary for a call with no arguments", () => {
