@@ -498,7 +498,23 @@ button.setting:disabled {
 
 /* A remembered computer: the row switches to it, the × forgets it. The row is
    a wrapper rather than a button so the two targets stay siblings, the same
-   shape a list row with a trailing control uses elsewhere. */
+   shape a list row with a trailing control uses elsewhere.
+
+   The outer element is the drag unit — it carries the row's drag key and holds
+   the door rows under it — so it is what stacks, and the separator belongs to
+   it rather than to the row inside. */
+.saved-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Separators inside a computer's block. `.group > * + *` only reaches the
+   wrapper now that the doors live inside it, so the rows that used to be
+   direct children have lost their line. */
+.saved-group > * + * {
+  border-top: 1px solid var(--line-soft);
+}
+
 .setting.saved-row {
   padding: 0;
   gap: 0;
@@ -535,6 +551,45 @@ button.setting:disabled {
 
 .saved-row .saved-main .chev {
   padding-right: 10px;
+}
+
+.saved-row .saved-forget:active:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+/* A door under the computer it belongs to. Indented and quieter than the row
+   above it: the top row is the tap target, these are the addresses under it,
+   each with its own ×. */
+.setting.saved-row.door {
+  padding: 0 0 0 26px;
+  gap: 0;
+  position: relative;
+  background: rgba(var(--fg-rgb), 0.02);
+  @supports (color: color-mix(in srgb, red, blue)) {
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  }
+}
+
+.setting.saved-row.door::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 10px;
+  bottom: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.saved-row.door .setting-main {
+  padding: 8px 4px 8px 0;
+}
+
+.saved-row.door .setting-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.saved-row.door .saved-forget {
+  min-height: 44px;
 }
 
 .saved-row .saved-forget {

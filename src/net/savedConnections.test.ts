@@ -89,6 +89,56 @@ describe("rememberConnection", () => {
     expect(rememberConnection("lan", "")).toEqual([]);
     expect(rememberConnection("lan", "not a url")).toEqual([]);
   });
+
+  it("moves a computer to its new port instead of adding a row", () => {
+    // A desktop kernel hands out a fresh port every start; the computer is the
+    // same one, so the row should follow it rather than the list growing.
+    rememberConnection("lan", "http://192.168.5.3:55716", "工作台", "studio-pc");
+    const rows = rememberConnection("lan", "http://192.168.5.3:61204", "工作台", "studio-pc");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.target).toBe("http://192.168.5.3:61204");
+    expect(rows[0]?.machine).toBe("studio-pc");
+  });
+
+  it("keeps its place when the port changes", () => {
+    // The position is the person's; a restart must not push the computer down.
+    rememberConnection("lan", "http://192.168.5.3:55716", "家里", "home");
+    rememberConnection("cloud", "dev-1", "公司", "office");
+    const rows = rememberConnection("lan", "http://192.168.5.3:61204", "家里", "home");
+    expect(rows.map((row) => row.machine)).toEqual(["home", "office"]);
+  });
+
+  it("collapses the duplicates an older build left behind", () => {
+    // Rows written before this rule existed carry one per port. The first
+    // survives and the rest go, or the list would stay as long as it was.
+    rememberConnection("lan", "http://192.168.5.3:50001", "工作台", "studio-pc");
+    rememberConnection("lan", "http://192.168.5.3:50002", "工作台", "studio-pc");
+    rememberConnection("lan", "http://192.168.5.3:50003", "工作台", "studio-pc");
+    const rows = rememberConnection("lan", "http://192.168.5.3:61204", "工作台", "studio-pc");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.target).toBe("http://192.168.5.3:61204");
+  });
+
+  it("keeps two addresses to one computer when the host differs", () => {
+    // A LAN address and a tunnel naming the same machine are both usable, and
+    // the person picks between them; folding them would drop a route.
+    rememberConnection("lan", "http://192.168.5.2:56789", "家里", "Home Mac");
+    const rows = rememberConnection("lan", "http://172.16.2.59:57074", "隧道", "Home Mac");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.target)).toEqual([
+      "http://192.168.5.2:56789",
+      "http://172.16.2.59:57074",
+    ]);
+  });
+
+  it("does not fold a LAN port change into the cloud door", () => {
+    // Same computer, two kinds: the cloud id is a route that works away from
+    // home, so a new LAN port must not overwrite it.
+    rememberConnection("cloud", "dev-1", "工作台", "studio-pc");
+    const rows = rememberConnection("lan", "http://192.168.5.3:61204", "工作台", "studio-pc");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.kind)).toEqual(["cloud", "lan"]);
+  });
 });
 
 describe("ordering", () => {

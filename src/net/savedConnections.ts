@@ -183,12 +183,39 @@ export function moveConnection(key: string, index: number): SavedConnection[] {
 }
 
 /**
+ * The host part of a LAN origin, without the port.
+ *
+ * Two rows that differ only here are the same door on a new port — what a
+ * desktop kernel hands out every time it restarts. Two rows that differ in the
+ * host are two doors: a LAN address and a tunnel to the same computer are both
+ * usable, and folding them would drop a route.
+ */
+function originHost(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Record a successful connection.
  *
  * A target already in the list keeps its place: the order is the person's, and
  * reconnecting to a computer must not quietly move it. A new target joins at
  * the end, where the next drop can put it, instead of jumping the queue of a
  * list someone arranged on purpose. Only the name and the time are refreshed.
+ *
+ * ## Restarts, not routes
+ *
+ * A desktop kernel picks a fresh port each time it starts. Keying the list on
+ * the origin alone meant every restart added a row, and the list filled with
+ * doors that no longer answer.
+ *
+ * The same machine on the same host with a different port is that restart, so
+ * the row moves to the new port instead of a second one appearing. The same
+ * machine on a *different* host is not: a LAN address and a tunnel are two
+ * ways to reach one computer, and both stay usable, so both keep their row.
  */
 export function rememberConnection(
   kind: SavedConnectionKind,
@@ -214,6 +241,38 @@ export function rememberConnection(
             }
           : row,
       ),
+    );
+  }
+  // The same computer, same host, new port: move the row rather than adding
+  // one. Older builds could already have left several such rows behind, so all
+  // of them go — the first survives, keeping the position the person arranged.
+  const restarted =
+    kind !== "lan" || identity === undefined
+      ? []
+      : rows.filter(
+          (row) =>
+            row.kind === "lan" &&
+            row.machine !== undefined &&
+            machineKey(row.machine) === machineKey(identity) &&
+            originHost(row.target) === originHost(normalized),
+        );
+  const survivor = restarted[0];
+  if (survivor) {
+    return write(
+      rows.flatMap((row) => {
+        if (row === survivor) {
+          return [
+            {
+              ...row,
+              target: normalized,
+              name: label,
+              ...(identity ? { machine: identity } : {}),
+              usedAt: Date.now(),
+            },
+          ];
+        }
+        return restarted.includes(row) ? [] : [row];
+      }),
     );
   }
   // A full list drops its last row rather than refusing the computer just

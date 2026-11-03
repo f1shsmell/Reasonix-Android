@@ -616,6 +616,49 @@ describe("ConnectScreen saved connections", () => {
     ]);
   });
 
+  it("drags a computer and its doors as one block", async () => {
+    // The drag key sits on the wrapper so a computer with doors is measured at
+    // its real height; the drop indicator would otherwise land short. Moving
+    // the wrapper has to carry both doors with it.
+    rememberConnection("lan", "http://192.168.5.3:57074", "工作台", "studio-pc");
+    rememberConnection("cloud", "dev1", "工作台", "studio-pc");
+    await renderScreen();
+    vi.useFakeTimers();
+
+    const groups = Array.from(container.querySelectorAll<HTMLElement>("[data-drag-key]"));
+    groups.forEach((node, index) => {
+      node.getBoundingClientRect = () =>
+        ({
+          top: index * 120,
+          bottom: index * 120 + 120,
+          height: 120,
+          left: 0,
+          right: 320,
+          width: 320,
+          x: 0,
+          y: index * 120,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    });
+
+    // One wrapper for the computer, listing both doors inside it.
+    const studio = groups.find(
+      (node) => node.getAttribute("data-drag-key") === "machine:studio-pc",
+    );
+    expect(studio).toBeTruthy();
+    expect(studio?.querySelectorAll(".saved-row.door")).toHaveLength(2);
+
+    const moving = studio as HTMLElement;
+    hold(moving, 160, 130);
+    pointer(moving, "pointermove", 160, 10);
+    pointer(moving, "pointerup", 160, 10);
+    vi.useRealTimers();
+
+    // Both doors travelled together: one computer, one block.
+    const rows = loadConnections();
+    expect(rows.filter((row) => row.machine === "studio-pc")).toHaveLength(2);
+  });
+
   it("forgets a saved computer without touching the rest", async () => {
     rememberConnection("lan", "http://192.168.9.9:51234");
     await renderScreen();
@@ -629,6 +672,81 @@ describe("ConnectScreen saved connections", () => {
     expect(container.textContent).not.toContain("192.168.9.9:51234");
     expect(container.textContent).toContain("192.168.5.2:56789");
     expect(forgetFleetPeer).toHaveBeenCalledWith("lan", "http://192.168.9.9:51234");
+  });
+
+  it("drops the link when the computer it is connected to is removed", async () => {
+    // Removing the live computer has to disconnect as well. Every `connected()`
+    // records the target again, so a removal that left the link up would be
+    // undone by the next reconnect — the row would simply come back.
+    vi.mocked(disconnectProxy).mockResolvedValue(config({ origin: "", candidates: [] }));
+    rememberConnection("lan", "http://192.168.5.2:56789");
+    await renderScreen();
+
+    act(() => {
+      (
+        container.querySelector('[aria-label="移除 192.168.5.2:56789"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(disconnectProxy).toHaveBeenCalledTimes(1);
+    // The row is gone from the list even though the link teardown is still in
+    // flight; the saved list is written synchronously by the click.
+    expect(container.textContent).not.toContain("移除 192.168.5.2:56789");
+  });
+
+  it("leaves the link alone when a different computer is removed", async () => {
+    // The row being removed is not the one in use, so tearing the link down
+    // would disconnect a working session for no reason.
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+
+    act(() => {
+      (
+        container.querySelector('[aria-label="移除 192.168.9.9:51234"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(disconnectProxy).not.toHaveBeenCalled();
+  });
+
+  it("lists each address of one computer, so one can go without the other", async () => {
+    // A LAN origin and a cloud id for the same machine are two doors. Removing
+    // the computer because one address went stale would drop a route that
+    // still works, so each door carries its own ×.
+    rememberConnection("lan", "http://192.168.5.3:57074", "工作台", "studio-pc");
+    rememberConnection("cloud", "dev1", "工作台", "studio-pc");
+    await renderScreen();
+
+    // Both doors are listed with their own control, so one can go alone.
+    const lan = container.querySelector('[aria-label="移除 局域网 · http://192.168.5.3:57074"]');
+    const cloud = container.querySelector('[aria-label="移除 云端 · Reasonix 账号"]');
+    expect(lan).toBeTruthy();
+    expect(cloud).toBeTruthy();
+    // The computer's own row carries no ×: there is nothing to forget there
+    // without choosing a door. The drag key lives on the group wrapper now, so
+    // the row is what sits under it without the door class.
+    const group = container.querySelector('.saved-group[data-drag-key="machine:studio-pc"]');
+    expect(group).toBeTruthy();
+    expect(group?.querySelector(".setting.saved-row:not(.door) .saved-forget")).toBeNull();
+  });
+
+  it("keeps the other address when one door of a computer is removed", async () => {
+    rememberConnection("lan", "http://192.168.5.3:57074", "工作台", "studio-pc");
+    rememberConnection("cloud", "dev1", "工作台", "studio-pc");
+    await renderScreen();
+
+    act(() => {
+      (
+        container.querySelector(
+          '[aria-label="移除 局域网 · http://192.168.5.3:57074"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    // The cloud door survives, and it is still the same computer.
+    expect(container.textContent).toContain("云端 · Reasonix 账号");
+    expect(container.textContent).not.toContain("192.168.5.3:57074");
+    expect(disconnectProxy).not.toHaveBeenCalled();
   });
 
   it("forgets a removed cloud computer's identity along with the row", async () => {

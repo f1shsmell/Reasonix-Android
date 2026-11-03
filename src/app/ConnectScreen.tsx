@@ -50,9 +50,10 @@ import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
 import { clearRelayDevice } from "../net/relayStore";
 import {
+  connectionKey,
   directDoorForMachine,
   forgetCloudConnections,
-  forgetConnectionGroup,
+  forgetConnection,
   groupConnections,
   learnConnectionMachine,
   loadConnections,
@@ -903,6 +904,23 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     }
   }, [onDisconnected]);
 
+  /**
+   * Forget one door: this address, not the whole computer.
+   *
+   * A computer can hold several doors — a LAN origin and a cloud id, or two
+   * addresses on different subnets — and they are not interchangeable: one may
+   * be a stale port while the other still answers. Removing the computer
+   * because one address went bad is how a working route gets lost.
+   *
+   * The side effects belong to the door being removed: the cloud identity is
+   * what a reinstall has to clear, and the fleet watch is spent per target.
+   */
+  const forgetDoor = useCallback((row: SavedConnection) => {
+    if (row.kind === "cloud") forgetDevice(row.target);
+    void forgetFleetPeer(row.kind, row.target).catch(() => {});
+    setSaved(forgetConnection(row.kind, row.target));
+  }, []);
+
   const signOut = useCallback(async () => {
     setSignInError("");
     const cloudRows = loadConnections().filter((entry) => entry.kind === "cloud");
@@ -990,6 +1008,20 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   };
   const groupLabel = (group: ConnectionGroup, door: SavedConnection): string =>
     group.machine || labelOf(door);
+  /**
+   * One door, named so two doors of one computer can be told apart.
+   *
+   * The group's own detail line summarises the whole computer ("局域网 · 云端"),
+   * which is right for the row a tap takes. Under it, each door has to say
+   * which route it is and where it points, or the × beside it would be a guess.
+   */
+  const doorDetail = (door: SavedConnection): string => {
+    if (door.kind === "cloud") return "云端 · Reasonix 账号";
+    const near = direct.some((origin) => normalizeTarget("lan", origin) === door.target);
+    return `局域网 · ${door.target}${near ? " · 可直连" : ""}`;
+  };
+  /** A door's own name, for the row under a computer. */
+  const doorLabel = (door: SavedConnection): string => labelOf(door);
   const groupDetail = (group: ConnectionGroup, door: SavedConnection): string => {
     const kinds = new Set(group.rows.map((row) => row.kind));
     const both = kinds.has("lan") && kinds.has("cloud");
@@ -1143,50 +1175,89 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                 const label = groupLabel(group, door);
                 const here = groupHere(group);
                 const shift = dragShift(savedDrag.state, index);
+                // One computer can hold several doors — a LAN origin and a
+                // cloud id, or two addresses of the same machine. The row taps
+                // the best one; the doors under it are what a person can
+                // forget one at a time.
+                const many = group.rows.length > 1;
                 return (
+                  // The drag key sits on the wrapper, not the row inside it: a
+                  // computer with doors is taller than its top row, and the
+                  // drop indicator places itself from these boxes. Keying the
+                  // inner row would leave the doors out of the height, so the
+                  // indicator would land short and the ghost would trail.
                   <div
-                    className={`setting saved-row${savedDrag.state?.key === group.key ? " dragging" : ""}`}
                     key={group.key}
+                    className={`saved-group${savedDrag.state?.key === group.key ? " dragging" : ""}`}
                     data-drag-key={group.key}
                     data-drop={dropEdge(savedDrag.state, index, groups.length)}
                     style={shift === 0 ? undefined : { transform: `translateY(${shift}px)` }}
                     {...savedDrag.row(group.key)}
                   >
-                    <button
-                      type="button"
-                      className="saved-main"
-                      disabled={busy !== ""}
-                      aria-current={here ? "true" : undefined}
-                      onClick={() => void switchTo(door)}
-                    >
-                      <span className="setting-main">
-                        <span className="setting-title">
-                          {label}
-                          {here ? <span className="saved-current">当前</span> : null}
+                    <div className="setting saved-row">
+                      <button
+                        type="button"
+                        className="saved-main"
+                        disabled={busy !== ""}
+                        aria-current={here ? "true" : undefined}
+                        onClick={() => void switchTo(door)}
+                      >
+                        <span className="setting-main">
+                          <span className="setting-title">
+                            {label}
+                            {here ? <span className="saved-current">当前</span> : null}
+                          </span>
+                          <span className="setting-sub">{groupDetail(group, door)}</span>
                         </span>
-                        <span className="setting-sub">{groupDetail(group, door)}</span>
-                      </span>
-                      <span className="chev" aria-hidden="true">
-                        ›
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="saved-forget"
-                      aria-label={`移除 ${label}`}
-                      onClick={() => {
-                        for (const row of group.rows) {
-                          // Removing a cloud computer is also how a reinstall
-                          // becomes approvable: its old identity goes with it.
-                          if (row.kind === "cloud") forgetDevice(row.target);
-                          // The fleet must stop spending a watch slot on it.
-                          void forgetFleetPeer(row.kind, row.target).catch(() => {});
-                        }
-                        setSaved(forgetConnectionGroup(group.key));
-                      }}
-                    >
-                      ×
-                    </button>
+                        <span className="chev" aria-hidden="true">
+                          ›
+                        </span>
+                      </button>
+                      {/* A single-door computer keeps its × on the row: there is
+                          nothing to choose between, and a disclosure triangle
+                          that opens one item is a step for no information. */}
+                      {many ? null : (
+                        <button
+                          type="button"
+                          className="saved-forget"
+                          aria-label={`移除 ${label}`}
+                          onClick={() => {
+                            const wasHere = groupHere(group);
+                            forgetDoor(door);
+                            if (wasHere) void disconnect();
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                    {many
+                      ? group.rows.map((row) => {
+                          const rowHere = current(row);
+                          return (
+                            <div className="setting saved-row door" key={connectionKey(row.kind, row.target)}>
+                              <span className="setting-main">
+                                <span className="setting-title">
+                                  {doorLabel(row)}
+                                  {rowHere ? <span className="saved-current">当前</span> : null}
+                                </span>
+                                <span className="setting-sub">{doorDetail(row)}</span>
+                              </span>
+                              <button
+                                type="button"
+                                className="saved-forget"
+                                aria-label={`移除 ${doorDetail(row)}`}
+                                onClick={() => {
+                                  forgetDoor(row);
+                                  if (rowHere) void disconnect();
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })
+                      : null}
                   </div>
                 );
               })}
