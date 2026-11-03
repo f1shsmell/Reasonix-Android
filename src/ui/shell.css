@@ -14,8 +14,8 @@
 .bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 5px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line-soft);
   background: rgba(var(--bg-rgb), 0.76);
   @supports (color: color-mix(in srgb, red, blue)) {
@@ -483,7 +483,7 @@ pre.frame {
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 14px;
   line-height: 1.35;
   transition: background-color var(--dur-1) var(--ease-out);
 }

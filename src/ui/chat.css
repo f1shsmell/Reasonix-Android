@@ -29,15 +29,17 @@ html[data-chat-font="xl"] {
 }
 
 /* A floating capsule: the conversation's identity sits above the record rather
-   than being a strip of chrome. */
+   than being a strip of chrome. The buttons inside step down from the global
+   44px tap size — three of them flank the title, and at full size the capsule
+   spends more width on chrome than the title it exists to show. */
 .chat-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 8px 12px 0;
-  padding: 5px 7px;
+  gap: 6px;
+  margin: 8px 10px 0;
+  padding: 4px 5px;
   border: 1px solid var(--line-soft);
-  border-radius: 22px;
+  border-radius: 20px;
   background: rgba(var(--bg-raised-rgb), 0.84);
   @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg-raised) 84%, transparent);
@@ -51,6 +53,9 @@ html[data-chat-font="xl"] {
 }
 
 .chat-head .iconbtn {
+  min-height: 40px;
+  min-width: 40px;
+  font-size: 15px;
   background: rgba(var(--bg-rgb), 0.7);
   @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg) 70%, transparent);
