@@ -48,7 +48,13 @@ afterEach(() => {
 });
 
 function snapshot(): ConnectionSnapshot {
-  return { reach: { kind: "ok" }, runtimes: [], stream: { kind: "idle" } };
+  return {
+    reach: { kind: "ok" },
+    runtimes: [],
+    stream: { kind: "idle" },
+    events: [],
+    eventSeq: 0,
+  };
 }
 
 function project(overrides: Partial<TreeProject> = {}): TreeProject {

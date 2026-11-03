@@ -49,6 +49,8 @@ const snapshot: ConnectionSnapshot = {
   reach: { kind: "ok" },
   runtimes: [],
   stream: { kind: "open" },
+  events: [],
+  eventSeq: 0,
 };
 
 describe("buildDiagnostics", () => {

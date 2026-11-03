@@ -23,7 +23,38 @@ export interface ConnectionSnapshot {
   reach: Reach;
   runtimes: RuntimeView[];
   stream: StreamState;
+  /**
+   * The newest frame, kept for consumers that only care about the latest
+   * notification (a todo revision, say). A consumer that folds every frame
+   * must use `events` instead — see below.
+   */
   lastEvent?: EventPayload;
+  /**
+   * Frames that arrived since the queue was last drained, oldest first.
+   *
+   * A single `lastEvent` slot is not enough. Frames are delivered in bursts:
+   * the relay answers one poll with every frame it has (`relay.ts` says each
+   * one synchronously), so a dozen `text` deltas land inside one task and
+   * React commits them as a single render. An effect keyed on `lastEvent`
+   * then runs once, with only the last delta, and the rest are gone — and
+   * `text` is droppable in the kernel, so they are never replayed.
+   *
+   * Bounded, because a consumer that stops reading must not grow this
+   * without end. The oldest frames are dropped when it overflows, which is
+   * the same loss the kernel already makes for deltas.
+   */
+  events: QueuedEvent[];
+  /**
+   * The seq of the newest frame ever queued. Never reset, so a consumer can
+   * tell "nothing new" from "everything I have is stale" across a re-attach.
+   */
+  eventSeq: number;
+}
+
+/** A frame in the queue, with the number a consumer uses to know it is new. */
+export interface QueuedEvent {
+  seq: number;
+  event: EventPayload;
 }
 
 type Listener = (snapshot: ConnectionSnapshot) => void;
@@ -51,10 +82,21 @@ export class Connection {
     reach: { kind: "unknown" },
     runtimes: [],
     stream: { kind: "idle" },
+    events: [],
+    eventSeq: 0,
   };
   private stream: RuntimeStream | null = null;
   private activeRuntime: string | null = null;
   private activeBase: string | null = null;
+  /**
+   * How many undrained frames are kept.
+   *
+   * Deep enough for a burst (one relay poll answers with a whole backlog) and
+   * shallow enough that a screen which stops reading cannot grow it forever.
+   * A frame that overflows is dropped from the old end, which is the loss the
+   * kernel already makes for deltas.
+   */
+  private static readonly MAX_QUEUED_EVENTS = 512;
   /** A slow refresh must not overwrite the answer of a newer one. */
   private refreshSeq = 0;
   /**
@@ -77,13 +119,16 @@ export class Connection {
   private static readonly TOLERATED_FAILURES = 2;
 
   /**
-   * `lastEvent` belongs to the pane that was attached when it arrived. A new
-   * attach must not fold the previous pane's last frame into this transcript.
+   * Frames belong to the pane that was attached when they arrived. A new
+   * attach must not fold the previous pane's frames into this transcript.
+   *
+   * `eventSeq` is deliberately not reset: consumers compare against it to
+   * decide what is new, and rewinding it would make old frames look fresh.
    */
   private clearLastEvent(): void {
-    if (this.snapshot.lastEvent === undefined) return;
+    if (this.snapshot.lastEvent === undefined && this.snapshot.events.length === 0) return;
     const { lastEvent: _previous, ...rest } = this.snapshot;
-    this.snapshot = rest;
+    this.snapshot = { ...rest, events: [] };
     for (const listener of this.listeners) listener(this.snapshot);
   }
 
@@ -123,6 +168,46 @@ export class Connection {
   private publish(patch: Partial<ConnectionSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     for (const listener of this.listeners) listener(this.snapshot);
+  }
+
+  /**
+   * Queue one stream frame.
+   *
+   * Frames arrive in bursts — one relay poll answers with every frame it
+   * holds, and `relay.ts` hands each one over synchronously — so React
+   * commits the whole burst as a single render. Appending instead of
+   * replacing is what lets a consumer fold all of them: the last-wins slot
+   * lost every delta but the final one, and the kernel never replays a
+   * droppable `text` frame, so those deltas were gone for good.
+   */
+  private publishEvent(event: EventPayload): void {
+    const seq = this.snapshot.eventSeq + 1;
+    const queued = this.snapshot.events;
+    const room = Connection.MAX_QUEUED_EVENTS;
+    const next =
+      queued.length >= room
+        ? [...queued.slice(queued.length - room + 1), { seq, event }]
+        : [...queued, { seq, event }];
+    this.snapshot = { ...this.snapshot, lastEvent: event, events: next, eventSeq: seq };
+    for (const listener of this.listeners) listener(this.snapshot);
+  }
+
+  /**
+   * Drop every frame up to and including `throughSeq`.
+   *
+   * A consumer calls this once it has folded those frames, so the queue holds
+   * only what is still unread. Silently ignores a seq older than the queue,
+   * which happens when a burst overflowed.
+   */
+  drainEvents(throughSeq: number): void {
+    const events = this.snapshot.events;
+    if (events.length === 0) return;
+    const firstUnread = events.findIndex((entry) => entry.seq > throughSeq);
+    const kept = firstUnread === -1 ? [] : events.slice(firstUnread);
+    if (kept.length === events.length) return;
+    this.snapshot = { ...this.snapshot, events: kept };
+    // No notification: the only listener that drains is the one doing the
+    // draining, and telling it about its own write would loop.
   }
 
   /**
@@ -281,7 +366,7 @@ export class Connection {
     }
     this.activeBase = runtime.base;
     const stream = new RuntimeStream(absolute(streamUrl(runtime.base)), {
-      onEvent: (event) => this.publish({ lastEvent: event }),
+      onEvent: (event) => this.publishEvent(event),
       onState: (state) => this.publish({ stream: state }),
       onCursor: (seq) => saveCursor(runtimeId, seq),
     }, loadCursor(runtimeId));
