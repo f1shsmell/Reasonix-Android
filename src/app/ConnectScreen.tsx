@@ -82,6 +82,8 @@ import { hapticSample, loadSurfaceChoice, loadHaptics, saveHapticSurface, saveHa
 import { Switch } from "./Switch";
 import { FOLD_CHOICES, loadFoldMode, saveFoldMode } from "../chat/folding";
 import type { FoldMode } from "../chat/folding";
+import { CHAT_FONT_CHOICES, applyChatFont, loadChatFont, saveChatFont } from "../chat/chatFont";
+import type { ChatFont } from "../chat/chatFont";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
 import type { NetPolicy } from "./netpref";
 import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
@@ -209,6 +211,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [approved, setApproved] = useState(false);
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
+  /** The transcript's reading text size; applied to the root like the theme. */
+  const [chatFont, setChatFont] = useState<ChatFont>(() => loadChatFont());
   /** Which half of settings is showing: the computer, or this phone. */
   const [pane, setPane] = useState<Pane>("connect");
   /** The About row: check for a release while the phone's preferences are open. */
@@ -437,6 +441,12 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const pickFold = useCallback((mode: FoldMode) => {
     setFold(mode);
     saveFoldMode(mode);
+  }, []);
+
+  const pickChatFont = useCallback((font: ChatFont) => {
+    setChatFont(font);
+    saveChatFont(font);
+    applyChatFont(font);
   }, []);
 
   const pickNetPolicy = useCallback((policy: NetPolicy) => {
@@ -1482,6 +1492,15 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               value={fold}
               options={FOLD_CHOICES}
               onChange={pickFold}
+            />
+          </div>
+          <div className="setting">
+            <span className="setting-title">会话字号</span>
+            <Segmented
+              ariaLabel="会话字号"
+              value={chatFont}
+              options={CHAT_FONT_CHOICES}
+              onChange={pickChatFont}
             />
           </div>
           <div className="setting">
