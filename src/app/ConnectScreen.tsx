@@ -547,13 +547,18 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             // runs, and the button sits on "正在配对" forever. Timing out is
             // not a failure: the cookie may already have landed, which is why
             // the exchange below still runs.
+            //
+            // A result that arrives after the deadline is dropped, not
+            // adopted: `withTimeout` has already settled the race by then, and
+            // the activity that would have produced it has been abandoned.
+            // Nothing is lost in practice — the page's own timeout is five
+            // seconds shorter, so a late answer only means the callback died.
             outcome = await withTimeout(
               NativePair.pair({
                 url: `${base}/#pair=${encodeURIComponent(pairCodeValue)}`,
                 origin: base,
               }),
               PAIR_DEADLINE_MS,
-              "配对页面没有回应",
             );
           } catch {
             // The activity did not answer; the exchange below can still pair.
