@@ -42,7 +42,7 @@ afterEach(() => {
 });
 
 describe("MachinePanel", () => {
-  it("summarises spend, window, tools, boundary and version", async () => {
+  it("summarises spend, tools, boundary and version", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -56,11 +56,6 @@ describe("MachinePanel", () => {
               cost: [{ amount: "1.20", currency: "USD" }],
               top_model: "deepseek-pro",
             }),
-          );
-        }
-        if (url.endsWith("/context")) {
-          return Promise.resolve(
-            json({ used: 32_000, window: 100_000, compact_at: 80_000, boundary: "soft" }),
           );
         }
         if (url.endsWith("/tools")) {
@@ -91,26 +86,43 @@ describe("MachinePanel", () => {
     expect(text).toContain("1.2M tokens");
     expect(text).toContain("42 次请求");
     expect(text).toContain("USD 1.20");
-    expect(text).toContain("32%");
-    expect(text).toContain("到 80k 自动压缩");
     expect(text).toContain("2 / 3");
     expect(text).toContain("逐次询问");
     expect(text).toContain("已是最新");
+  });
+
+  it("does not read the context gauge, which belongs to a conversation", async () => {
+    // The gauge is per pane. This panel only knows a machine, so it used to
+    // show the window of whichever runtime was first in the list — somebody
+    // else's conversation. It lives in the chat's own sheet now.
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/usage?")
+        ? Promise.resolve(json({ tokens: 10, requests: 1, turns: 1 }))
+        : Promise.resolve(missing()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render();
+
+    const asked = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(asked.some((url) => url.endsWith("/context"))).toBe(false);
+    expect(container.textContent).not.toContain("上下文");
+    expect(container.textContent).toContain("最近 30 天");
   });
 
   it("keeps the sections this kernel does have", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).endsWith("/context")
-          ? Promise.resolve(json({ used: 1, window: 2, compact_at: 0, boundary: "" }))
+        String(input).endsWith("/tools")
+          ? Promise.resolve(json({ tools: [{ name: "bash", disabled: false }] }))
           : Promise.resolve(missing()),
       ),
     );
 
     await render();
 
-    expect(container.textContent).toContain("上下文");
+    expect(container.textContent).toContain("工具");
     expect(container.textContent).not.toContain("最近 30 天");
     expect(container.textContent).not.toContain("读不到这台机器的状态");
   });

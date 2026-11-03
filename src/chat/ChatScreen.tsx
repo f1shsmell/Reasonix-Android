@@ -46,6 +46,7 @@ import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
 import { CheckpointsSheet } from "./CheckpointsSheet";
 import { QueueSheet } from "./QueueSheet";
+import { ContextSheet } from "./ContextSheet";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -238,6 +239,7 @@ function HeadMenu({
   onApproval,
   onCheckpoints,
   onQueue,
+  onContext,
 }: {
   model: string;
   approval: string;
@@ -247,6 +249,7 @@ function HeadMenu({
   onApproval: () => void;
   onCheckpoints: () => void;
   onQueue: () => void;
+  onContext: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -293,6 +296,12 @@ function HeadMenu({
             <button type="button" onClick={onCheckpoints}>
               <span>检查点</span>
               <small>回到之前的一轮</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onContext}>
+              <span>上下文</span>
+              <small>用量、明细与压缩</small>
             </button>
           </li>
         </ul>
@@ -909,6 +918,8 @@ export function ChatScreen({
   const [modelSheet, setModelSheet] = useState(false);
   const [approvalSheet, setApprovalSheet] = useState(false);
   const [checkpointsSheet, setCheckpointsSheet] = useState(false);
+  /** How full this conversation's window is, and folding it. */
+  const [contextSheet, setContextSheet] = useState(false);
   /** This conversation's tool posture, as `/status` reports it. */
   const [approval, setApproval] = useState("");
   /** What the kernel said about the last message sent into a running turn. */
@@ -2095,6 +2106,10 @@ export function ChatScreen({
             setHeadMenu(false);
             setQueueSheet(true);
           }}
+          onContext={() => {
+            setHeadMenu(false);
+            setContextSheet(true);
+          }}
         />
       ) : null}
 
@@ -2115,6 +2130,14 @@ export function ChatScreen({
           base={runtime.base}
           onClose={() => setCheckpointsSheet(false)}
           onRewound={() => reload()}
+        />
+      ) : null}
+
+      {contextSheet && runtime ? (
+        <ContextSheet
+          base={runtime.base}
+          onCompacted={() => reload()}
+          onClose={() => setContextSheet(false)}
         />
       ) : null}
 
