@@ -598,6 +598,49 @@ describe("ChatScreen todos", () => {
     expect(todoCalls(fetchMock)).toBe(afterFirst);
   });
 
+  it("reads a todo_progress that shares a burst with text", async () => {
+    // A relay poll delivers a whole backlog at once, so a progress frame and
+    // the deltas that follow it land in one task and commit as one render.
+    // `lastEvent` keeps only the newest, which is the text — reading the
+    // checklist from there missed the progress entirely and left it lagging
+    // until the next frame.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [{ content: "第一步", status: "completed" }];
+    const progress: EventPayload = {
+      kind: "todo_progress",
+      todoProgress: { kind: "advance", progressRevision: 1 },
+    };
+    const text: EventPayload = { kind: "text", text: "做好了" };
+    nextEventSeq += 1;
+    const first = { seq: nextEventSeq, event: progress };
+    nextEventSeq += 1;
+    const second = { seq: nextEventSeq, event: text };
+    render({
+      ...snapshot(),
+      events: [first, second],
+      eventSeq: nextEventSeq,
+      lastEvent: text,
+    });
+    await flush();
+
+    // The list was re-read and moved on, even though the newest frame in the
+    // burst says nothing about todos.
+    expect(container.textContent).toContain("1/1");
+  });
+
   it("keeps the conversation when the list cannot be read", async () => {
     stubKernel({
       history: [{ role: "user", content: "还在", msgIndex: 1 }],
