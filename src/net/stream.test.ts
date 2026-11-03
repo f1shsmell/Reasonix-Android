@@ -149,4 +149,75 @@ describe("RuntimeStream", () => {
     expect(states.at(-1)?.kind).toBe("retrying");
     stream.stop();
   });
+
+  it("reopens with the cursor it holds, without reporting a teardown", () => {
+    // A frozen phone comes back to a connection whose peer is gone and whose
+    // readyState still says OPEN, so nothing but a rebuild recovers it. The
+    // cursor must come from this instance: storage is throttled, and falling
+    // back to it would replay frames already shown.
+    const { handlers, states, cursors } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    FakeSource.latest?.emit({ kind: "text", text: "a" }, "9");
+
+    const before = states.length;
+    const previous = FakeSource.latest;
+    stream.reopen();
+
+    expect(previous?.closed).toBe(true);
+    expect(FakeSource.latest).not.toBe(previous);
+    expect(FakeSource.latest?.url).toContain("lastEventId=9");
+    expect(stream.cursor).toBe(9);
+    // A repair is not a stop and not a fresh connect: the pane's status dot
+    // must not blink to "not connected" on every foreground.
+    expect(states.slice(before).some((state) => state.kind === "closed")).toBe(false);
+    expect(states.slice(before).some((state) => state.kind === "connecting")).toBe(false);
+    expect(cursors).toEqual([9]);
+  });
+
+  it("ignores a late error from a connection it already replaced", () => {
+    // `close()` does not cancel an error already queued on the old source. If
+    // that handler ran it would null the *new* source and leak the connection,
+    // which a reopen makes far more likely by replacing it immediately.
+    const { handlers, states } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+
+    const old = FakeSource.latest;
+    stream.reopen();
+    const current = FakeSource.latest;
+    expect(current).not.toBe(old);
+
+    old?.fail();
+
+    expect(states.some((state) => state.kind === "retrying")).toBe(false);
+    current?.emit({ kind: "text", text: "still here" }, "10");
+    expect(stream.cursor).toBe(10);
+  });
+
+  it("ignores frames from a connection it already replaced", () => {
+    const { events, handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+
+    const old = FakeSource.latest;
+    stream.reopen();
+
+    old?.emit({ kind: "text", text: "stale" }, "3");
+
+    expect(events).toEqual([]);
+    expect(stream.cursor).toBe(0);
+  });
+
+  it("does not reopen a stream the caller stopped", () => {
+    const { handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    stream.stop();
+
+    const stopped = FakeSource.latest;
+    stream.reopen();
+
+    expect(FakeSource.latest).toBe(stopped);
+  });
 });
