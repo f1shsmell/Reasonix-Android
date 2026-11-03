@@ -64,7 +64,7 @@ import {
 } from "../net/savedConnections";
 import type { ConnectionGroup, SavedConnection } from "../net/savedConnections";
 import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
-import { RequestTimeout } from "../net/http";
+import { RequestTimeout, withTimeout } from "../net/http";
 import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
@@ -143,6 +143,18 @@ const PANE_OPTIONS = [
   { value: "account", label: "账号" },
   { value: "prefs", label: "偏好" },
 ] as const;
+
+/**
+ * How long to wait for the hidden pairing page.
+ *
+ * `PairActivity` gives up at 15 s, so this only has to clear that with room
+ * for the round trip back through the plugin. It exists because the activity's
+ * answer is not guaranteed to arrive at all: the callback that carries it holds
+ * a `PluginCall`, and a rebuilt activity or a reloaded WebView leaves that call
+ * dead — the plugin then returns without settling and the promise never
+ * resolves. Without a deadline of its own the screen would spin forever.
+ */
+const PAIR_DEADLINE_MS = 20_000;
 
 type Pane = (typeof PANE_OPTIONS)[number]["value"];
 
@@ -525,10 +537,24 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             // The Studio page's own #pair bootstrap is the path a browser
             // uses; the hidden WebView runs it and leaves its cookie for the
             // proxy. The direct POST /pair below is only the fallback.
-            outcome = await NativePair.pair({
-              url: `${base}/#pair=${encodeURIComponent(pairCodeValue)}`,
-              origin: base,
-            });
+            //
+            // The deadline is the shell's, not the page's: `PairActivity`
+            // gives up after 15 s, but its result only reaches us if the
+            // plugin's callback still holds a live `PluginCall`. When the
+            // activity is rebuilt or the WebView reloads, that call is gone
+            // and the plugin returns without settling — so without a deadline
+            // here the promise never resolves, `connect`'s `finally` never
+            // runs, and the button sits on "正在配对" forever. Timing out is
+            // not a failure: the cookie may already have landed, which is why
+            // the exchange below still runs.
+            outcome = await withTimeout(
+              NativePair.pair({
+                url: `${base}/#pair=${encodeURIComponent(pairCodeValue)}`,
+                origin: base,
+              }),
+              PAIR_DEADLINE_MS,
+              "配对页面没有回应",
+            );
           } catch {
             // The activity did not answer; the exchange below can still pair.
           }
