@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalCard, AskCard, AssistantBubble, ToolDetail, UserBubble } from "./Rows";
+import { clockText } from "../app/format";
 import type { ApprovalRow, AskRow, ToolRow } from "./transcript";
 
 /**
@@ -380,5 +381,34 @@ describe("UserBubble", () => {
       expect.stringContaining("/rt/r1/workspace/image?path="),
       expect.anything(),
     );
+  });
+});
+describe("AssistantBubble action row", () => {
+  it("shows the landing clock beside the copy action when it watched the end", () => {
+    const finishedAt = Date.parse("2026-11-04T07:08:00");
+    render(
+      <AssistantBubble
+        row={{
+          kind: "assistant",
+          id: "a1",
+          text: "好了",
+          reasoning: "",
+          streaming: false,
+          finishedAt,
+        }}
+      />,
+    );
+    // Compare against clockText itself: the clock follows the phone's locale,
+    // so the exact digits are not this test's to know.
+    const shown = container.querySelector(".bubble-at")?.textContent ?? "";
+    expect(shown).toBe(clockText(finishedAt));
+    expect(shown).not.toBe("");
+  });
+
+  it("shows no clock for a row rebuilt from history without one", () => {
+    render(
+      <AssistantBubble row={{ kind: "assistant", id: "a2", text: "好了", reasoning: "", streaming: false }} />,
+    );
+    expect(container.querySelector(".bubble-at")).toBeNull();
   });
 });

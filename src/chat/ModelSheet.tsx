@@ -27,6 +27,8 @@ export interface ModelSheetProps {
   onClose: () => void;
   /** The switch landed; the caller re-reads status and shows the new name. */
   onSwitched: (ref: string) => void;
+  /** The effort switch landed; empty means the kernel decides again. */
+  onEffortChange?: (value: string) => void;
 }
 
 function message(code: string): string {
@@ -63,7 +65,7 @@ function facts(option: ModelOption): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-export function ModelSheet({ base, fallback, onClose, onSwitched }: ModelSheetProps) {
+export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange }: ModelSheetProps) {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   /** The effort this conversation is on; empty is the kernel's "let it decide". */
   const [effort, setEffort] = useState("");
@@ -124,8 +126,9 @@ export function ModelSheet({ base, fallback, onClose, onSwitched }: ModelSheetPr
         return;
       }
       setEffort(next === "auto" ? "" : next);
+      onEffortChange?.(next === "auto" ? "" : next);
     },
-    [base, busy],
+    [base, busy, onEffortChange],
   );
 
   return (

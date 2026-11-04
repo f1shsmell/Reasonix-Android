@@ -183,6 +183,21 @@ export function effortChoices(option: ModelOption | undefined): string[] {
   return ["auto", ...option.efforts.filter((entry) => entry !== "auto")];
 }
 
+/**
+ * The reasoning-effort level as a person reads it, for chips and sheets.
+ * Raw wire values stay for the control itself; the display never shows them.
+ */
+export function effortDisplayName(value: string): string {
+  switch (value) {
+    case "auto": return "自动";
+    case "low": return "低";
+    case "medium": return "中";
+    case "high": return "高";
+    case "max": return "最高";
+    default: return value;
+  }
+}
+
 /** The short name a chip shows: the model, not `provider/model`. */
 export function modelShortName(option: ModelOption): string {
   return option.model || option.ref;

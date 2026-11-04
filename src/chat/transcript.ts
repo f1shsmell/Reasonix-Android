@@ -41,6 +41,12 @@ export interface AssistantRow {
   reasoning: string;
   thoughtMs?: number;
   streaming: boolean;
+  /**
+   * Wall clock of when the answer stopped streaming, stamped by this client.
+   * History-rebuilt rows have none — the wire carries no per-message time —
+   * so an action row shows the clock only when it actually watched the end.
+   */
+  finishedAt?: number;
 }
 
 export interface UserRow {
@@ -226,9 +232,14 @@ function appendOrExtend<T extends Row>(
   return [...rows, make()];
 }
 
-function closeStreaming(rows: Row[]): Row[] {
+function closeStreaming(rows: Row[], stampClock: boolean): Row[] {
   return rows.map((row) => {
-    if (row.kind === "assistant" && row.streaming) return { ...row, streaming: false };
+    if (row.kind === "assistant" && row.streaming)
+      return {
+        ...row,
+        streaming: false,
+        ...(stampClock ? { finishedAt: Date.now() } : {}),
+      };
     if (row.kind === "tool" && row.running) return { ...row, running: false };
     return row;
   });
@@ -388,12 +399,29 @@ function toolRow(tool: WireTool, fallbackId: string, running: boolean): ToolRow 
  * Returns the same object when nothing changed, so a renderer can skip frames
  * that only carry transport metadata.
  */
-export function reduce(transcript: Transcript, event: EventPayload): Transcript {
+/**
+ * Apply one event.
+ *
+ * Returns the same object when nothing changed, so a renderer can skip frames
+ * that only carry transport metadata.
+ *
+ * `stampClock` is the caller vouching that this frame arrived while the phone
+ * watched the turn live. Only a vouched answer gets `finishedAt`: the wire
+ * carries no per-message time, and a clock stamped at receive time would read
+ * as a landing time for a frame a reconnect replayed long after the fact —
+ * which is exactly what a backlog batch is.
+ */
+export function reduce(
+  transcript: Transcript,
+  event: EventPayload,
+  options?: { stampClock?: boolean },
+): Transcript {
+  const stampClock = options?.stampClock === true;
   switch (event.kind) {
     case "turn_started": {
       // A new turn closes whatever bubble the last one left open: a turn that
       // died mid-stream must not keep absorbing the next turn's text.
-      const rows = closeStreaming(transcript.rows);
+      const rows = closeStreaming(transcript.rows, stampClock);
       const next: Transcript = {
         rows,
         running: true,
@@ -453,6 +481,8 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
       // tool rows carry the work; an empty bubble would be a blank strip.
       if (!text && !reasoning) return transcript;
       const thoughtMs = typeof event.thoughtMs === "number" ? event.thoughtMs : undefined;
+      // The clock only lands on an answer the caller vouched for; see reduce.
+      const finishedAt = stampClock ? Date.now() : undefined;
       const rows = appendOrExtend(
         transcript.rows,
         isOpenAssistant,
@@ -462,6 +492,7 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
           text,
           reasoning,
           ...(thoughtMs !== undefined ? { thoughtMs } : {}),
+          ...(finishedAt !== undefined ? { finishedAt } : {}),
           streaming: false,
         }),
         (row) => ({
@@ -469,6 +500,7 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
           ...(text ? { text } : {}),
           ...(reasoning ? { reasoning } : {}),
           ...(thoughtMs !== undefined ? { thoughtMs } : {}),
+          ...(finishedAt !== undefined ? { finishedAt } : {}),
           streaming: false,
         }),
       );
@@ -575,7 +607,7 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
 
     case "turn_done": {
       const error = typeof event.err === "string" && event.err ? event.err : undefined;
-      const rows = closePending(closeStreaming(transcript.rows)).filter(
+      const rows = closePending(closeStreaming(transcript.rows, stampClock)).filter(
         (row) => !(row.kind === "assistant" && row.text === "" && row.reasoning === ""),
       );
       return {
@@ -604,6 +636,10 @@ export function reduce(transcript: Transcript, event: EventPayload): Transcript 
 }
 
 /** Fold a batch, which is what a replayed backlog arrives as. */
-export function reduceAll(transcript: Transcript, events: EventPayload[]): Transcript {
-  return events.reduce(reduce, transcript);
+export function reduceAll(
+  transcript: Transcript,
+  events: EventPayload[],
+  options?: { stampClock?: boolean },
+): Transcript {
+  return events.reduce((acc, event) => reduce(acc, event, options), transcript);
 }

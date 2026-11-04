@@ -39,3 +39,13 @@ export function compactCount(value: number): string {
   if (value >= 1_000) return `${Math.round(value / 100) / 10}k`;
   return String(value);
 }
+
+/**
+ * A wall-clock moment as `HH:MM`, the way a message action row shows when an
+ * answer landed. Locale-driven, so a 24-hour clock follows the phone.
+ */
+export function clockText(ms: number): string {
+  const at = new Date(ms);
+  if (Number.isNaN(at.getTime())) return "";
+  return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
