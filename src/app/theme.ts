@@ -10,6 +10,8 @@
  * screen, and a value stored on the desktop would be a different answer.
  */
 
+import { applyStatusBar } from "../native/themeBar";
+
 export type ThemeChoice = "auto" | "light" | "dark";
 
 const STORAGE_KEY = "reasonix.theme";
@@ -56,4 +58,46 @@ export function applyTheme(choice: ThemeChoice): void {
   const root = document.documentElement;
   if (choice === "auto") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", choice);
+  applyStatusBar(resolveAppearance(choice));
+  watchSystemAppearance();
+}
+
+/**
+ * Keep the bar in step while the app sits in `auto` and the system flips.
+ *
+ * The stylesheet follows `prefers-color-scheme` on its own; the status bar is
+ * native chrome and needs to be told. Registered once, and only acts while the
+ * page has no pinned attribute — a pinned choice owns its own colour.
+ */
+let watching = false;
+function watchSystemAppearance(): void {
+  if (watching) return;
+  watching = true;
+  try {
+    const query = window.matchMedia("(prefers-color-scheme: light)");
+    query.addEventListener("change", () => {
+      if (document.documentElement.hasAttribute("data-theme")) return;
+      applyStatusBar(query.matches ? "light" : "dark");
+    });
+  } catch {
+    // No media query support: `auto` stays wherever it started.
+  }
+}
+
+/**
+ * The appearance the page is actually showing.
+ *
+ * `auto` is resolved here rather than in CSS because the status bar is native
+ * chrome: it needs a concrete colour, not a media query. Below WebView 140 the
+ * bar sits above a WebView that Capacitor pads down, so it is drawn by the
+ * window and the stylesheet cannot reach it.
+ */
+export function resolveAppearance(choice: ThemeChoice): "light" | "dark" {
+  if (choice !== "auto") return choice;
+  try {
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch {
+    // No media query support: the stylesheet's own default is dark.
+    return "dark";
+  }
 }
