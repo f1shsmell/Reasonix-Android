@@ -433,6 +433,24 @@ export type ServerLink =
   | { kind: "cloud"; device: string };
 
 /**
+ * The Studio page this connection opens in a web view of the whole UI.
+ *
+ * A LAN door is the kernel origin itself; a cloud door is the remote page that
+ * carries the device id. Empty when there is nothing to open — the caller
+ * hides the entry instead of shipping a dead link.
+ */
+export function studioWebUrl(
+  config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice"> | null,
+  fallbackDevice?: string | null,
+): string {
+  if (config?.mode === "relay") {
+    const device = config.relayDevice?.trim() || fallbackDevice?.trim();
+    return device ? `https://reasonix.io/remote/?device=${encodeURIComponent(device)}` : "";
+  }
+  return config?.origin?.trim() || "";
+}
+
+/**
  * Read what a Studio QR code carries.
  *
  * The LAN code is `http://<ip>:<port>/#pair=<one-time code>`. The Internet

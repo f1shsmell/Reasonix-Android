@@ -39,7 +39,7 @@ import {
   ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
-import { disconnectProxy, setNetworkPolicy } from "../net/server";
+import { disconnectProxy, setNetworkPolicy, studioWebUrl } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
@@ -48,7 +48,7 @@ import { useBackCloser } from "./backStack";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
-import { clearRelayDevice } from "../net/relayStore";
+import { clearRelayDevice, loadRelayDevice } from "../net/relayStore";
 import {
   connectionKey,
   directDoorForMachine,
@@ -69,6 +69,7 @@ import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
 import type { PairResult } from "../native/pair";
+import { WebMode } from "../native/webmode";
 import {
   loadBackgroundStatus,
   openBatterySettings,
@@ -1125,6 +1126,16 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       : pending.kind === "cloud"
         ? "云端 · Reasonix 账号"
         : "局域网";
+  /** The computer's own Studio page, for opening the full desktop UI. */
+  const webUrl = studioWebUrl(config, loadRelayDevice());
+  const openWebUrl = (url: string) => {
+    setError("");
+    void WebMode.open({ url }).catch(() => {
+      // No native activity to carry it (a browser dev session, say): the
+      // browser still opens it, which is the same page by another door.
+      void Browser.open({ url }).catch(() => setError("打不开完整界面。"));
+    });
+  };
 
   return (
     <div
@@ -1203,6 +1214,45 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                   />
                 </span>
               </div>
+            </section>
+          </>
+        ) : null}
+
+        {pane === "connect" && webUrl ? (
+          <>
+            <p className="group-label">完整界面</p>
+            <section className="group">
+              <button
+                type="button"
+                className="setting action"
+                onClick={() => openWebUrl(webUrl)}
+                disabled={busy !== ""}
+              >
+                <span className="setting-main">
+                  <span className="setting-title">在应用内打开</span>
+                  <span className="setting-sub">电脑上那套 Studio 页面，整页运行在这里</span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+              <button
+                type="button"
+                className="setting action"
+                onClick={() => {
+                  setError("");
+                  void Browser.open({ url: webUrl }).catch(() => setError("打不开浏览器。"));
+                }}
+                disabled={busy !== ""}
+              >
+                <span className="setting-main">
+                  <span className="setting-title">在浏览器打开</span>
+                  <span className="setting-sub">同一个页面，交给系统浏览器</span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              </button>
             </section>
           </>
         ) : null}
