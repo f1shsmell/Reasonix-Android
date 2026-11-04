@@ -6,20 +6,20 @@ afterEach(() => {
 });
 
 describe("enterPref", () => {
-  it("defaults to send", () => {
-    expect(loadEnterPref()).toBe("send");
-  });
-
-  it("round-trips the newline choice", () => {
-    saveEnterPref("newline");
+  it("defaults to a line break", () => {
     expect(loadEnterPref()).toBe("newline");
   });
 
-  it("returns to the default once the choice is cleared", () => {
-    saveEnterPref("newline");
+  it("round-trips the send choice", () => {
     saveEnterPref("send");
-    expect(localStorage.getItem("reasonix.enter")).toBeNull();
     expect(loadEnterPref()).toBe("send");
+  });
+
+  it("returns to the default once the choice is cleared", () => {
+    saveEnterPref("send");
+    saveEnterPref("newline");
+    expect(localStorage.getItem("reasonix.enter")).toBeNull();
+    expect(loadEnterPref()).toBe("newline");
   });
 
   it("rejects values that are not a preference", () => {

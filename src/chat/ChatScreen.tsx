@@ -1562,8 +1562,9 @@ export function ChatScreen({
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Enter sends, Shift+Enter breaks the line. On a phone keyboard Enter is
-      // the send key people expect; the desktop convention is the fallback.
+      // Enter breaks the line, Ctrl/⌘+Enter sends — the default, and the
+      // convention every other editor on the device follows. The send-mode
+      // preference inverts it (Enter sends, Shift+Enter breaks the line).
       // A pinyin keyboard uses Enter to accept a candidate, which arrives as
       // composing input (IME keyCode 229); sending then would ship half a word.
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -2008,6 +2009,9 @@ export function ChatScreen({
           placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
           disabled={runtime.readOnly === true}
           rows={1}
+          // The soft keyboard's return key says what it does. Off "send" it
+          // would keep showing a send arrow while Enter inserts a line break.
+          enterKeyHint={enterPref === "send" ? "send" : "enter"}
           onChange={(event) => {
             setDraft(event.target.value);
             grow();

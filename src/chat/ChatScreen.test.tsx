@@ -903,73 +903,111 @@ describe("ChatScreen composer", () => {
   });
 
   it("does not send while an input method is composing", async () => {
+    // Seeded on purpose: in the default newline mode a bare Enter does not
+    // send anyway, so the test would pass with the guard deleted. Under the
+    // send mode the guard is the only thing between Enter and a submit.
+    localStorage.setItem("reasonix.enter", "send");
+    try {
+      const fetchMock = stubKernel();
+      render(snapshot());
+      await flush();
+      typeDraft("nihao");
+
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+            isComposing: true,
+          }),
+        );
+      });
+      await flush();
+
+      const submitted = fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"));
+      expect(submitted).toBe(false);
+
+      // The same keystroke without a composition is a send: what the guard
+      // blocks is the composing Enter, not the key itself.
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+      });
+      await flush();
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(true);
+    } finally {
+      localStorage.removeItem("reasonix.enter");
+    }
+  });
+
+  it("breaks the line on Enter and sends on Ctrl+Enter by default", async () => {
     const fetchMock = stubKernel();
     render(snapshot());
     await flush();
-    typeDraft("nihao");
+    typeDraft("分两行写");
 
+    // The soft keyboard is told what its return key does, so it does not keep
+    // showing a send arrow while Enter inserts a line break.
+    expect(
+      container.querySelector("textarea")?.getAttribute("enterkeyhint"),
+    ).toBe("enter");
+
+    // Plain Enter inserts the line break; the kernel sees nothing.
+    act(() => {
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+      textarea.value = `${textarea.value}\n`;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(false);
+
+    // Ctrl+Enter is the send.
     act(() => {
       container.querySelector("textarea")?.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Enter",
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
-          isComposing: true,
         }),
-      );
-    });
-    await flush();
-
-    const submitted = fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"));
-    expect(submitted).toBe(false);
-  });
-
-  it("sends on Enter and breaks the line on Shift+Enter by default", async () => {
-    const fetchMock = stubKernel();
-    render(snapshot());
-    await flush();
-    typeDraft("直接发送");
-
-    act(() => {
-      container.querySelector("textarea")?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
       );
     });
     await flush();
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(true);
   });
 
-  it("breaks the line on Enter and sends on Ctrl+Enter in the newline mode", async () => {
+  it("sends on Enter and keeps Shift+Enter a line break in the send mode", async () => {
     // The preference is read once per composer mount, so the seed goes in
     // before the screen exists.
-    localStorage.setItem("reasonix.enter", "newline");
+    localStorage.setItem("reasonix.enter", "send");
     try {
       const fetchMock = stubKernel();
       render(snapshot());
       await flush();
-      typeDraft("外接键盘");
+      typeDraft("直接发送");
 
-      // Plain Enter inserts the line break; the kernel sees nothing.
-      act(() => {
-        const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-        textarea.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
-        );
-        textarea.value = `${textarea.value}\n`;
-        textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await flush();
-      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(false);
-
-      // Ctrl+Enter is the send.
+      // Shift+Enter stays a line break even in this mode.
       act(() => {
         container.querySelector("textarea")?.dispatchEvent(
           new KeyboardEvent("keydown", {
             key: "Enter",
-            ctrlKey: true,
+            shiftKey: true,
             bubbles: true,
             cancelable: true,
           }),
+        );
+      });
+      await flush();
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(false);
+
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
         );
       });
       await flush();
