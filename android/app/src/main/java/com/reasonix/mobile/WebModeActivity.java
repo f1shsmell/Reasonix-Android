@@ -173,7 +173,20 @@ public class WebModeActivity extends Activity {
         root.addView(retryWrap, retryParams);
 
         setContentView(root);
+        // This is a plain Activity, not a BridgeActivity: Capacitor's
+        // SystemBars never runs here, so the bar would otherwise keep the
+        // theme's system-night colour while the app may have pinned the
+        // opposite appearance. Replay the page's last reported colour.
+        ThemeBarPlugin.reapply(this);
         web.loadUrl(url);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Returning from another app may have let the system repaint the
+        // window; put the app's own appearance back.
+        ThemeBarPlugin.reapply(this);
     }
 
     private void showCard(boolean shown) {
