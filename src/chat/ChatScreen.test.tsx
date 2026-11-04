@@ -903,25 +903,43 @@ describe("ChatScreen composer", () => {
   });
 
   it("does not send while an input method is composing", async () => {
-    const fetchMock = stubKernel();
-    render(snapshot());
-    await flush();
-    typeDraft("nihao");
+    // Seeded on purpose: in the default newline mode a bare Enter does not
+    // send anyway, so the test would pass with the guard deleted. Under the
+    // send mode the guard is the only thing between Enter and a submit.
+    localStorage.setItem("reasonix.enter", "send");
+    try {
+      const fetchMock = stubKernel();
+      render(snapshot());
+      await flush();
+      typeDraft("nihao");
 
-    act(() => {
-      container.querySelector("textarea")?.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          bubbles: true,
-          cancelable: true,
-          isComposing: true,
-        }),
-      );
-    });
-    await flush();
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+            isComposing: true,
+          }),
+        );
+      });
+      await flush();
 
-    const submitted = fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"));
-    expect(submitted).toBe(false);
+      const submitted = fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"));
+      expect(submitted).toBe(false);
+
+      // The same keystroke without a composition is a send: what the guard
+      // blocks is the composing Enter, not the key itself.
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
+      });
+      await flush();
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(true);
+    } finally {
+      localStorage.removeItem("reasonix.enter");
+    }
   });
 
   it("breaks the line on Enter and sends on Ctrl+Enter by default", async () => {
