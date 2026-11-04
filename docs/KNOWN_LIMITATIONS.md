@@ -18,7 +18,7 @@
 
 - **回前台会重建一次事件流**，即使流是健康的。这是修复「后台断连后对话不再更新」的代价：僵尸连接的 `readyState` 仍是 `OPEN`，没有更低成本的判定手段。重建带 cursor，不丢不重（见 #95）。
 - **`phase !== "connected"` 时回前台不自愈**。`reassess` 在链路状态不是 connected 时直接返回，属于既有行为，未纳入本次范围。
-- **应用内「完整界面」不会把内核新下发的 cookie 写回 WebView**。局域网的完整界面走 loopback 代理（否则 VPN 会把私有地址吞掉），代理转发时会补上配对时保存的 device cookie，所以页面能正常打开；但响应里的 `Set-Cookie` 只进代理自己的内存 jar，不回写给页面。首次访问不受影响，只有内核在这次访问中**轮换**了会话 cookie 才会失效。彻底修需要让 `writeResponse` 支持多个 `Set-Cookie` 头，那条路径被所有响应共用，改动更大。
+- **应用内「完整界面」不会把内核新下发的 cookie 写回 WebView**。局域网的完整界面走 loopback 代理（否则 VPN 会把私有地址吞掉），代理转发时会补上配对时保存的 device cookie，所以页面能正常打开；但响应里的**所有** `Set-Cookie` 都只进代理自己的内存 jar，`writeResponse` 不把它们回写给页面——页面本身从来没收到过 cookie。首次访问不受影响，只要内核的会话 cookie 发生轮换（或任何依赖页面侧 cookie 的逻辑），就可能失效。彻底修需要让 `writeResponse` 支持多个 `Set-Cookie` 头，那条路径被所有响应共用，改动更大。
 
 ## 内容渲染
 

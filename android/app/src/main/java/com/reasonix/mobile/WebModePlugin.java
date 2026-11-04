@@ -21,7 +21,15 @@ public class WebModePlugin extends Plugin {
         intent.putExtra("viaProxy", Boolean.TRUE.equals(call.getBoolean("viaProxy")));
         String origin = call.getString("origin");
         intent.putExtra("origin", origin == null ? "" : origin);
-        getActivity().startActivity(intent);
+        try {
+            getActivity().startActivity(intent);
+        } catch (RuntimeException e) {
+            // resolve() would leave the promise settled even though no page
+            // opened. Rejecting lets the JS side fall back to the system
+            // browser instead of hanging with a blank screen.
+            call.reject("could not open the full Studio page", e);
+            return;
+        }
         call.resolve();
     }
 }
