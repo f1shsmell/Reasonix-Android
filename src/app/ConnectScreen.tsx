@@ -43,7 +43,6 @@ import { disconnectProxy, setNetworkPolicy, studioWebUrl } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
-import { MachinePanel } from "./MachinePanel";
 import { useBackCloser } from "./backStack";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
@@ -104,8 +103,6 @@ export interface ConnectScreenProps {
   onClose?: () => void;
   /** The app's link machine, for the hero at the top of the page. */
   link?: LinkState;
-  /** A runtime base for the machine panel's per-session reads. */
-  machineBase?: string | undefined;
   /** Cloud background reminders, owned by App because the service follows the link. */
   cloudWatch?: boolean;
   onCloudWatchChange?: (on: boolean) => void;
@@ -192,7 +189,7 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
-export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, machineBase, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, notifyPrefs, onNotifyPrefChange, buildDiagnostics }: ConnectScreenProps) {
+export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, notifyPrefs, onNotifyPrefChange, buildDiagnostics }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -1266,8 +1263,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             </section>
           </>
         ) : null}
-
-        {pane === "connect" ? <MachinePanel base={machineBase} /> : null}
 
         {/* Places this phone has already connected to. The current one is
             marked; the rest are one tap away, with a way to forget a computer

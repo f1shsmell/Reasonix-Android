@@ -317,19 +317,8 @@ before the machine starts, `link` is idle and the hero shows the setup line.
 The step list is drawn only when the machine is working, not for a manual
 attempt — one `POST` is not three stages.
 
-## The machine panel and checkpoints
+## Checkpoints
 
-- `MachinePanel` is the settings page's **机器** tab: `/usage?days=30`,
-  `/context`, `/tools`, `/permissions`, `/studio/versions`, all read-only.
-  Each read is independent (`src/net/machine.ts` turns a failed one into a
-  missing section), so a kernel without one route still shows the rest. The
-  panel never writes: usage, boundary and version are the desktop's decisions,
-  and a phone that could flip them would change every session on that machine.
-- The base is the first runtime's `/rt/{id}` (App passes it). The desktop's
-  port uses the same path for the running project; a kernel that mounts these
-  at the root would need a fallback, which is not implemented.
-- `/usage`, `/permissions`, `/sandbox` and `/studio` were added to
-  `relay.ts` `KERNEL_PATHS`, so a paired cloud client sees the panel too.
 - Checkpoints live in the chat's `…` menu. `CheckpointsSheet` reads
   `/checkpoints`, then `POST /rewind/prepare` (`{turn, scope:"both"}`), shows
   the plan's coverage and gaps, and only `POST /rewind/commit` (`{planId}`)
