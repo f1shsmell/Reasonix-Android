@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The colour the system bars paint with.
+         The status bar is not part of the page: on a WebView older than 140
+         Capacitor pads the WebView down by the inset instead of laying it
+         under the bar, so the strip above the content is the window
+         background. Left at the splash colour it read as a seam against the
+         page, most visibly in light mode. "values-night" carries the dark
+         value; these two match the bg token in src/ui/tokens.css. -->
+    <color name="app_background">#f4f6fa</color>
+</resources>

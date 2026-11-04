@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark twin of "values/bools.xml": light icons on a dark bar. -->
+    <bool name="status_bar_icons_dark">false</bool>
+</resources>

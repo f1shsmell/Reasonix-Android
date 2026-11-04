@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Whether the status bar draws dark icons. The light background needs
+         dark ones; "values-night" flips this back. -->
+    <bool name="status_bar_icons_dark">true</bool>
+</resources>

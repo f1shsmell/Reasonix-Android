@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark twin of "values/colors.xml"; matches the bg token for the
+         dark theme in src/ui/tokens.css. -->
+    <color name="app_background">#0b0e14</color>
+</resources>

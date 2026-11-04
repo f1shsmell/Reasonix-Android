@@ -32,6 +32,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NetworkWatchPlugin.class);
         registerPlugin(TurnPlugin.class);
         registerPlugin(UpdaterPlugin.class);
+        registerPlugin(ThemeBarPlugin.class);
         super.onCreate(savedInstanceState);
         WebView view = getBridge() == null ? null : getBridge().getWebView();
         ownWebView = view;

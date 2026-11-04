@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyTheme, isTheme, loadTheme, saveTheme } from "./theme";
+import { applyTheme, isTheme, loadTheme, resolveAppearance, saveTheme } from "./theme";
 
 /**
  * The theme setting is small but has one trap worth a test: `auto` must be the
@@ -14,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.documentElement.removeAttribute("data-theme");
 });
 
@@ -69,5 +70,29 @@ describe("applyTheme", () => {
     applyTheme("dark");
     applyTheme("auto");
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+  });
+});
+
+describe("resolveAppearance", () => {
+  it("reports a pinned choice as itself", () => {
+    expect(resolveAppearance("light")).toBe("light");
+    expect(resolveAppearance("dark")).toBe("dark");
+  });
+
+  it("asks the system when following it", () => {
+    // jsdom has no matchMedia by default, so this also covers the fallback that
+    // keeps a phone without it on the stylesheet's own default.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("light"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    expect(resolveAppearance("auto")).toBe("light");
+  });
+
+  it("falls back to dark when the media query is unavailable", () => {
+    vi.stubGlobal("matchMedia", undefined);
+    expect(resolveAppearance("auto")).toBe("dark");
   });
 });
