@@ -45,12 +45,19 @@ public class MainActivity extends BridgeActivity {
         // a WebView created later and is harmless if the cookie is already
         // present.
         LoopbackProxy.installWebViewCookie(getApplicationContext());
+        // SystemBars initialises inside super.onCreate and paints the decor
+        // with the *system* theme. A warm start has a cached page appearance;
+        // put it back after the bridge has had its turn.
+        ThemeBarPlugin.reapply(this);
     }
 
     @Override
     public void onResume() {
         super.onResume();
         visible = true;
+        // A returning activity may have had its decor repainted from the
+        // system theme while it was away; reassert the page's own colour.
+        ThemeBarPlugin.reapply(this);
     }
 
     @Override
