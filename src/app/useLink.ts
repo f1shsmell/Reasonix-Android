@@ -485,6 +485,12 @@ export function useLink(connection: Connection): Link {
           const restored = await answeringOrigins(missed);
           if (!live()) return;
           if (restored.length > 0) {
+            // The restart is one retry, so it has to spend one. Leaving the
+            // count at zero let the next attempt enter this branch again, and
+            // a door that keeps flapping across the probe deadline — missed by
+            // the sweep, caught by the re-probe, missed again — restarted the
+            // loop for ever instead of falling back to a backoff.
+            backoff.current.next();
             // Let the attempt finish clearing `active` before starting the
             // next one; calling straight through would be refused as a second
             // attempt running beside the first.

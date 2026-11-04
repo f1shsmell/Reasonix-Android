@@ -270,4 +270,41 @@ describe("useLink network changes", () => {
     );
     expect(singleMiss.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("restarts at most once when a door keeps flapping across the probe deadline", async () => {
+    // A door missed by the sweep and caught by the re-probe restarts the
+    // attempt. That restart has to spend one retry: with the count still at
+    // zero the next attempt enters the same branch, and two answers that
+    // alternate — sweep misses, re-probe catches — ran the pair for ever
+    // instead of falling back to a backoff.
+    const second = "http://192.168.5.3:56789";
+    const twoDoors = { ...LAN, candidates: [LAN.origin, second] };
+    serverMock.readProxyConfig.mockResolvedValue(twoDoors);
+    serverMock.refreshProxy.mockResolvedValue(twoDoors);
+
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+
+    serverMock.answeringOrigins.mockClear();
+    let probes = 0;
+    serverMock.answeringOrigins.mockImplementation(async () => {
+      probes += 1;
+      // Odd calls are the sweep at the top of an attempt and answer nothing;
+      // even calls are the re-probe at the bottom and catch the door.
+      return probes % 2 === 0 ? [second] : [];
+    });
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    // `flush` alone does not reach the timer the restart is scheduled on.
+    for (let round = 0; round < 10; round++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    // One restart is a sweep plus its re-probe. Anything past the second
+    // attempt spending the retry means the loop is back.
+    expect(probes).toBeLessThanOrEqual(4);
+  });
 });
