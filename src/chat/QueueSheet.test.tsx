@@ -236,6 +236,9 @@ describe("QueueSheet wording", () => {
 
   it("prefers its own words for a block, then the kernel's", () => {
     expect(blockText("steer_unapplied", "ignored")).toContain("可以插话的位置");
+    expect(blockText("foreign_images", "queued with images by another version")).toContain(
+      "另一个版本",
+    );
     expect(blockText(undefined, "the kernel's own sentence")).toBe("the kernel's own sentence");
     expect(blockText(undefined, undefined)).toBe("");
   });

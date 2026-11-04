@@ -47,6 +47,8 @@ export function blockText(code: string | undefined, reason: string | undefined):
       return "这条引用的文件变了，发出去会读到别的内容。";
     case "foreign_run":
       return "这条属于另一轮，不能在这个会话里发。";
+    case "foreign_images":
+      return "这条带着图片、由另一个版本的 Reasonix 排队，这一版读不了这些图片，所以先扣住不发，而不是丢掉图片发出去。";
     default:
       return reason || "";
   }

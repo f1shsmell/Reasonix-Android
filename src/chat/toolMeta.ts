@@ -34,6 +34,10 @@ const TOOL_LABELS: Record<string, string> = {
   complete_step: "完成任务",
   ask_user_question: "提问",
   request_user_input: "提问",
+  // The delegation pair: one dispatches, the other reads a dispatched task's
+  // prose back by page. Both belong to the 子任务 family.
+  spawn_agents: "派发子任务",
+  read_subagent_result: "读取子任务结果",
 };
 
 export type ToolCategory =
@@ -86,6 +90,9 @@ export function toolCategory(name: string): ToolCategory {
     case "ask_user_question":
     case "request_user_input":
       return "ask";
+    case "spawn_agents":
+    case "read_subagent_result":
+      return "agent";
     default:
       return name.startsWith("subagent") ? "agent" : "tool";
   }
@@ -135,6 +142,19 @@ export function toolSummary(row: ToolRow): string {
       ]) {
         const value = object[key];
         if (typeof value === "string" && value.trim()) return oneLine(value);
+      }
+      // A spawned task list is the call's payload; the first task's own title
+      // (else its prompt) is what the row is about.
+      const tasks = object.tasks;
+      if (Array.isArray(tasks)) {
+        const task = tasks.find(
+          (entry): entry is Record<string, unknown> =>
+            entry !== null && typeof entry === "object",
+        );
+        if (task) {
+          if (typeof task.title === "string" && task.title.trim()) return oneLine(task.title);
+          if (typeof task.task === "string" && task.task.trim()) return oneLine(task.task);
+        }
       }
       const first = Object.values(object).find(
         (value): value is string => typeof value === "string" && value.trim() !== "",
