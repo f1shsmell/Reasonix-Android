@@ -20,6 +20,8 @@
   <a href="https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md">已知限制</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/f1shsmell/Reasonix-Android/issues">反馈问题</a>
+  &nbsp;·&nbsp;
+  <a href="README.en.md">English</a>
 </p>
 
 <p align="center">
