@@ -2009,6 +2009,9 @@ export function ChatScreen({
           placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
           disabled={runtime.readOnly === true}
           rows={1}
+          // The soft keyboard's return key says what it does. Off "send" it
+          // would keep showing a send arrow while Enter inserts a line break.
+          enterKeyHint={enterPref === "send" ? "send" : "enter"}
           onChange={(event) => {
             setDraft(event.target.value);
             grow();

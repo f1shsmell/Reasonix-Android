@@ -17,8 +17,8 @@ const STORAGE_KEY = "reasonix.enter";
 const DEFAULT: EnterPref = "newline";
 
 export const ENTER_CHOICES: ReadonlyArray<{ value: EnterPref; label: string }> = [
-  { value: "send", label: "发送" },
   { value: "newline", label: "换行" },
+  { value: "send", label: "发送" },
 ];
 
 export function isEnterPref(value: unknown): value is EnterPref {

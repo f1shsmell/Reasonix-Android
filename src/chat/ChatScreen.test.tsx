@@ -948,6 +948,12 @@ describe("ChatScreen composer", () => {
     await flush();
     typeDraft("分两行写");
 
+    // The soft keyboard is told what its return key does, so it does not keep
+    // showing a send arrow while Enter inserts a line break.
+    expect(
+      container.querySelector("textarea")?.getAttribute("enterkeyhint"),
+    ).toBe("enter");
+
     // Plain Enter inserts the line break; the kernel sees nothing.
     act(() => {
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
