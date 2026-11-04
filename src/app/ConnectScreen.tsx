@@ -1544,21 +1544,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               disabled={!haptics}
             />
           </div>
-          {Capacitor.isNativePlatform() && onNotificationOptionsChange ? (
-            <div className="setting">
-              <span className="setting-main">
-                <span className="setting-title">通知里显示选项</span>
-                <span className="setting-sub">
-                  关闭时只显示「去回答」，点击直接进入该会话
-                </span>
-              </span>
-              <Switch
-                checked={notificationOptions ?? false}
-                onChange={onNotificationOptionsChange}
-                ariaLabel="通知里显示选项"
-              />
-            </div>
-          ) : null}
           {Capacitor.isNativePlatform() && onCloudWatchChange ? (
             <div className="setting">
               <span className="setting-main">
