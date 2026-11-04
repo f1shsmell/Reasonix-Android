@@ -967,6 +967,20 @@ describe("ChatScreen composer", () => {
       await flush();
       typeDraft("直接发送");
 
+      // Shift+Enter stays a line break even in this mode.
+      act(() => {
+        container.querySelector("textarea")?.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await flush();
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/submit"))).toBe(false);
+
       act(() => {
         container.querySelector("textarea")?.dispatchEvent(
           new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),

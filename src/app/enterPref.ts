@@ -21,9 +21,6 @@ export const ENTER_CHOICES: ReadonlyArray<{ value: EnterPref; label: string }> =
   { value: "newline", label: "换行" },
 ];
 
-export const ENTER_NOTE =
-  "换行：Enter 换行，Ctrl/⌘+Enter 发送（默认）；发送：Enter 直接发送。";
-
 export function isEnterPref(value: unknown): value is EnterPref {
   return value === "send" || value === "newline";
 }
