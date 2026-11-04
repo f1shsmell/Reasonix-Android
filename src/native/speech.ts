@@ -39,7 +39,10 @@ export function speechSupported(): boolean {
 /** Recognizer error codes → what the person is told. */
 const ERRORS: Record<number, string> = {
   1: "没听清，再试一次",
-  2: "语音服务需要网络，检查网络后重试",
+  // ERROR_NETWORK comes from the phone's own speech service, not from the
+  // desktop link. Naming "网络" alone made people think the pairing had
+  // dropped; say which network it is and point at the offline pack.
+  2: "手机语音服务需要联网或离线语音包，与电脑连接无关",
   3: "没能录到声音，检查麦克风后重试",
   4: "语音服务没响应，再试一次",
   5: "手机没有可用的语音服务",

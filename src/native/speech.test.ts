@@ -165,6 +165,17 @@ describe("beginSpeechHold", () => {
     expect(updates.at(-1)?.ended).toBe(true);
   });
 
+  it("names the phone's speech service, not the desktop link, on ERROR_NETWORK", async () => {
+    const { hold } = await holding();
+
+    fire("recerror", { session: 7, error: 2 });
+
+    expect(hold.state.ended).toBe(true);
+    // Saying only "网络" made people think the pairing had dropped.
+    expect(hold.state.error).toContain("与电脑连接无关");
+    expect(hold.state.error).not.toContain("检查网络后重试");
+  });
+
   it("ends a tap that never reached the service without blaming it", async () => {
     const { hold } = await holding();
 
