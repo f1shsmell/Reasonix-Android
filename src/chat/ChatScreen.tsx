@@ -1700,7 +1700,7 @@ export function ChatScreen({
               title={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
             />
             {runtime.readOnly ? "只读 · " : ""}
-            {runtime.name} · {runtime.root}
+            {runtime.name}
           </span>
         </div>
         {onNewSession ? (
