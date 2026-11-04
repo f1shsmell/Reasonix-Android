@@ -4,6 +4,7 @@ import { App } from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { installCloudWatchBridge } from "../net/cloudWatch";
 import { applyTheme, loadTheme } from "./theme";
+import { applyChatFont, loadChatFont } from "../chat/chatFont";
 
 /**
  * The service asks this page for cloud status while the app is backgrounded;
@@ -15,9 +16,11 @@ installCloudWatchBridge();
  * The remembered appearance is applied before the first paint.
  *
  * Doing it in a component effect would show one frame in the wrong palette on
- * every cold start, which on a phone reads as a flash.
+ * every cold start, which on a phone reads as a flash. The chat font scale
+ * rides along: a wrong size is the same first-frame lie.
  */
 applyTheme(loadTheme());
+applyChatFont(loadChatFont());
 
 /**
  * StrictMode is on in every build, not just development: the double-invoked
