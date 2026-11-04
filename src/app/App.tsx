@@ -815,7 +815,6 @@ export function App() {
         onFailed={link.noteFailed}
         onDisconnected={link.noteDisconnected}
         link={link.state}
-        machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
         notificationOptions={notificationOptions}
@@ -840,7 +839,6 @@ export function App() {
           syncFleet();
         }}
         link={link.state}
-        machineBase={snapshot.runtimes[0]?.base}
         cloudWatch={cloudWatch}
         onCloudWatchChange={pickCloudWatch}
         notificationOptions={notificationOptions}
