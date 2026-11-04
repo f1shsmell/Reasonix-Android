@@ -49,6 +49,7 @@ vi.mock("../net/fleet", () => ({ forgetFleetPeer: vi.fn(async () => {}) }));
 vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
   connectRelay: vi.fn(),
+  prefetchGrant: vi.fn(),
   RelayError: class RelayError extends Error {
     readonly kind: string;
     constructor(kind: string, message: string) {

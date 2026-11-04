@@ -150,6 +150,7 @@ vi.mock("../net/relay", () => ({
   connectRelay: vi.fn(),
   ensureRelay: vi.fn(),
   clearRelayRouting: vi.fn(),
+  prefetchGrant: vi.fn(),
   RelayError: class RelayError extends Error {
     readonly kind: string;
     constructor(kind: string, message: string) {

@@ -49,7 +49,7 @@ interface RelayDevice {
   revokedAt?: string | null;
 }
 
-interface RelayGrant {
+export interface RelayGrant {
   ticket: string;
   device: RelayDevice;
   relay: string;
@@ -138,7 +138,59 @@ function concatChunks(chunks: Map<number, string>): Uint8Array<ArrayBuffer> {
 
 // ---- account grant ---------------------------------------------------
 
+/**
+ * A grant asked for before its door was reached.
+ *
+ * The cloud handshake spends a round trip asking the account service for a
+ * ticket before it can even try to open a socket. When the walk is about to
+ * probe LAN doors first, that round trip can run beside the probe instead of
+ * after it: the request touches no proxy upstream and no socket, so running it
+ * early cannot disturb a LAN attempt.
+ */
+const prefetched = new Map<string, { at: number; grant: Promise<RelayGrant> }>();
+/**
+ * How long a prefetched ticket stays worth spending.
+ *
+ * Long enough to cover a LAN sweep and the walk that follows it, short enough
+ * that a grant fetched for a door the walk never reached cannot be spent much
+ * later on a ticket the account service has since reconsidered.
+ */
+const GRANT_TTL_MS = 8_000;
+
+/** Start fetching a door's ticket now, to be spent when the walk reaches it. */
+export function prefetchGrant(deviceId: string): void {
+  const early = prefetched.get(deviceId);
+  // A ticket older than the TTL will be thrown away when the walk reaches its
+  // door, so it must not also block asking for a fresh one.
+  if (early !== undefined && Date.now() - early.at < GRANT_TTL_MS) return;
+  const grant = fetchGrant(deviceId);
+  // A prefetch nobody ends up awaiting must not surface as an unhandled
+  // rejection; `requestGrant` re-throws it for whoever does reach the door.
+  grant.catch(() => {});
+  prefetched.set(deviceId, { at: Date.now(), grant });
+}
+
 async function requestGrant(deviceId: string): Promise<RelayGrant> {
+  const early = prefetched.get(deviceId);
+  if (early !== undefined) {
+    prefetched.delete(deviceId);
+    if (Date.now() - early.at < GRANT_TTL_MS) {
+      try {
+        return await early.grant;
+      } catch (error) {
+        // The early request can lose a race the walk would win — the network
+        // came back, or the account service was briefly slow. Asking again is
+        // right for that; a revoked device or a lapsed sign-in answers the
+        // same way the second time, so their answer stands.
+        if (error instanceof RelayError && error.kind !== "transient") throw error;
+        return fetchGrant(deviceId);
+      }
+    }
+  }
+  return fetchGrant(deviceId);
+}
+
+async function fetchGrant(deviceId: string): Promise<RelayGrant> {
   const response = await fetchWithTimeout(ACCOUNT_GRANT, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -22,6 +22,7 @@ import {
 } from "../net/link";
 import type { LinkError, LinkState, LinkStep } from "../net/link";
 import { loadRelayDevice, saveRelayDevice, loadStandDown, saveStandDown, clearStandDown } from "../net/relayStore";
+import { prefetchGrant } from "../net/relay";
 import {
   directDoorForMachine,
   learnConnectionMachine,
@@ -398,6 +399,17 @@ export function useLink(connection: Connection): Link {
       // and the walk keeps the list's order for the ones that do answer.
       const doors = orderedDoors(config, saved, tried);
       const lanTargets = doors.filter((door) => door.kind === "lan").map((door) => door.target);
+      // A cloud handshake begins with a round trip to the account service, and
+      // the walk cannot reach that door until this sweep has finished. Ask for
+      // the ticket now so the round trip runs beside the probe instead of
+      // after it: it touches no proxy upstream and no socket, so it cannot
+      // disturb a LAN attempt. The ticket is only spent if the walk reaches
+      // the door while it is still fresh.
+      if (config.account.signedIn) {
+        for (const door of doors) {
+          if (door.kind === "cloud") prefetchGrant(door.target);
+        }
+      }
       const reachable = new Set(
         lanTargets.length > 0 ? await answeringOrigins(lanTargets) : [],
       );
@@ -453,6 +465,40 @@ export function useLink(connection: Connection): Link {
       }
 
       if (!live()) return;
+      // A door the first sweep missed can come back while the walk spends its
+      // budget on a slow one — "the first address answered only after the
+      // second was already being tried" is exactly this case. One more sweep
+      // before sleeping on a backoff is cheap: the probes run together and
+      // each carries its own short deadline, so the whole check costs one
+      // probe's wait rather than the sum of a retry cycle.
+      //
+      // Only on a transport failure, only while the phone thinks it has a
+      // network, and only before the first backoff has been handed out: an
+      // authorization failure will not improve by re-probing, a phone with no
+      // network would only pay one more deadline for nothing, and repeating
+      // this on every retry would turn a backoff into a tight loop.
+      if (last?.retryable === true && online.current && backoff.current.attempt === 0) {
+        const missed = doors
+          .filter((door) => door.kind === "lan" && !reachable.has(door.target))
+          .map((door) => door.target);
+        if (missed.length > 0) {
+          const restored = await answeringOrigins(missed);
+          if (!live()) return;
+          if (restored.length > 0) {
+            // The restart is one retry, so it has to spend one. Leaving the
+            // count at zero let the next attempt enter this branch again, and
+            // a door that keeps flapping across the probe deadline — missed by
+            // the sweep, caught by the re-probe, missed again — restarted the
+            // loop for ever instead of falling back to a backoff.
+            backoff.current.next();
+            // Let the attempt finish clearing `active` before starting the
+            // next one; calling straight through would be refused as a second
+            // attempt running beside the first.
+            window.setTimeout(() => void attemptRef.current(), 0);
+            return;
+          }
+        }
+      }
       schedule(
         last ?? linkFailure(doors.length > 0 ? "client.offline" : "no.doors"),
       );
