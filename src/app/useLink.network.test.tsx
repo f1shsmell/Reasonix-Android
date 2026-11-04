@@ -15,6 +15,11 @@ const serverMock = vi.hoisted(() => ({
 }));
 vi.mock("../net/server", () => serverMock);
 
+const relayMock = vi.hoisted(() => ({
+  prefetchGrant: vi.fn(),
+}));
+vi.mock("../net/relay", () => relayMock);
+
 vi.mock("../net/savedConnections", () => ({
   loadConnections: vi.fn(() => []),
   latestConnection: vi.fn(() => null),
@@ -209,5 +214,60 @@ describe("useLink network changes", () => {
     await flush();
 
     expect(fake.quickCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for a cloud ticket while the LAN sweep is still running", async () => {
+    // The walk cannot reach a cloud door until the probe has finished, so the
+    // round trip that starts its handshake would otherwise run after it. The
+    // request touches no proxy upstream and no socket, so it is safe to start
+    // beside the sweep.
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+    relayMock.prefetchGrant.mockClear();
+    serverMock.answeringOrigins.mockClear();
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+
+    expect(relayMock.prefetchGrant).toHaveBeenCalledWith("dev-1");
+    const asked = relayMock.prefetchGrant.mock.invocationCallOrder[0] ?? Infinity;
+    const swept = serverMock.answeringOrigins.mock.invocationCallOrder[0] ?? Infinity;
+    expect(asked).toBeLessThan(swept);
+  });
+
+  it("probes a missed door again before waiting out a backoff", async () => {
+    // "The first address answered only after the second was already being
+    // tried": the sweep at the start of the attempt is stale by the time the
+    // walk has spent its budget. One more sweep before sleeping on the backoff
+    // catches that, and costs one probe instead of a whole retry cycle.
+    const second = "http://192.168.5.3:56789";
+    const twoDoors = { ...LAN, candidates: [LAN.origin, second] };
+    serverMock.readProxyConfig.mockResolvedValue(twoDoors);
+    serverMock.refreshProxy.mockResolvedValue(twoDoors);
+
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+    // Nothing comes back on the second sweep either, so the attempt ends in a
+    // backoff instead of starting over — otherwise the walk would loop and
+    // every probe count would depend on how many rounds happened to run.
+    serverMock.answeringOrigins.mockResolvedValue([]);
+    serverMock.answeringOrigins.mockClear();
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+
+    // A sweep covering every door proves nothing on its own; what only the
+    // extra check produces is a probe of the missed address alone, after the
+    // walk had already spent its budget on the other one.
+    const singleMiss = serverMock.answeringOrigins.mock.calls.filter(
+      ([targets]) => Array.isArray(targets) && targets.length === 1 && targets[0] === second,
+    );
+    expect(singleMiss.length).toBeGreaterThanOrEqual(1);
   });
 });
