@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { currentModel, effortChoices, loadModels, modelShortName, switchEffort, switchModel } from "./models";
+import { currentModel, effortChoices, effortDisplayName, loadModels, modelShortName, switchEffort, switchModel } from "./models";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -231,5 +231,14 @@ describe("effortChoices", () => {
     expect(
       effortChoices({ ref: "a/b", provider: "a", model: "b", active: false, default: false, efforts: [] }),
     ).toEqual([]);
+  });
+});
+
+describe("effortDisplayName", () => {
+  it("reads the wire levels the way a person does, and passes unknown ones through", () => {
+    expect(effortDisplayName("auto")).toBe("自动");
+    expect(effortDisplayName("medium")).toBe("中");
+    expect(effortDisplayName("max")).toBe("最高");
+    expect(effortDisplayName("turbo")).toBe("turbo");
   });
 });

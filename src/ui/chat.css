@@ -991,7 +991,9 @@ html[data-chat-font="xl"] {
 }
 .bubble-actions {
   display: flex;
+  align-items: baseline;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 4px;
 }
 .bubble-actions .copy {
@@ -1002,12 +1004,28 @@ html[data-chat-font="xl"] {
   color: var(--fg-dim);
   opacity: 0.75;
 }
+/* When this client watched the answer land, the row carries the clock beside
+   the copy action — the ZCode answer row's icon-plus-time pattern. */
+.bubble-actions .bubble-at {
+  color: var(--fg-dim);
+  font-size: 11px;
+  opacity: 0.75;
+}
 
 .prompt .confirm:disabled {
   opacity: 0.5;
 }
 
 /* ---- composer ---- */
+
+/* The working-time line the ZCode mobile layout carries above its composer:
+   a quiet "how long has this been running" that costs nothing to read. */
+.run-status {
+  text-align: center;
+  padding: 2px 12px 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
 
 .composer {
   display: flex;

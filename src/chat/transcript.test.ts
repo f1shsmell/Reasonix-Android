@@ -436,3 +436,28 @@ describe("transcript", () => {
     expect(tool?.kind === "tool" ? tool.reasoning : undefined).toBeUndefined();
   });
 });
+
+
+describe("the landing clock stamp", () => {
+  const turn = (text: string): EventPayload[] => [
+    { kind: "turn_started" },
+    { kind: "text", text },
+    { kind: "message", text },
+    { kind: "turn_done" },
+  ];
+
+  it("stamps an answer only when the caller vouched for the frame", () => {
+    const result = turn("看着它落地").reduce(
+      (acc, event) => reduce(acc, event, { stampClock: true }),
+      emptyTranscript,
+    );
+    const answer = result.rows.find((row) => row.kind === "assistant");
+    expect(answer && "finishedAt" in answer && typeof answer.finishedAt === "number").toBe(true);
+  });
+
+  it("leaves a backlog batch unstamped — the phone did not watch it land", () => {
+    const result = reduceAll(emptyTranscript, turn("重放回来的"));
+    const answer = result.rows.find((row) => row.kind === "assistant");
+    expect(answer && "finishedAt" in answer && typeof answer.finishedAt === "number").toBe(false);
+  });
+});

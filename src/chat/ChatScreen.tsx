@@ -10,6 +10,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
+import { effortDisplayName } from "../net/models";
 import {
   APPROVAL_CHOICES,
   approvalLabel,
@@ -520,6 +521,12 @@ function useTranscript(
   runtimeId: string,
   base: string | undefined,
   sessionPath: string | undefined,
+  /**
+   * The clock the screen owns: set when the phone watches a turn start, null
+   * for a turn restored by a reload. The fold loop vouches frames with it —
+   * see the `stampClock` option on [reduce].
+   */
+  clockRef?: React.RefObject<number | null>,
 ): {
   transcript: Transcript;
   history: HistoryState;
@@ -695,7 +702,16 @@ function useTranscript(
     const unseen = queued.filter((entry) => entry.seq > foldedThrough.current);
     if (unseen.length === 0) return;
     foldedThrough.current = unseen[unseen.length - 1]!.seq;
-    setTranscript((current) => unseen.reduce((acc, entry) => reduce(acc, entry.event), current));
+    // Vouch for frames only while this phone has watched the turn from its
+    // start: a backlog batch (a reconnect replay, a restored session's first
+    // read) lands after the fact, and its answers must not claim a landing
+    // clock the phone never saw.
+    setTranscript((current) =>
+      unseen.reduce(
+        (acc, entry) => reduce(acc, entry.event, { stampClock: clockRef?.current !== null }),
+        current,
+      ),
+    );
     // Only the drained frames are acknowledged; anything queued after this
     // render stays for the next one.
     connection.drainEvents(foldedThrough.current);
@@ -874,12 +890,20 @@ export function ChatScreen({
   onFocusConsumed,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
+  /**
+   * When the running turn started being watched; a restored turn has no start.
+   * A ref rather than state: the fold loop reads it to vouch for frames, and
+   * the once-a-second tick is what actually redraws the count.
+   */
+  const runStartedAtRef = useRef<number | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
   const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
     connection,
     snapshot,
     runtimeId,
     runtime?.base,
     runtime?.sessionPath,
+    runStartedAtRef,
   );
   const { todos, state: todosState } = useTodos(
     runtime?.base,
@@ -930,6 +954,8 @@ export function ChatScreen({
   const [plan, setPlan] = useState<boolean | undefined>(undefined);
   /** The model `/status` names, until a live turn names one in the transcript. */
   const [statusModel, setStatusModel] = useState("");
+  /** The reasoning-effort level `/status` names, empty for the kernel's own choice. */
+  const [statusEffort, setStatusEffort] = useState("");
   const [planBusy, setPlanBusy] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   const [headMenu, setHeadMenu] = useState(false);
@@ -983,6 +1009,7 @@ export function ChatScreen({
       setPlan(result.status.plan);
       setApproval(result.status.toolApprovalMode ?? "");
       if (result.status.modelRef) setStatusModel(result.status.modelRef);
+      if (result.status.effort) setStatusEffort(result.status.effort);
       if (!result.status.running) return;
       setTranscript((current) => (current.running ? current : { ...current, running: true }));
     });
@@ -1012,6 +1039,22 @@ export function ChatScreen({
     () => buildDisplay(transcript.rows, transcript.running, fold),
     [transcript.rows, transcript.running, fold],
   );
+
+  // The working-time line: seconds since the running turn was first seen
+  // streaming here. A turn restored by a reload has no start on this phone —
+  // the wire carries no turn-start wall clock — so it shows without a count.
+  // The ref doubles as the fold loop's vouch: frames folded while a start is
+  // recorded are frames the phone watched land, and only those get a clock.
+  useEffect(() => {
+    if (streaming && runStartedAtRef.current === null) runStartedAtRef.current = Date.now();
+    if (!streaming && runStartedAtRef.current !== null) runStartedAtRef.current = null;
+  }, [streaming]);
+  useEffect(() => {
+    if (!streaming) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [streaming]);
+
   // The pane is on screen; its answer ticking as it grows is the "still
   // working" cue a locked pocket cannot show.
   useStreamHaptics(transcript.rows);
@@ -1885,6 +1928,14 @@ export function ChatScreen({
         </div>
       ) : null}
 
+      {streaming ? (
+        <div className="run-status" role="status">
+          {runStartedAtRef.current !== null
+            ? `已工作 ${Math.max(1, Math.floor((nowTick - runStartedAtRef.current) / 1000))} 秒`
+            : "正在运行"}
+        </div>
+      ) : null}
+
       <div className="composer">
         <input
           ref={imageRef}
@@ -2018,7 +2069,9 @@ export function ChatScreen({
               aria-label="切换模型"
               title="切换模型"
             >
-              {shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}
+              {`${shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}${
+                statusEffort ? ` · ${effortDisplayName(statusEffort)}` : ""
+              }`}
             </button>
           )}
           {streaming ? (
@@ -2055,8 +2108,12 @@ export function ChatScreen({
           onClose={() => setModelSheet(false)}
           onSwitched={(ref) => {
             setPickedModel(ref);
+            // The old effort claim does not survive a model switch unverified:
+            // the chip drops it until a level is picked on the new model.
+            setStatusEffort("");
             setModelSheet(false);
           }}
+          onEffortChange={setStatusEffort}
         />
       ) : null}
 

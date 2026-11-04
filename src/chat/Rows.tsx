@@ -12,6 +12,7 @@ import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } f
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { SurfaceCard } from "./SurfaceCard";
+import { clockText } from "../app/format";
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -97,6 +98,7 @@ export function AssistantBubble({ row }: { row: AssistantRow }) {
         {!row.streaming ? (
           <div className="bubble-actions">
             <CopyButton text={row.text} label="复制回答" />
+            {row.finishedAt ? <span className="bubble-at">{clockText(row.finishedAt)}</span> : null}
           </div>
         ) : null}
       </div>
