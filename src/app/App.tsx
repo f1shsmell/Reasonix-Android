@@ -433,6 +433,12 @@ export function App() {
         });
       }
       setActionError("");
+      // The pane was created a moment ago and is not in the snapshot yet, so
+      // the home screen's "正在运行" block would not know about it until the
+      // next timer tick. Refreshing here is what makes a dispatched task
+      // visible the moment it starts. Not awaited: the dispatch already
+      // succeeded, and the row arrives through the subscription.
+      void connection.refresh();
       reloadTree();
       return { ok: true };
     },

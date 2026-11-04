@@ -917,6 +917,33 @@ describe("App", () => {
     expect(container.querySelector('[data-testid="chat"]')).toBeNull();
   });
 
+  it("refreshes the pane snapshot after a dispatch, so home can show it", async () => {
+    // A dispatched pane is created and submitted without opening the chat, so
+    // nothing else pulls it into the snapshot: home's "正在运行" block reads
+    // `snapshot.runtimes`, and the 30 s watch timer is the only other source.
+    // Without this read the task a person just dispatched is invisible for
+    // half a minute, which reads as "the send did nothing".
+    await renderApp();
+    // The connection machine refreshes while it connects; measure only what
+    // the dispatch adds.
+    connectionMock.refresh.mockClear();
+
+    act(() => {
+      (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
+    });
+    const sheet = container.querySelector(".dispatch-sheet");
+    const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+    act(() => typeIntoArea(prompt, "跑一下测试"));
+    act(() => click("派发"));
+    await settle();
+
+    expect(connectionMock.refresh).toHaveBeenCalled();
+    // It has to be the dispatch that asked: a read that started before the
+    // submit cannot carry the pane the submit created.
+    const read = connectionMock.refresh.mock.invocationCallOrder[0] ?? Infinity;
+    expect(read).toBeGreaterThan(vi.mocked(submit).mock.invocationCallOrder[0] ?? -1);
+  });
+
   it("starts a new conversation from the home plus after choosing a project", async () => {
     await renderApp();
     click("新建会话");
