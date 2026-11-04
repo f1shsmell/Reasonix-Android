@@ -8,6 +8,8 @@ import {
   probeUpstream,
   ProxyError,
   readProxyConfig,
+  studioAppUrl,
+  studioWebUrl,
 } from "./server";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -54,6 +56,51 @@ describe("parseServerLink", () => {
   it("refuses a link that is not a server", () => {
     expect(parseServerLink("ftp://192.168.5.2:8791/")).toBeNull();
     expect(parseServerLink("not a url")).toBeNull();
+  });
+});
+
+describe("studio URLs", () => {
+  const lan = {
+    mode: "lan" as const,
+    origin: "http://192.168.5.3:55716",
+    studioUrl: "http://127.0.0.1:8788/",
+  };
+  const cloud = {
+    mode: "relay" as const,
+    origin: "",
+    relayDevice: "dev-1",
+  };
+
+  it("opens a LAN page through the loopback proxy in the app", () => {
+    // A bare WebView on the kernel address loses the VPN detour and the
+    // pairing cookie; the in-app door must use the proxy's own address.
+    expect(studioAppUrl(lan)).toBe("http://127.0.0.1:8788/");
+  });
+
+  it("keeps the real kernel address for the system browser", () => {
+    // The browser has no proxy cookie and cannot reach 127.0.0.1 of the app.
+    expect(studioWebUrl(lan)).toBe("http://192.168.5.3:55716");
+  });
+
+  it("falls back to the kernel address when the proxy publishes none", () => {
+    // An older proxy or a browser dev session has no studioUrl field.
+    expect(studioAppUrl({ mode: "lan", origin: "http://192.168.5.3:55716" })).toBe(
+      "http://192.168.5.3:55716",
+    );
+  });
+
+  it("never sends a cloud door to the loopback proxy", () => {
+    expect(studioAppUrl(cloud)).toBe(
+      "https://reasonix.io/remote/?device=dev-1",
+    );
+    expect(studioWebUrl(cloud)).toBe(
+      "https://reasonix.io/remote/?device=dev-1",
+    );
+  });
+
+  it("is empty when there is no link to open", () => {
+    expect(studioAppUrl(null)).toBe("");
+    expect(studioWebUrl(null)).toBe("");
   });
 });
 

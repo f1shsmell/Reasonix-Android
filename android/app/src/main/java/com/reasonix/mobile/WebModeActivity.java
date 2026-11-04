@@ -27,10 +27,16 @@ import android.widget.TextView;
  * The kernel serves the whole Studio SPA on its port, and the phone-browser
  * path ("设备访问" share QR) is that same page with no native bridge at all —
  * so this activity is deliberately a plain WebView: the page owns its
- * connection, its SSE stream and its own reconnection, and the app's proxy and
- * link machine stay out of its way. What the pairing left behind travels with
- * the CookieManager, which every WebView in this process shares; a lost cookie
- * falls back to the page's own connect screen, exactly like a browser.
+ * connection, its SSE stream and its own reconnection, and the app's link
+ * machine stays out of its way.
+ *
+ * For a LAN door the page is loaded through the loopback proxy instead of
+ * straight at the kernel. A direct WebView loses the three things the proxy
+ * supplies: the Wi-Fi-bound connection that survives an active VPN, the
+ * pairing cookie, and the kernel's own CSRF Origin. With a VPN owning the
+ * default route a direct load simply times out ("打不开完整界面"). The proxy
+ * recognises this WebView by its UA marker and forwards everything to the
+ * kernel rather than serving the app's own bundle.
  *
  * Only the paired (or share) origin runs here. Anything else — the account
  * sign-in page, an external link in the transcript — is handed to the browser
@@ -42,16 +48,28 @@ public class WebModeActivity extends Activity {
     private Button retryButton;
     private ProgressBar progress;
     private String origin;
+    private boolean viaProxy;
+    /** The real kernel origin, when viaProxy; absolute self-links are rewritten. */
+    private String kernelOrigin;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        String url = getIntent().getStringExtra("url");
+        Intent source = getIntent();
+        String url = source.getStringExtra("url");
         if (!Urls.isWebUrl(url)) {
             finish();
             return;
         }
         origin = originOf(url);
+        viaProxy = source.getBooleanExtra("viaProxy", false);
+        kernelOrigin = source.getStringExtra("origin");
+        if (viaProxy) {
+            // The proxy refuses sockets without its HttpOnly loopback cookie.
+            // MainActivity installed it for the app WebView; this is a second
+            // WebView in the same process, and re-installing is idempotent.
+            LoopbackProxy.installWebViewCookie(getApplicationContext());
+        }
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.WHITE);
@@ -65,6 +83,15 @@ public class WebModeActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        if (viaProxy) {
+            // The marker tells the proxy this is the Studio page, not the app
+            // bundle: static paths must be forwarded to the kernel, not served
+            // from the APK's assets.
+            String agent = settings.getUserAgentString();
+            settings.setUserAgentString(
+                    (agent == null || agent.isEmpty() ? "Mozilla/5.0" : agent)
+                            + " " + LoopbackProxy.STUDIO_UA_MARKER);
+        }
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -73,6 +100,20 @@ public class WebModeActivity extends Activity {
                 // Another host is not ours to swallow: the account sign-in and
                 // shared links go to the browser, like a tap in Chrome would.
                 if (!Urls.isWebUrl(target)) return true;
+                if (viaProxy && kernelOrigin != null && !kernelOrigin.isEmpty()) {
+                    // The SPA can name its own host absolutely. Loaded as-is
+                    // that would put the WebView back on the LAN address and
+                    // lose the proxy's VPN detour; keep it on loopback. The
+                    // boundary check also covers "?query" and "#fragment"
+                    // forms, which carry no slash after the authority.
+                    String base = kernelOrigin.endsWith("/")
+                            ? kernelOrigin.substring(0, kernelOrigin.length() - 1) : kernelOrigin;
+                    String path = LoopbackProxy.loopbackPath(base, target);
+                    if (path != null) {
+                        view.loadUrl(LoopbackProxy.LOOPBACK_ORIGIN + path);
+                        return true;
+                    }
+                }
                 String host = originOf(target);
                 if (host.equals(origin)) return false;
                 try {
@@ -122,7 +163,7 @@ public class WebModeActivity extends Activity {
         retryButton.setVisibility(View.GONE);
         retryButton.setOnClickListener(v -> {
             showCard(false);
-            web.loadUrl(getIntent().getStringExtra("url"));
+            web.loadUrl(source.getStringExtra("url"));
         });
         retryWrap.addView(retryButton);
         FrameLayout.LayoutParams retryParams = new FrameLayout.LayoutParams(

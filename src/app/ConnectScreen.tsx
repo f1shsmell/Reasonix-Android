@@ -39,7 +39,7 @@ import {
   ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
-import { disconnectProxy, setNetworkPolicy, studioWebUrl } from "../net/server";
+import { disconnectProxy, setNetworkPolicy, studioAppUrl, studioWebUrl } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
@@ -1135,12 +1135,24 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         : "局域网";
   /** The computer's own Studio page, for opening the full desktop UI. */
   const webUrl = studioWebUrl(config, loadRelayDevice());
-  const openWebUrl = (url: string) => {
+  /**
+   * The in-app WebView loads a LAN page through the loopback proxy: that is
+   * what survives an active VPN and carries the pairing cookie. A bare
+   * WebView on the kernel address has neither and times out with "打不开".
+   */
+  const appUrl = studioAppUrl(config, loadRelayDevice());
+  const viaProxy = config?.mode !== "relay" && Boolean(config?.studioUrl?.trim());
+  const openWebUrl = () => {
     setError("");
-    void WebMode.open({ url }).catch(() => {
+    void WebMode.open({
+      url: appUrl,
+      viaProxy,
+      origin: config?.origin ?? "",
+    }).catch(() => {
       // No native activity to carry it (a browser dev session, say): the
-      // browser still opens it, which is the same page by another door.
-      void Browser.open({ url }).catch(() => setError("打不开完整界面。"));
+      // browser still opens the real page by another door. It cannot reach the
+      // loopback address, so the fallback is webUrl, not appUrl.
+      void Browser.open({ url: webUrl }).catch(() => setError("打不开完整界面。"));
     });
   };
 
@@ -1232,7 +1244,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               <button
                 type="button"
                 className="setting action"
-                onClick={() => openWebUrl(webUrl)}
+                onClick={() => openWebUrl()}
                 disabled={busy !== ""}
               >
                 <span className="setting-main">

@@ -18,6 +18,9 @@ public class WebModePlugin extends Plugin {
         }
         Intent intent = new Intent(getActivity(), WebModeActivity.class);
         intent.putExtra("url", url);
+        intent.putExtra("viaProxy", Boolean.TRUE.equals(call.getBoolean("viaProxy")));
+        String origin = call.getString("origin");
+        intent.putExtra("origin", origin == null ? "" : origin);
         getActivity().startActivity(intent);
         call.resolve();
     }

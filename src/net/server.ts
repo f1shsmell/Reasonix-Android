@@ -46,6 +46,11 @@ export interface ProxyConfig {
   /** `relay` means kernel requests go through the account relay, not a LAN origin. */
   mode?: "lan" | "relay";
   relayDevice?: string;
+  /**
+   * The loopback proxy's own origin, for the in-app full Studio WebView.
+   * Empty (or absent) on a cloud door and in a browser dev session.
+   */
+  studioUrl?: string;
   /** A VPN/HTTP proxy is active on this phone. */
   vpn?: boolean;
   /** A non-VPN Wi-Fi or Ethernet interface is available for a LAN share. */
@@ -448,6 +453,28 @@ export function studioWebUrl(
     return device ? `https://reasonix.io/remote/?device=${encodeURIComponent(device)}` : "";
   }
   return config?.origin?.trim() || "";
+}
+
+/**
+ * The URL for the **in-app** full Studio WebView.
+ *
+ * A LAN door has to go through the loopback proxy, not straight at the kernel:
+ * the proxy is what binds the request to the Wi-Fi network when a VPN owns the
+ * default route, adds the pairing cookie, and speaks the kernel's CSRF Origin.
+ * A bare WebView on the kernel address has none of that and fails whenever a
+ * tunnel is active — the "打不开完整界面" case. The proxy publishes its own
+ * address in `studioUrl`; cloud doors and browser dev sessions keep the real
+ * address (they have no loopback proxy to talk to).
+ *
+ * The system browser is different again: it has no proxy cookie, so it must
+ * keep using `studioWebUrl()` even on a LAN door.
+ */
+export function studioAppUrl(
+  config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice" | "studioUrl"> | null,
+  fallbackDevice?: string | null,
+): string {
+  if (config?.mode === "relay") return studioWebUrl(config, fallbackDevice);
+  return config?.studioUrl?.trim() || config?.origin?.trim() || "";
 }
 
 /**
