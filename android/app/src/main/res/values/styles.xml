@@ -18,7 +18,12 @@
              of laying it under the bar, so whatever this paints is a strip the
              page cannot reach. Matching the page background removes the seam.
              The icons are a separate switch: on the light background they have
-             to go dark to stay visible. Both values follow the system theme. -->
+             to go dark to stay visible. Both values follow the system theme.
+             windowBackground matters too: Capacitor's SystemBars plugin copies
+             this attribute onto the decor view on every bridge init, so
+             leaving it at the AppCompat/splash default painted a second,
+             darker band that statusBarColor alone could not reach. -->
+        <item name="android:windowBackground">@color/app_background</item>
         <item name="android:statusBarColor">@color/app_background</item>
         <item name="android:windowLightStatusBar">@bool/status_bar_icons_dark</item>
     </style>
