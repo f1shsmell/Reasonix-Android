@@ -22,6 +22,12 @@ export interface TreeRequest {
   limit?: number;
   /** A larger window for one project, after "show more". */
   limits?: Record<string, number>;
+  /**
+   * Which rows a project lists. The default `active` is the reading surface:
+   * an archived conversation is one the desktop put away. `archived` is the
+   * phone's way back in — the per-project counts already say how many wait.
+   */
+  scope?: "active" | "archived";
 }
 
 export type TreeRead =
@@ -107,13 +113,15 @@ function project(value: unknown): TreeProject | null {
 /**
  * Read the tree.
  *
- * `scope=active` is deliberate: the phone is a reading surface, and an
- * archived conversation is one the desktop decided to put away. The counts the
- * kernel sends still describe every row, so a project can say how many it
- * holds without listing them.
+ * The default scope is `active`: the phone's everyday surface is what the
+ * desktop keeps in play, and an archived conversation is one the desktop
+ * decided to put away — it comes back through `scope: "archived"`, which the
+ * project page offers behind the per-project count. Either way the counts the
+ * kernel sends describe every row, so a project can say how many it holds
+ * without listing them.
  */
 export async function loadTree(request: TreeRequest = {}): Promise<TreeRead> {
-  const query = new URLSearchParams({ scope: "active" });
+  const query = new URLSearchParams({ scope: request.scope ?? "active" });
   query.set("limit", String(request.limit ?? DEFAULT_TREE_LIMIT));
   if (request.limits && Object.keys(request.limits).length > 0) {
     query.set("limits", JSON.stringify(request.limits));

@@ -21,8 +21,9 @@
 import { useState } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import { openRuntime } from "../net/workspaces";
-import { removeSession, renameSession, setPinned } from "../net/pin";
+import { moveSessionTo, removeSession, renameSession, setArchived, setPinned } from "../net/pin";
 import type { TreeWrite } from "../net/pin";
+import { loadTree } from "../net/tree";
 import type { TreeProject, TreeSession, TreeSessionChild } from "../wire/tree";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
@@ -249,6 +250,13 @@ export function SessionList({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [menu, setMenu] = useState<TreeSession | null>(null);
+  /** Whether the open menu belongs to a row of the archive, not the active list. */
+  const [menuArchived, setMenuArchived] = useState(false);
+  /** The archive, once the person has asked for it: null means "not shown". */
+  const [archiveList, setArchiveList] = useState<{ loading: boolean; sessions: TreeSession[] } | null>(
+    null,
+  );
+  const [archiveError, setArchiveError] = useState("");
   /** The rows whose fold is open, by transcript path. */
   const [spread, setSpread] = useState<Set<string>>(new Set());
 
@@ -282,6 +290,52 @@ export function SessionList({
     const result = await removeSession(session.path);
     if (result.ok) onRefresh();
     return result;
+  };
+
+  const moveTo = async (session: TreeSession, target: string): Promise<TreeWrite> => {
+    const result = await moveSessionTo(session.path, target);
+    if (result.ok) {
+      onRefresh();
+      // The moved row may have been one of the archived ones; both lists can
+      // have changed, so the next time the archive is opened it re-reads.
+      setArchiveList(null);
+    }
+    return result;
+  };
+
+  const toggleArchive = async (session: TreeSession): Promise<TreeWrite> => {
+    const result = await setArchived(session.path, menuArchived !== true);
+    if (result.ok) {
+      onRefresh();
+      // An archive takes the row out of the active lists; a restore puts it
+      // back. Either way the archive's own list is stale the moment it lands.
+      setArchiveList(null);
+    }
+    return result;
+  };
+
+  /**
+   * The archived rows of this project, fetched on demand.
+   *
+   * One scoped read answers every project; the phone keeps only its own. A
+   * repeat visit re-reads rather than caching, because archives change from
+   * both sides — the desktop archives, the phone restores.
+   */
+  const toggleArchiveList = async () => {
+    if (archiveList !== null) {
+      setArchiveList(null);
+      return;
+    }
+    setArchiveList({ loading: true, sessions: [] });
+    setArchiveError("");
+    const result = await loadTree({ scope: "archived", limit: 60 });
+    if (!result.ok) {
+      setArchiveList(null);
+      setArchiveError(result.code);
+      return;
+    }
+    const own = result.projects.find((entry) => entry.root === project.root);
+    setArchiveList({ loading: false, sessions: own?.sessions ?? [] });
   };
 
   const toggleFold = (path: string) => {
@@ -348,7 +402,10 @@ export function SessionList({
                 childBusy={busy}
                 expanded={spread.has(session.path)}
                 onOpen={() => void open(session)}
-                onMenu={() => setMenu(session)}
+                onMenu={() => {
+                  setMenuArchived(false);
+                  setMenu(session);
+                }}
                 onToggleFold={() => toggleFold(session.path)}
                 onOpenChild={(child) => void open(child)}
               />
@@ -365,6 +422,51 @@ export function SessionList({
             还有 {hidden} 个更早的会话
           </button>
         ) : null}
+
+        {(project.archived ?? 0) > 0 || archiveList !== null ? (
+          <>
+            <div className="section-head">
+              <h2>已归档</h2>
+              <button
+                type="button"
+                className="more inline"
+                aria-expanded={archiveList !== null}
+                onClick={() => void toggleArchiveList()}
+              >
+                {archiveList === null
+                  ? `看 ${project.archived} 个`
+                  : archiveList.loading
+                    ? "读取中…"
+                    : "收起"}
+              </button>
+            </div>
+            {archiveError ? <div className="notice error">{archiveError}</div> : null}
+            {archiveList !== null && !archiveList.loading ? (
+              archiveList.sessions.length === 0 ? (
+                <div className="meta archived-empty">没有已归档的会话。</div>
+              ) : (
+                <ul className="list grouped">
+                  {archiveList.sessions.map((session) => (
+                    <SessionRow
+                      key={session.path}
+                      session={session}
+                      busy={busy === session.path}
+                      childBusy={busy}
+                      expanded={spread.has(session.path)}
+                      onOpen={() => void open(session)}
+                      onMenu={() => {
+                        setMenuArchived(true);
+                        setMenu(session);
+                      }}
+                      onToggleFold={() => toggleFold(session.path)}
+                      onOpenChild={(child) => void open(child)}
+                    />
+                  ))}
+                </ul>
+              )
+            ) : null}
+          </>
+        ) : null}
       </div>
 
       {menu ? (
@@ -373,6 +475,9 @@ export function SessionList({
           projectName={project.name}
           when={relativeTime(menu.lastActiveAt)}
           pinned={menu.pinned === true}
+          archived={menuArchived}
+          projects={tree.projects}
+          projectRoot={project.root}
           busy={busy === menu.path}
           deleteWarning={deleteWarning(menu)}
           onClose={() => setMenu(null)}
@@ -383,6 +488,8 @@ export function SessionList({
           }}
           onTogglePin={() => togglePin(menu)}
           onRename={(title) => rename(menu, title)}
+          onMoveTo={(target) => moveTo(menu, target)}
+          onToggleArchive={() => toggleArchive(menu)}
           onRemove={() => remove(menu)}
         />
       ) : null}
