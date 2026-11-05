@@ -1,5 +1,6 @@
 package com.reasonix.mobile;
 
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
@@ -22,7 +23,7 @@ public class MainActivity extends BridgeActivity {
         // The WebView loads http://127.0.0.1:8788, so the proxy must be
         // listening before Capacitor starts its bridge, and the loopback
         // cookie must already be in this app's cookie jar.
-        LoopbackProxy.start(getApplicationContext());
+        boolean proxyStarted = LoopbackProxy.start(getApplicationContext());
         LoopbackProxy.installWebViewCookie(getApplicationContext());
         registerPlugin(LoginPlugin.class);
         registerPlugin(SpeechPlugin.class);
@@ -50,6 +51,28 @@ public class MainActivity extends BridgeActivity {
         // with the *system* theme. A warm start has a cached page appearance;
         // put it back after the bridge has had its turn.
         ThemeBarPlugin.reapply(this);
+        if (!proxyStarted) showProxyFailure();
+    }
+
+    /**
+     * A blank WebView with no explanation reads as a broken build. The usual
+     * cause is another process holding the fixed loopback port; retry after
+     * it goes away rather than asking for a reinstall.
+     */
+    private void showProxyFailure() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.proxy_failed_title)
+                .setMessage(R.string.proxy_failed_message)
+                .setPositiveButton(R.string.proxy_failed_retry, (dialog, which) -> {
+                    if (!LoopbackProxy.start(getApplicationContext())) {
+                        showProxyFailure();
+                        return;
+                    }
+                    WebView view = getBridge() == null ? null : getBridge().getWebView();
+                    if (view != null) view.reload();
+                })
+                .setNegativeButton(R.string.proxy_failed_exit, (dialog, which) -> finish())
+                .show();
     }
 
     @Override

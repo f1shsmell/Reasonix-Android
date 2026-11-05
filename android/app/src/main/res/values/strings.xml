@@ -4,4 +4,8 @@
     <string name="title_activity_main">Reasonix</string>
     <string name="package_name">com.reasonix.mobile</string>
     <string name="custom_url_scheme">com.reasonix.mobile</string>
+    <string name="proxy_failed_title">无法启动本地连接</string>
+    <string name="proxy_failed_message">本机端口 8788 无法监听，界面无法加载。关闭可能占用它的应用后重试。</string>
+    <string name="proxy_failed_retry">重试</string>
+    <string name="proxy_failed_exit">退出</string>
 </resources>
