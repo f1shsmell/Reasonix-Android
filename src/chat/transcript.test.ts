@@ -106,6 +106,68 @@ describe("transcript", () => {
     }
   });
 
+  it("settles the answer a tool call pushed out of the last row", () => {
+    // The answer's own tool call lands between its deltas and the frame that
+    // settles it. Reading only the last row drew that answer twice: once as
+    // the deltas, once as a settled copy below the tool card.
+    const result = feed([
+      { kind: "turn_started", text: "q" },
+      { kind: "text", text: "PR 描述已写好，" },
+      { kind: "text", text: "现在应用到 #128。" },
+      { kind: "tool_dispatch", tool: { id: "c1", name: "bash", args: "{}" } },
+      { kind: "tool_result", tool: { id: "c1", name: "bash", output: "ok" } },
+      { kind: "message", text: "PR 描述已写好，现在应用到 #128。" },
+      { kind: "turn_done" },
+    ]);
+
+    expect(result.rows.map((row) => row.kind)).toEqual(["user", "assistant", "tool"]);
+    const answer = result.rows[1];
+    if (answer?.kind === "assistant") {
+      expect(answer.text).toBe("PR 描述已写好，现在应用到 #128。");
+      expect(answer.streaming).toBe(false);
+    }
+  });
+
+  it("keeps two answers apart when a tool call separates them", () => {
+    // Each settled answer closes its own bubble, so the next segment opens a
+    // new one instead of overwriting the first.
+    const result = feed([
+      { kind: "turn_started", text: "q" },
+      { kind: "text", text: "first" },
+      { kind: "message", text: "first" },
+      { kind: "tool_dispatch", tool: { id: "c1", name: "bash" } },
+      { kind: "tool_result", tool: { id: "c1", name: "bash", output: "ok" } },
+      { kind: "text", text: "second" },
+      { kind: "message", text: "second" },
+      { kind: "turn_done" },
+    ]);
+
+    const answers = result.rows.filter((row) => row.kind === "assistant");
+    expect(answers.map((row) => (row.kind === "assistant" ? row.text : ""))).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("never settles an answer into the turn before it", () => {
+    // No open bubble in this turn: the message opens one after the user row
+    // rather than rewriting the previous turn's answer.
+    const result = feed([
+      { kind: "turn_started", text: "first q" },
+      { kind: "text", text: "first answer" },
+      { kind: "message", text: "first answer" },
+      { kind: "turn_done" },
+      { kind: "turn_started", text: "second q" },
+      { kind: "message", text: "second answer" },
+    ]);
+
+    const answers = result.rows.filter((row) => row.kind === "assistant");
+    expect(answers.map((row) => (row.kind === "assistant" ? row.text : ""))).toEqual([
+      "first answer",
+      "second answer",
+    ]);
+  });
+
   it("pairs a tool result with its dispatch by id", () => {
     const result = feed([
       { kind: "tool_dispatch", tool: { id: "c1", name: "read_file", args: '{"p":"a"}' } },
