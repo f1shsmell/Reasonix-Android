@@ -51,6 +51,8 @@ public class WebModeActivity extends Activity {
     private boolean viaProxy;
     /** The real kernel origin, when viaProxy; absolute self-links are rewritten. */
     private String kernelOrigin;
+    /** This phone's WebView cannot read the Studio palette; repaint it myself. */
+    private boolean needsCompat;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,6 +85,14 @@ public class WebModeActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        {
+            // Read the phone's own WebView version before any marker is added:
+            // the Studio palette is written in oklch()/color-mix(), which only
+            // Chrome 111 understands. This is the only place the real build is
+            // visible — the page reports its own UA, not its engine.
+            needsCompat = StudioCompat.needsCompat(
+                    StudioCompat.chromeMajor(settings.getUserAgentString()));
+        }
         if (viaProxy) {
             // The marker tells the proxy this is the Studio page, not the app
             // bundle: static paths must be forwarded to the kernel, not served
@@ -126,8 +136,17 @@ public class WebModeActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                applyCompat(view);
                 progress.setVisibility(View.GONE);
                 CookieManager.getInstance().flush();
+            }
+
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                // Earlier than onPageFinished: the page is painted, its images
+                // and fonts may still be arriving. Repaint the palette now so
+                // the first thing a person sees is already legible.
+                applyCompat(view);
             }
 
             @Override
@@ -187,6 +206,26 @@ public class WebModeActivity extends Activity {
         // Returning from another app may have let the system repaint the
         // window; put the app's own appearance back.
         ThemeBarPlugin.reapply(this);
+    }
+
+    /**
+     * Repaint the page's palette on a WebView that cannot read oklch().
+     *
+     * Runs on both onPageCommitVisible and onPageFinished, so the sheet is
+     * installed once per document and the second call is a no-op. The CSS
+     * carries no quotes, which is what lets it sit inside a single-quoted JS
+     * string without escaping.
+     */
+    private void applyCompat(WebView view) {
+        if (!needsCompat) return;
+        String script = "(function(){"
+                + "if(document.getElementById('rx-webview-compat'))return;"
+                + "var s=document.createElement('style');"
+                + "s.id='rx-webview-compat';"
+                + "s.appendChild(document.createTextNode('" + StudioCompat.css() + "'));"
+                + "(document.head||document.documentElement).appendChild(s);"
+                + "})()";
+        view.evaluateJavascript(script, null);
     }
 
     private void showCard(boolean shown) {
