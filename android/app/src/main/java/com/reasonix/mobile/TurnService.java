@@ -26,6 +26,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -531,36 +532,46 @@ public class TurnService extends Service {
             return;
         }
 
-        Set<String> seen = new HashSet<>();
-        for (RuntimeList.Row row : snapshot.runtimes) {
-            seen.add(row.id);
-            PaneWatch watch = watches.get(row.id);
-            if (watch == null) {
-                watches.put(row.id, new PaneWatch(
-                        row.id, row.id, row.base, row.root, row.title, "", "", row.readOnly));
-            } else {
-                watch.update(row.base, row.root, row.title);
-                watch.readOnly = row.readOnly;
+        CloudSweep.Counts counts = CloudSweep.apply(snapshot, new CloudSweep.Sink() {
+            @Override
+            public PaneWatch get(String runtimeId) {
+                return watches.get(runtimeId);
             }
-        }
-        for (String id : new ArrayList<>(watches.keySet())) {
-            if (seen.contains(id)) continue;
-            PaneWatch gone = watches.remove(id);
-            if (gone != null) finishWatch(gone);
-        }
-        int asks = 0;
-        for (PaneWatch watch : watches.values()) {
-            String status = snapshot.statuses.get(watch.runtime);
-            if (status == null) continue;
-            AskStatus parsed = AskStatus.parse(status);
-            asks += parsed.count;
-            applyStatus(watch, parsed);
-        }
-        cloudLastRuntimes = snapshot.runtimes.size();
-        cloudLastStatuses = snapshot.statuses.size();
-        cloudLastAsks = asks;
-        Log.d(TAG, "cloud sweep ok: runtimes=" + cloudLastRuntimes
-                + " statuses=" + cloudLastStatuses + " asks=" + asks);
+
+            @Override
+            public PaneWatch create(RuntimeList.Row row) {
+                PaneWatch watch = new PaneWatch(
+                        row.id, row.id, row.base, row.root, row.title, "", "", row.readOnly);
+                watches.put(row.id, watch);
+                return watch;
+            }
+
+            @Override
+            public void update(PaneWatch watch, RuntimeList.Row row) {
+                watch.update(row.base, row.root, row.title);
+            }
+
+            @Override
+            public void remove(PaneWatch watch) {
+                watches.remove(watch.key);
+                finishWatch(watch);
+            }
+
+            @Override
+            public Collection<PaneWatch> watches() {
+                return watches.values();
+            }
+
+            @Override
+            public void applyStatus(PaneWatch watch, AskStatus status) {
+                TurnService.this.applyStatus(watch, status);
+            }
+        });
+        cloudLastRuntimes = counts.runtimes;
+        cloudLastStatuses = counts.statuses;
+        cloudLastAsks = counts.asks;
+        Log.d(TAG, "cloud sweep ok: runtimes=" + counts.runtimes
+                + " statuses=" + counts.statuses + " asks=" + counts.asks);
         cloudMisses = 0;
         notePoll(true);
         refreshRunning();
