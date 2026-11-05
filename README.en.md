@@ -100,9 +100,9 @@ cd android && ./gradlew assembleDebug
 
 The artifact lands in `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-**Layout** — `src/app/` app shell and link state machine · `src/chat/` transcript folding and composer · `src/net/` kernel, proxy and relay clients · `android/` Capacitor shell and native plugins · `docs/` handoff notes and rendered screenshots.
+**Layout** — `src/app/` app shell and link state machine · `src/chat/` transcript folding and composer · `src/net/` kernel, proxy and relay clients · `src/native/` Capacitor plugin bridge · `src/wire/` kernel contract types · `src/ui/` design tokens and styles · `android/` Capacitor shell and native plugins · `fixtures/wire/` contract samples shared by Vitest and JUnit · `docs/` handoff notes and rendered screenshots.
 
-**Releases** — `ci.yml` runs type checking, tests and a debug APK on every push and pull request (an artifact, not a release); `release.yml` runs only on a `vX.Y.Z` tag, validates the tag, release notes and version numbers, then builds and signs the package. See [RELEASING.md](RELEASING.md).
+**Releases** — `ci.yml` runs lint, type checking, tests and a debug APK on every push and pull request (an artifact, not a release); `release.yml` runs only on a `vX.Y.Z` tag, validates the tag, release notes and version numbers, then builds and signs the package. See [RELEASING.md](RELEASING.md).
 
 More documentation: [handoff and decisions](docs/HANDOFF.md), [self-hosting and troubleshooting](docs/SELF_HOST.md), [known limitations](docs/KNOWN_LIMITATIONS.md), [release process](RELEASING.md).
 

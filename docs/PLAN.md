@@ -71,16 +71,17 @@ The phone will routinely be months behind the desktop. Therefore:
 ```
 src/
   app/          screens and navigation
-  chat/         transcript, bubbles, streaming
-  cards/        tool call, approval, question, todo
-  wire/         types mirrored from the desktop port, and a decoder
+  chat/         transcript, cards, composer, streaming
   net/          connection, SSE client, reconnect policy, token storage
+  native/       Capacitor plugin bridge
+  wire/         types mirrored from the desktop port, and a decoder
   ui/           the phone design system: no Mantine, no desktop components
+fixtures/wire/  kernel-answer samples shared by Vitest and JUnit
 ```
 
-`wire/` is generated-once-then-maintained type declarations. It is not imported
-from the desktop tree at build time: a phone build must not break because the
-desktop branch moved.
+`wire/` is maintained by hand, not imported from the desktop tree at build
+time: a phone build must not break because the desktop branch moved. The
+fixtures under `fixtures/wire/` are the one copy both languages parse.
 
 ## Milestones
 

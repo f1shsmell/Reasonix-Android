@@ -39,8 +39,10 @@ cd android
 | `src/chat/` | 对话、流式渲染、输入区 |
 | `src/net/` | 连接、代理、relay、SSE、重连 |
 | `src/native/` | Capacitor 插件桥 |
+| `src/wire/` | 内核契约类型，与 `fixtures/wire/` 共同约束前后端字段 |
 | `src/ui/` | 手机端样式与设计 token |
 | `android/app/src/main/java/` | 原生壳、代理、通知与更新器 |
+| `fixtures/wire/` | Vitest 与 JUnit 共用的契约样本 |
 
 ## 改动规则
 
@@ -66,5 +68,5 @@ cd android
 - 提交信息用 Conventional Commits：`feat(scope): …`、`fix(scope): …`、`chore(release): …`。
 - PR 基于 `main`；评审反馈优先 amend，不要叠加一串修正提交。
 - 冲突用自己的分支 rebase 一次，不制造多轮 force-push。
-- 本地至少跑过：`npm run typecheck`、`npm test`、`./gradlew testDebugUnitTest`；
-  改动涉及原生时再跑 `assembleDebug` 或 `connectedDebugAndroidTest`。
+- 本地至少跑过：`npm run lint`、`npm run typecheck`、`npm test`、`./gradlew testDebugUnitTest`；
+  改动涉及原生时再跑 `lintDebug`、`assembleDebug` 或 `connectedDebugAndroidTest`。
