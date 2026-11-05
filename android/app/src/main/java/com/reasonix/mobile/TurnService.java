@@ -3,7 +3,6 @@ package com.reasonix.mobile;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
@@ -37,17 +36,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static com.reasonix.mobile.TurnNotificationIds.ASK_BASE;
-import static com.reasonix.mobile.TurnNotificationIds.DONE_BASE;
-import static com.reasonix.mobile.TurnNotificationIds.REQUEST_ASK_BASE;
-import static com.reasonix.mobile.TurnNotificationIds.REQUEST_DECISION_BASE;
-import static com.reasonix.mobile.TurnNotificationIds.REQUEST_DONE_BASE;
-import static com.reasonix.mobile.TurnNotificationIds.askId;
-import static com.reasonix.mobile.TurnNotificationIds.askRequest;
-import static com.reasonix.mobile.TurnNotificationIds.doneId;
-import static com.reasonix.mobile.TurnNotificationIds.doneRequest;
-import static com.reasonix.mobile.TurnNotificationIds.sessionBucket;
-import static com.reasonix.mobile.TurnNotificationChannels.CHANNEL_DONE;
 
 /**
  * Keeps the phone informed while agent turns run in a pocket.
@@ -146,7 +134,7 @@ public class TurnService extends Service {
         if (nextCloud != cloud) {
             cloud = nextCloud;
             stopWatching();
-            cancelAsks();
+            TurnNotifications.cancelAsks(this, watches.values());
             watches.clear();
             cloudPending = false;
             cloudGeneration += 1;
@@ -174,7 +162,7 @@ public class TurnService extends Service {
             }
         }
         try {
-            Notification notification = buildRunning();
+            Notification notification = TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudLastCode);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(RUNNING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
             } else {
@@ -207,7 +195,7 @@ public class TurnService extends Service {
         cloudPending = false;
         cloudGeneration += 1;
         stopWatching();
-        cancelAsks();
+        TurnNotifications.cancelAsks(this, watches.values());
         clearCounts();
         decisions.shutdownNow();
         releaseWakeLock();
@@ -466,7 +454,7 @@ public class TurnService extends Service {
      */
     private void dropAsksForResync() {
         if (stopping) return;
-        cancelAsks();
+        TurnNotifications.cancelAsks(this, watches.values());
     }
 
     /** The cloud watcher's last sweep, for the About page's diagnostics. */
@@ -582,9 +570,9 @@ public class TurnService extends Service {
         boolean wasRunning = watch.running;
         watch.running = status.running;
         watch.waiting = !status.empty() && !watch.readOnly;
-        syncAsk(watch, status);
+        TurnNotifications.syncAsk(this, watch, status, stopping);
         if (wasRunning && !status.running && !MainActivity.visible) {
-            notifyFinished(watch);
+            TurnNotifications.finished(this, watch);
         }
     }
 
@@ -780,7 +768,7 @@ public class TurnService extends Service {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
         try {
-            manager.notify(RUNNING_ID, buildRunning());
+            manager.notify(RUNNING_ID, TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudLastCode));
         } catch (RuntimeException e) {
             // A permission revoked mid-turn must not stop the watcher.
             Log.w(TAG, "cannot refresh the running notification", e);
@@ -823,88 +811,6 @@ public class TurnService extends Service {
         return out.toString(StandardCharsets.UTF_8.name());
     }
 
-    private void syncAsk(PaneWatch watch, AskStatus status) {
-        if (stopping) return;
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager == null) return;
-        if (watch.readOnly || status.empty()) {
-            if (!watch.askSignature.isEmpty()) cancelAsk(watch);
-            return;
-        }
-        if (!TurnNotifyPrefs.read(this, TurnNotifyPrefs.KEY_ASK, true)) {
-            // Off means nothing is posted, and an ask already waiting in the
-            // shade is removed: a switch that stopped new prompts but left old
-            // ones on screen would read as broken. The signature is cleared so
-            // turning it back on posts the current prompt again at once.
-            if (!watch.askSignature.isEmpty()) cancelAsk(watch);
-            return;
-        }
-        if (status.signature.equals(watch.askSignature)) return;
-        if (!manager.areNotificationsEnabled()) return;
-        watch.askSignature = status.signature;
-        manager.notify(askId(watch.key), buildAsk(watch, status));
-    }
-
-    private Notification buildAsk(PaneWatch watch, AskStatus status) {
-        String heading = TurnNotificationText.askHeading(status);
-        String body = TurnNotificationText.askBody(status);
-        String session = TurnNotificationText.session(watch);
-        PendingIntent open = openChat(watch, askRequest(watch.key), true);
-        Notification.Builder builder = new Notification.Builder(this, TurnNotifyPrefs.askChannel(this))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(heading)
-                .setContentText(body)
-                .setSubText(session)
-                .setStyle(new Notification.BigTextStyle().bigText(body))
-                .setCategory(Notification.CATEGORY_MESSAGE)
-                .setAutoCancel(true)
-                // A prompt can carry code and paths; the lock screen says only
-                // that something is waiting until the phone is unlocked.
-                .setVisibility(Notification.VISIBILITY_PRIVATE)
-                .setPublicVersion(publicAsk())
-                .setContentIntent(open);
-        boolean showOptions = TurnNotifyPrefs.showOptions(this);
-        AskStatus.Choice choice = watch.readOnly || !showOptions ? null : status.choice;
-        if (choice == null) {
-            builder.addAction(R.drawable.ic_notification, "去回答", open);
-        } else {
-            int added = 0;
-            for (int index = 0; index < choice.options.size() && added < 3; index++) {
-                builder.addAction(
-                        R.drawable.ic_notification,
-                        choice.options.get(index),
-                        decision(watch, choice, index));
-                added++;
-            }
-            if (added < 3) {
-                builder.addAction(R.drawable.ic_notification, "去回答", open);
-            }
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setPriority(Notification.PRIORITY_HIGH);
-        }
-        return builder.build();
-    }
-
-    /** One action on the ask notification; the service settles it. */
-    private PendingIntent decision(PaneWatch watch, AskStatus.Choice choice, int index) {
-        Intent intent = new Intent(this, TurnService.class);
-        intent.setAction(ACTION_DECIDE);
-        intent.putExtra(EXTRA_RUNTIME, watch.runtime);
-        intent.putExtra(EXTRA_DECISION, choice.decisionId);
-        intent.putExtra(EXTRA_QUESTION, choice.questionId);
-        intent.putExtra(EXTRA_APPROVAL, choice.approval);
-        if (choice.approval) {
-            intent.putExtra(EXTRA_ALLOW, index != 1);
-            intent.putExtra(EXTRA_SESSION, index == 2);
-        } else {
-            intent.putExtra(EXTRA_SELECTED, choice.options.get(index));
-        }
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        int request = REQUEST_DECISION_BASE + sessionBucket(watch.key) * 4 + index;
-        return PendingIntent.getService(this, request, intent, flags);
-    }
 
     /**
      * Settle the decision an action named.
@@ -979,39 +885,11 @@ public class TurnService extends Service {
         }
     }
 
-    /** The lock-screen stand-in: no session title, no question text. */
-    private Notification publicAsk() {
-        return new Notification.Builder(this, TurnNotifyPrefs.askChannel(this))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Reasonix")
-                .setContentText("有会话需要你处理")
-                .setContentIntent(openApp())
-                .build();
-    }
-
-    private Notification publicDone() {
-        return new Notification.Builder(this, CHANNEL_DONE)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Reasonix")
-                .setContentText("这一轮已完成")
-                .setContentIntent(openApp())
-                .build();
-    }
-
-    private void cancelAsk(PaneWatch watch) {
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager != null) manager.cancel(askId(watch.key));
-        watch.askSignature = "";
-    }
-
-    private void cancelAsks() {
-        for (PaneWatch watch : new ArrayList<>(watches.values())) cancelAsk(watch);
-    }
 
     /** A pane that left the list: finish its ask and announce its last turn. */
     private void finishWatch(PaneWatch watch) {
-        if (watch.running && !MainActivity.visible) notifyFinished(watch);
-        cancelAsk(watch);
+        if (watch.running && !MainActivity.visible) TurnNotifications.finished(this, watch);
+        TurnNotifications.cancelAsk(this, watch);
     }
 
     private void acquireWakeLock() {
@@ -1077,75 +955,4 @@ public class TurnService extends Service {
     }
 
 
-    private Notification buildRunning() {
-        int running = 0;
-        int waiting = 0;
-        for (PaneWatch watch : watches.values()) {
-            if (watch.running) running++;
-            if (watch.waiting) waiting++;
-        }
-        String text = TurnNotificationText.running(
-                running, waiting, cloud, !watches.isEmpty(),
-                pollFailures >= OFFLINE_AFTER, cloudLastCode);
-        String channel = TurnNotifyPrefs.runningChannel(this, cloud);
-        return new Notification.Builder(this, channel)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Reasonix")
-                .setContentText(text)
-                .setSubText("Reasonix")
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setContentIntent(openApp())
-                .build();
-    }
-
-    private void notifyFinished(PaneWatch watch) {
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (manager == null || !manager.areNotificationsEnabled()) return;
-        // Off means the notification is not posted. A done already in the shade
-        // is left alone: it reports something that really finished, and the
-        // switch is about future turns rather than erasing history.
-        if (!TurnNotifyPrefs.read(this, TurnNotifyPrefs.KEY_DONE, true)) return;
-        String heading = watch.title == null || watch.title.isEmpty() ? "Reasonix" : watch.title;
-        Notification notification = new Notification.Builder(this, CHANNEL_DONE)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(heading)
-                .setContentText("这一轮已完成")
-                .setSubText(watch.peerName.isEmpty() ? "Reasonix" : watch.peerName)
-                .setAutoCancel(true)
-                .setVisibility(Notification.VISIBILITY_PRIVATE)
-                .setPublicVersion(publicDone())
-                .setContentIntent(openChat(watch, doneRequest(watch.key), false))
-                .build();
-        manager.notify(doneId(watch.key), notification);
-    }
-
-    /** Open the conversation that was blocked; fall back to the app. */
-    private PendingIntent openChat(PaneWatch watch, int requestCode, boolean focusAsk) {
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        Intent intent;
-        if (!watch.runtime.isEmpty()) {
-            String link = "reasonix://chat?runtime=" + Uri.encode(watch.runtime)
-                    + "&root=" + Uri.encode(watch.root)
-                    + "&title=" + Uri.encode(watch.title);
-            if (!watch.peer.isEmpty()) {
-                link += "&peer=" + Uri.encode(watch.peer) + "&peerName=" + Uri.encode(watch.peerName);
-            }
-            if (focusAsk) link += "&focus=ask";
-            intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link), this, MainActivity.class);
-        } else {
-            intent = new Intent(this, MainActivity.class);
-        }
-        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        return PendingIntent.getActivity(this, requestCode, intent, flags);
-    }
-
-    private PendingIntent openApp() {
-        Intent intent = new Intent(this, MainActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getActivity(this, 0, intent, flags);
-    }
 }
