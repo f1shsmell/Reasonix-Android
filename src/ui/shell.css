@@ -1,14 +1,22 @@
-/* The system bars are padded from whichever source reports a real inset:
-   `env()` where the WebView answers it, and Capacitor's injected
-   `--safe-area-inset-*` where it does not (Android WebView returns zeroes on
-   many devices). The injected variables only exist while
-   `plugins.SystemBars.insetsHandling` stays "css" — see capacitor.config.ts. */
+/* The system bars are padded from whichever source knows whether the window
+   already did it:
+
+   - WebView < 140: Capacitor pads the WebView down by the inset itself, then
+     injects `--safe-area-inset-top: 0px`. `env()` still reports the real
+     height there, so taking the max() of the two padded twice — one status
+     bar drew a second one's worth of empty space under it.
+   - WebView >= 140 with `viewport-fit=cover`: the WebView is laid under the
+     bar and the injected variable carries the real height.
+
+   In both cases the injected value is the one that knows the answer, so it
+   comes first; `env()` is only the fallback for a bridge that never injected
+   (insetsHandling is not "css"). See capacitor.config.ts. */
 .shell {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding-top: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px));
-  padding-bottom: max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px));
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 .bar {
@@ -964,7 +972,8 @@ pre.frame {
   width: 100%;
   max-height: 76vh;
   overflow-y: auto;
-  padding: 20px 16px calc(18px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
+  padding: 20px 16px
+    calc(18px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;

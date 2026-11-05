@@ -24,7 +24,11 @@ html[data-chat-font="xl"] {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding-top: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px));
+  /* See shell.css: the injected inset already accounts for whether Capacitor
+     padded the WebView itself, so it outranks `env()` rather than losing to
+     it in a max(). The bottom is left to the composer, which owns its own
+     clearance. */
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
   background: transparent;
 }
 
@@ -1018,20 +1022,14 @@ html[data-chat-font="xl"] {
 
 /* ---- composer ---- */
 
-/* The working-time line the ZCode mobile layout carries above its composer:
-   a quiet "how long has this been running" that costs nothing to read. */
-.run-status {
-  text-align: center;
-  padding: 2px 12px 0;
-  color: var(--fg-dim);
-  font-size: 12px;
-}
-
 .composer {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 0 12px calc(8px + max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px)));
+  /* The injected inset knows whether Capacitor already cleared the gesture
+     bar; `env()` never does, so it must not sit inside max() here either. */
+  margin: 0 12px
+    calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   padding: 8px 10px 6px;
   border: 1px solid var(--line);
   border-radius: 22px;

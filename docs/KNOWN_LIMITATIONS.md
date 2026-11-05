@@ -19,6 +19,7 @@
 - **回前台会重建一次事件流**，即使流是健康的。这是修复「后台断连后对话不再更新」的代价：僵尸连接的 `readyState` 仍是 `OPEN`，没有更低成本的判定手段。重建带 cursor，不丢不重（见 #95）。
 - **`phase !== "connected"` 时回前台不自愈**。`reassess` 在链路状态不是 connected 时直接返回，属于既有行为，未纳入本次范围。
 - **应用内「完整界面」不会把内核新下发的 cookie 写回 WebView**。局域网的完整界面走 loopback 代理（否则 VPN 会把私有地址吞掉），代理转发时会补上配对时保存的 device cookie，所以页面能正常打开；但响应里的**所有** `Set-Cookie` 都只进代理自己的内存 jar，`writeResponse` 不把它们回写给页面——页面本身从来没收到过 cookie。首次访问不受影响，只要内核的会话 cookie 发生轮换（或任何依赖页面侧 cookie 的逻辑），就可能失效。彻底修需要让 `writeResponse` 支持多个 `Set-Cookie` 头，那条路径被所有响应共用，改动更大。
+- **应用内「完整界面」在旧版 WebView 上仍然布局错乱**。内核 Studio 的样式用了 `:has()`（92 处）、`@container`（23 处）和 `100dvh`（4 处），分别需要 Chrome 105 / 105 / 108；而 App 的 WebView 版本由手机系统决定（报告问题的 Android 12 上是 Chrome 96）。`oklch()` 和 `color-mix()` 造成的透明背景与不可读文字已经用注入的 sRGB 兜底解决，`100dvh` 也补了 `100vh` 替代；但 `:has()` 是结构性选择器，比如 `.pane:has(>.pbody[data-dock])` 承担主面板的 grid 布局，Chrome 96 会整条规则丢弃，`.pane` 又没有 `display:grid` 兜底，于是退化成普通块流——表现为文字竖排、栏位塌陷。这类规则无法用 CSS 变量掩盖，替代它要改内核的 DOM 结构，属于内核侧改动。**根治办法是把系统的「Android 系统 WebView」更新到最新**（Android 12 支持），三条症状会一起消失；更新不了就只能接受布局降级。
 - **应用内「完整界面」的状态栏跟随 App 主题，页面主题由内核决定，两者可能不一致**。`WebModeActivity` 是普通 `Activity`，不加载 App bundle，也拿不到内核 Studio 页面的主题；它只能重放 App 页面上次上报的外观（`ThemeBarPlugin.reapply()`）。所以 App 固定浅色而内核页面是深色（或反过来）时，顶部仍可能看到一道色带。要让两者一致，需要内核把页面主题告知宿主，或让这条路径退化成跟随系统。
 
 ## 内容渲染

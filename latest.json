@@ -1,11 +1,11 @@
 {
-  "tag": "v0.2.7",
-  "version": "0.2.7",
-  "versionCode": 17,
-  "apk": "reasonix-for-android-0.2.7.apk",
-  "notes": "# 0.2.7\n\n这一版收了三处小毛病：状态栏和内容区之间的那道色带真的修掉了，局域网下开着 VPN 也能\n在 App 内打开完整 Studio，语音失败时的提示不再让人误以为是电脑断线。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息和连接记录都会保留。\n\n## 修复\n\n- **状态栏和内容之间还有分割**：上一版只改了状态栏颜色，没盖住状态栏下面那层窗口背景。\n  现在两层一起刷，并且在冷启动、回到前台、切换页面时都会重新应用，深色和浅色模式都不再\n  露出色带。\n- **局域网下开着 VPN 打不开「完整界面」**：应用内的完整 Studio 现在走 App 自己的本地代理，\n  和主界面同一条路——绕开 VPN 接管的路由、带上配对 cookie、带上内核要求的来源头。之前\n  裸 WebView 直连内核地址，VPN 一开就超时。\n- **完整界面打开失败时的兜底**：启动失败会明确报错给页面，而不是静默成功、页面停在白屏。\n\n## 变更\n\n- **语音失败的提示更准确**：报「手机语音服务连不上网：多半是 VPN/代理拦了它，在 VPN 里把\n  这个语音服务加进白名单即可，与电脑连接无关」。原来的「检查网络后重试」让人以为配对断了。\n  这个提示来自手机系统的语音服务，与连电脑无关，App 无法替它改路由。\n\n## 说明\n\n- 已知限制（这一版仍然做不到什么）统一记在\n  [docs/KNOWN_LIMITATIONS.md](../../docs/KNOWN_LIMITATIONS.md)，不写进发布说明。\n\n关联 #122、#124、#125。",
+  "tag": "v0.2.9",
+  "version": "0.2.9",
+  "versionCode": 19,
+  "apk": "reasonix-for-android-0.2.9.apk",
+  "notes": "# 0.2.9\n\n这一版收掉顶部那块空白。上一版把它的**颜色**对齐了，这条带看起来不再是另一种颜色，但**高度**还在——状态栏下面仍然多空出一截。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息和连接记录都会保留。\n\n## 修复\n\n- **状态栏下方多出一截空白**：这是「让位了两次」。手机系统 WebView 从旧版本升到 140 以上之后，Capacitor 会自己把网页往下推一个状态栏的高度，然后告诉页面「顶部安全区是 0」；但页面同时又在读浏览器报的状态栏高度，于是按那个值再让了一次。两次相加，就是那截空白。\n  现在改为以 Capacitor 报的值为准，浏览器报的值只在没有前者时兜底。首页、会话、设置三处都修了，底部（手势条）一并修正。\n  这个改动不判断 WebView 版本，所以老内核和 105–139 之间那些版本也一样受益——它们原本同样在叠两次。\n\n## 说明\n\n- 已知限制（这一版仍然做不到什么）统一记在\n  [docs/KNOWN_LIMITATIONS.md](../../docs/KNOWN_LIMITATIONS.md)，不写进发布说明。\n\n关联 #133。",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.2.7/reasonix-for-android-0.2.7.apk",
-    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.2.7/reasonix-for-android-0.2.7.apk"
+    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.2.9/reasonix-for-android-0.2.9.apk",
+    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.2.9/reasonix-for-android-0.2.9.apk"
   ]
 }
