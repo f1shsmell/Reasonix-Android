@@ -8,6 +8,12 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
+function requestBody(fetchSpy: ReturnType<typeof vi.fn>): string {
+  const call = fetchSpy.mock.calls[0];
+  if (!call) throw new Error("fetch was not called");
+  return (call[1] as { body: string }).body;
+}
+
 /**
  * Both request bodies here were once wrong, and both wrong bodies were
  * accepted or rejected by the kernel in ways that hid the bug. These tests pin
@@ -42,7 +48,7 @@ describe("answer", () => {
 
     await answer("/rt/r1", "ask-1", [{ QuestionID: "q1", Selected: ["茶"] }]);
 
-    const body = (fetchSpy.mock.calls[0]?.[1] as { body: string }).body;
+    const body = requestBody(fetchSpy);
     expect(body).not.toContain('"answers":["');
   });
 
@@ -55,7 +61,7 @@ describe("answer", () => {
       { QuestionID: "q2", Selected: ["b", "c"] },
     ]);
 
-    const body = JSON.parse((fetchSpy.mock.calls[0]?.[1] as { body: string }).body) as {
+    const body = JSON.parse(requestBody(fetchSpy)) as {
       answers: unknown[];
     };
     expect(body.answers).toHaveLength(2);
@@ -126,7 +132,7 @@ describe("approve", () => {
 
     await approve("/rt/r1", "ap-1", true, true, true);
 
-    const body = (fetchSpy.mock.calls[0]?.[1] as { body: string }).body;
+    const body = requestBody(fetchSpy);
     expect(body).not.toContain("remember");
   });
 
@@ -136,7 +142,7 @@ describe("approve", () => {
 
     await approve("/rt/r1", "ap-1", false, false, false);
 
-    expect((fetchSpy.mock.calls[0]?.[1] as { body: string }).body).toBe(
+    expect(requestBody(fetchSpy)).toBe(
       JSON.stringify({ id: "ap-1", allow: false, session: false, persist: false }),
     );
   });

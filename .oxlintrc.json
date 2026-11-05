@@ -1,0 +1,22 @@
+{
+  // typescript-eslint still caps TypeScript below 7; this repo is on 7, so
+  // the same hooks/correctness gate runs on oxlint instead.
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/react-in-jsx-scope": "off",
+    "react/immutability": "off",
+    "react/refs": "off",
+    "react/set-state-in-effect": "off",
+    "react/globals": "off",
+    "react/exhaustive-effect-dependencies": "off",
+    "react/memo-dependencies": "off"
+  },
+  "ignorePatterns": ["dist", "android", "node_modules"]
+}

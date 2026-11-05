@@ -27,6 +27,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -50,11 +51,11 @@ jobs:
       - run: npm run build
       - name: Copy the web bundle into the Android shell
         run: node ./node_modules/@capacitor/cli/bin/capacitor sync android
-      - name: Unit tests and debug APK
+      - name: Lint, unit tests and debug APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest assembleDebug --console=plain
+          ./gradlew lintDebug testDebugUnitTest assembleDebug --console=plain
       - uses: actions/upload-artifact@v7
         with:
           name: reasonix-for-android-debug
