@@ -188,23 +188,15 @@ body,
   margin: 0;
 }
 
+/* A flat fill, deliberately. On Android the top edge of the page sits against
+   the system status bar, which is painted a fixed opaque `--bg` (see
+   ThemeBarPlugin). Any gradient here started brightest near the top edge, so
+   the strip the window draws and the pixels just below it met on different
+   colours — a visible band across the top of every screen. Tinting the top of
+   the page again means making the bar translucent, not adding a gradient
+   behind an opaque one. */
 body {
-  background:
-    radial-gradient(
-      120% 55% at 50% -14%,
-      rgba(var(--accent-rgb), 0.09),
-      transparent 62%
-    ),
-    var(--bg);
-  @supports (color: color-mix(in srgb, red, blue)) {
-    background:
-      radial-gradient(
-        120% 55% at 50% -14%,
-        color-mix(in srgb, var(--accent) 9%, transparent),
-        transparent 62%
-      ),
-      var(--bg);
-  }
+  background: var(--bg);
   color: var(--fg);
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
