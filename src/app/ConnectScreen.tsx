@@ -92,6 +92,7 @@ import type { NotificationPrefs } from "./notifyPref";
 import { swipeDirection } from "./swipe";
 import { useUpdater } from "./useUpdater";
 import { UpdateRow } from "./UpdateRow";
+import { STUDIO_MIN_CHROME, chromeMajor, needsStudioUpgrade } from "./webviewCompat";
 
 export interface ConnectScreenProps {
   onConnected: () => void;
@@ -1142,6 +1143,17 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
    */
   const appUrl = studioAppUrl(config, loadRelayDevice());
   const viaProxy = config?.mode !== "relay" && Boolean(config?.studioUrl?.trim());
+  /**
+   * The in-app page runs on the phone's own WebView, which may be years
+   * behind: nothing in the app can update it, and the Studio front end needs
+   * Chrome 111 for its colours and 105 for its layout. Say so on the row
+   * instead of opening a page that looks broken — the browser below is the
+   * way out for that phone, since browsers carry their own engine.
+   */
+  const webViewMajor = chromeMajor(
+    typeof navigator === "undefined" ? "" : navigator.userAgent,
+  );
+  const studioNeedsUpgrade = needsStudioUpgrade(webViewMajor);
   const openWebUrl = () => {
     setError("");
     void WebMode.open({
@@ -1249,7 +1261,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               >
                 <span className="setting-main">
                   <span className="setting-title">在应用内打开</span>
-                  <span className="setting-sub">电脑上那套 Studio 页面，整页运行在这里</span>
+                  <span className="setting-sub">
+                    {studioNeedsUpgrade
+                      ? `系统 WebView 是 Chrome ${webViewMajor}，页面会显示不全`
+                      : "电脑上那套 Studio 页面，整页运行在这里"}
+                  </span>
                 </span>
                 <span className="chev" aria-hidden="true">
                   ›
@@ -1266,13 +1282,24 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               >
                 <span className="setting-main">
                   <span className="setting-title">在浏览器打开</span>
-                  <span className="setting-sub">同一个页面，交给系统浏览器</span>
+                  <span className="setting-sub">
+                    {studioNeedsUpgrade
+                      ? "同一个页面，交给系统浏览器（自带内核，显示正常）"
+                      : "同一个页面，交给系统浏览器"}
+                  </span>
                 </span>
                 <span className="chev" aria-hidden="true">
                   ›
                 </span>
               </button>
             </section>
+            {studioNeedsUpgrade ? (
+              <p className="group-note">
+                电脑上那套页面用到 Chrome {STUDIO_MIN_CHROME} 才支持的写法，手机系统 WebView
+                还停在 {webViewMajor}。去应用商店更新「Android 系统 WebView」后重启 App
+                即可恢复；更新不了就先在上面用浏览器打开。
+              </p>
+            ) : null}
           </>
         ) : null}
 
