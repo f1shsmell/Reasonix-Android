@@ -4,21 +4,12 @@
  * Default off: the watcher costs battery, and it only works while the app
  * process is alive.
  */
-const KEY = "reasonix.cloudWatch.v1";
+import { readFlag, writeFlag, SETTINGS_KEYS } from "./settings";
 
 export function loadCloudWatch(): boolean {
-  try {
-    return localStorage.getItem(KEY) === "on";
-  } catch {
-    return false;
-  }
+  return readFlag(SETTINGS_KEYS.cloudWatch, false);
 }
 
 export function saveCloudWatch(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(KEY, "on");
-    else localStorage.removeItem(KEY);
-  } catch {
-    // A full or closed store keeps the previous choice.
-  }
+  writeFlag(SETTINGS_KEYS.cloudWatch, on, false);
 }

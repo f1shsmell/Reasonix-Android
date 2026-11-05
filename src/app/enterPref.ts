@@ -11,9 +11,10 @@
  * this device's keyboard, not about the kernel.
  */
 
+import { readChoice, writeChoice, SETTINGS_KEYS } from "./settings";
+
 export type EnterPref = "send" | "newline";
 
-const STORAGE_KEY = "reasonix.enter";
 const DEFAULT: EnterPref = "newline";
 
 export const ENTER_CHOICES: ReadonlyArray<{ value: EnterPref; label: string }> = [
@@ -26,20 +27,9 @@ export function isEnterPref(value: unknown): value is EnterPref {
 }
 
 export function loadEnterPref(): EnterPref {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return isEnterPref(stored) ? stored : DEFAULT;
-  } catch {
-    // A blocked storage API costs the setting, not the screen.
-    return DEFAULT;
-  }
+  return readChoice(SETTINGS_KEYS.enter, ["send", "newline"], DEFAULT);
 }
 
 export function saveEnterPref(pref: EnterPref): void {
-  try {
-    if (pref === DEFAULT) localStorage.removeItem(STORAGE_KEY);
-    else localStorage.setItem(STORAGE_KEY, pref);
-  } catch {
-    // The next cold start reads the default; this session keeps the choice.
-  }
+  writeChoice(SETTINGS_KEYS.enter, pref, DEFAULT);
 }

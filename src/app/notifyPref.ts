@@ -20,6 +20,8 @@
  *   which is why there are two ask channels rather than a boolean on one.
  */
 
+import { readFlag, writeFlag, SETTINGS_KEYS } from "./settings";
+
 /** What a notification surface does when nothing is stored. */
 export interface NotificationPrefs {
   /** The ongoing "turn running" notification. Off keeps it, but silent. */
@@ -49,36 +51,16 @@ const DEFAULTS: NotificationPrefs = {
   headsUp: true,
 };
 
-const KEYS: Record<keyof NotificationPrefs, string> = {
-  ongoing: "reasonix.notify.ongoing",
-  ask: "reasonix.notify.ask",
-  done: "reasonix.notify.done",
-  headsUp: "reasonix.notify.headsUp",
-};
+const KEYS: Record<keyof NotificationPrefs, string> = SETTINGS_KEYS.notify;
 
 function read(name: keyof NotificationPrefs): boolean {
-  const fallback = DEFAULTS[name];
-  try {
-    const stored = localStorage.getItem(KEYS[name]);
-    if (stored === null) return fallback;
-    return stored === "on";
-  } catch {
-    return fallback;
-  }
+  return readFlag(KEYS[name], DEFAULTS[name]);
 }
 
 function write(name: keyof NotificationPrefs, on: boolean): void {
-  try {
-    // Only the difference is stored, so an untouched switch follows its
-    // default if that default ever changes.
-    if (on === DEFAULTS[name]) {
-      localStorage.removeItem(KEYS[name]);
-      return;
-    }
-    localStorage.setItem(KEYS[name], on ? "on" : "off");
-  } catch {
-    // A closed store keeps the previous choice.
-  }
+  // Only the difference is stored, so an untouched switch follows its default
+  // if that default ever changes.
+  writeFlag(KEYS[name], on, DEFAULTS[name]);
 }
 
 export function loadNotificationPrefs(): NotificationPrefs {

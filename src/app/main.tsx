@@ -5,12 +5,14 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { installCloudWatchBridge } from "../net/cloudWatch";
 import { applyTheme, loadTheme } from "./theme";
 import { applyChatFont, loadChatFont } from "../chat/chatFont";
+import { migrateSettings } from "./settings";
 
 /**
  * The service asks this page for cloud status while the app is backgrounded;
  * install the entry point before the first render so it is never missing.
  */
 installCloudWatchBridge();
+migrateSettings();
 
 /**
  * The remembered appearance is applied before the first paint.

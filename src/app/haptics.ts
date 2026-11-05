@@ -11,8 +11,7 @@
  */
 
 import { Haptics, ImpactStyle } from "@capacitor/haptics";
-
-const MASTER_KEY = "reasonix.haptics";
+import { readFlag, readRaw, writeFlag, writeRaw, SETTINGS_KEYS } from "./settings";
 
 /**
  * One surface under the master switch.
@@ -23,11 +22,6 @@ const MASTER_KEY = "reasonix.haptics";
  * progress the person did not ask to be notified about.
  */
 export type HapticSurface = "drag" | "stream";
-
-const SURFACE_KEYS: Record<HapticSurface, string> = {
-  drag: "reasonix.haptics.drag",
-  stream: "reasonix.haptics.stream",
-};
 
 /**
  * What each surface does when nothing is stored.
@@ -44,21 +38,11 @@ const SURFACE_DEFAULTS: Record<HapticSurface, boolean> = {
 
 /** Absent means on: vibration was the behaviour before the switch existed. */
 export function loadHaptics(): boolean {
-  try {
-    return localStorage.getItem(MASTER_KEY) !== "off";
-  } catch {
-    // A blocked storage API costs the setting, not the feedback.
-    return true;
-  }
+  return readRaw(SETTINGS_KEYS.haptics.master) !== "off";
 }
 
 export function saveHaptics(enabled: boolean): void {
-  try {
-    if (enabled) localStorage.removeItem(MASTER_KEY);
-    else localStorage.setItem(MASTER_KEY, "off");
-  } catch {
-    // The next cold start reads the default; this session keeps the choice.
-  }
+  writeRaw(SETTINGS_KEYS.haptics.master, enabled ? null : "off");
 }
 
 /** Whether one surface may buzz, master switch included. */
@@ -76,28 +60,13 @@ export function loadHapticSurface(surface: HapticSurface): boolean {
  * happened to be off when the screen mounted.
  */
 export function loadSurfaceChoice(surface: HapticSurface): boolean {
-  const fallback = SURFACE_DEFAULTS[surface];
-  try {
-    const stored = localStorage.getItem(SURFACE_KEYS[surface]);
-    if (stored === null) return fallback;
-    return stored === "on";
-  } catch {
-    return fallback;
-  }
+  return readFlag(SETTINGS_KEYS.haptics[surface], SURFACE_DEFAULTS[surface]);
 }
 
 export function saveHapticSurface(surface: HapticSurface, enabled: boolean): void {
-  try {
-    // The stored value is the difference from the default, so a future change
-    // to a default reaches everyone who never touched this switch.
-    if (enabled === SURFACE_DEFAULTS[surface]) {
-      localStorage.removeItem(SURFACE_KEYS[surface]);
-      return;
-    }
-    localStorage.setItem(SURFACE_KEYS[surface], enabled ? "on" : "off");
-  } catch {
-    // The next cold start reads the default; this session keeps the choice.
-  }
+  // The stored value is the difference from the default, so a future change
+  // to a default reaches everyone who never touched this switch.
+  writeFlag(SETTINGS_KEYS.haptics[surface], enabled, SURFACE_DEFAULTS[surface]);
 }
 
 /** A short system buzz for a gesture the person made, when both switches allow. */

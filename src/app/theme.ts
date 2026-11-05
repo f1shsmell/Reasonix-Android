@@ -11,10 +11,9 @@
  */
 
 import { applyStatusBar } from "../native/themeBar";
+import { readChoice, writeChoice, SETTINGS_KEYS } from "./settings";
 
 export type ThemeChoice = "auto" | "light" | "dark";
-
-const STORAGE_KEY = "reasonix.theme";
 
 /** The three choices, in the order the segmented control draws them. */
 export const THEME_CHOICES: { value: ThemeChoice; label: string }[] = [
@@ -28,22 +27,11 @@ export function isTheme(value: unknown): value is ThemeChoice {
 }
 
 export function loadTheme(): ThemeChoice {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return isTheme(raw) ? raw : "auto";
-  } catch {
-    // A blocked storage API costs the setting, not the screen.
-    return "auto";
-  }
+  return readChoice(SETTINGS_KEYS.theme, ["auto", "light", "dark"], "auto");
 }
 
 export function saveTheme(choice: ThemeChoice): void {
-  try {
-    if (choice === "auto") localStorage.removeItem(STORAGE_KEY);
-    else localStorage.setItem(STORAGE_KEY, choice);
-  } catch {
-    // Nothing to do: the choice applies for this session either way.
-  }
+  writeChoice(SETTINGS_KEYS.theme, choice, "auto");
 }
 
 /**
