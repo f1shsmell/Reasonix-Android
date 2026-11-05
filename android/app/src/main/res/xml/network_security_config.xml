@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- LAN kernels and the loopback proxy speak plain HTTP by design. -->
+    <base-config cleartextTrafficPermitted="true" />
+
+    <!-- Known public services must never be reached over cleartext, even if a
+         mirror or a redirect ever hands the WebView an http URL. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">reasonix.io</domain>
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">raw.githubusercontent.com</domain>
+        <domain includeSubdomains="true">gh-proxy.com</domain>
+        <domain includeSubdomains="true">ghfast.top</domain>
+    </domain-config>
+</network-security-config>
