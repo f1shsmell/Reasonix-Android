@@ -39,7 +39,12 @@ export function speechSupported(): boolean {
 /** Recognizer error codes → what the person is told. */
 const ERRORS: Record<number, string> = {
   1: "没听清，再试一次",
-  2: "语音服务需要网络，检查网络后重试",
+  // ERROR_NETWORK comes from the phone's own speech service, not from the
+  // desktop link. Naming "网络" alone made people think the pairing had
+  // dropped. A VPN/proxy on the phone is the usual trigger: it black-holes
+  // the service's own upload, and the app cannot re-route another process's
+  // sockets, so the fix has to happen in the VPN client.
+  2: "手机语音服务连不上网：多半是 VPN/代理拦了它，在 VPN 里把这个语音服务加进白名单即可，与电脑连接无关",
   3: "没能录到声音，检查麦克风后重试",
   4: "语音服务没响应，再试一次",
   5: "手机没有可用的语音服务",
