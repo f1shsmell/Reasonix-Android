@@ -71,8 +71,6 @@ public class TurnService extends Service {
     private static final int OFFLINE_AFTER = 3;
     private static final long WAKE_LOCK_MS = 30 * 60 * 1000L;
     private static final long WATCH_POLL_MS = 5000L;
-    private static final long CLOUD_POLL_MS = 60_000L;
-    private static final long CLOUD_TIMEOUT_MS = 20_000L;
     private static final long CLOUD_WAKE_MS = 25_000L;
     /** Ten minutes without one answer means the computer is gone, not slow. */
     private static final long QUIET_STOP_MS = 10 * 60 * 1000L;
@@ -85,15 +83,7 @@ public class TurnService extends Service {
     private WifiManager.WifiLock wifiLock;
     /** True for the persistent cloud watcher; false for a LAN turn. */
     private volatile boolean cloud = false;
-    private volatile boolean cloudPending = false;
-    private volatile int cloudGeneration = 0;
-    private volatile int cloudMisses = 0;
-    /** The last sweep's outcome, for diagnostics and the summary. */
-    private volatile String cloudLastCode = "";
-    private volatile long cloudLastAt = 0;
-    private volatile int cloudLastRuntimes = 0;
-    private volatile int cloudLastStatuses = 0;
-    private volatile int cloudLastAsks = 0;
+    private CloudWatcher cloudWatcher;
     private PowerManager.WakeLock cloudWakeLock;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService decisions = Executors.newSingleThreadExecutor();
@@ -119,6 +109,59 @@ public class TurnService extends Service {
         super.onCreate();
         active = this;
         TurnNotificationChannels.create(this);
+        cloudWatcher = new CloudWatcher(
+                new CloudWatcher.Host() {
+                    @Override
+                    public boolean requestSweep() {
+                        return MainActivity.requestCloudSweep();
+                    }
+
+                    @Override
+                    public void beginSweep() {
+                        acquireCloudWakeLock();
+                    }
+
+                    @Override
+                    public void endSweep() {
+                        releaseCloudWakeLock();
+                    }
+
+                    @Override
+                    public void stopService() {
+                        stopSelf();
+                    }
+
+                    @Override
+                    public CloudSweep.Counts apply(CloudSnapshot snapshot) {
+                        return applyCloudSnapshot(snapshot);
+                    }
+
+                    @Override
+                    public void notePoll(boolean answered) {
+                        TurnService.this.notePoll(answered);
+                    }
+
+                    @Override
+                    public void stateChanged() {
+                        refreshRunning();
+                    }
+
+                    @Override
+                    public void log(String message) {
+                        Log.d(TAG, message);
+                    }
+                },
+                new CloudWatcher.Scheduler() {
+                    @Override
+                    public void post(Runnable runnable) {
+                        mainHandler.post(runnable);
+                    }
+
+                    @Override
+                    public void postDelayed(Runnable runnable, long delayMs) {
+                        mainHandler.postDelayed(runnable, delayMs);
+                    }
+                });
     }
 
     @Override
@@ -133,14 +176,11 @@ public class TurnService extends Service {
         boolean nextCloud = intent != null && intent.getBooleanExtra(EXTRA_CLOUD, false);
         if (nextCloud != cloud) {
             cloud = nextCloud;
+            cloudWatcher.setActive(cloud);
             stopWatching();
             TurnNotifications.cancelAsks(this, watches.values());
             watches.clear();
-            cloudPending = false;
-            cloudGeneration += 1;
-            cloudMisses = 0;
             pollFailures = 0;
-            releaseCloudWakeLock();
             if (cloud) {
                 releaseWakeLock();
                 releaseWifiLock();
@@ -162,7 +202,7 @@ public class TurnService extends Service {
             }
         }
         try {
-            Notification notification = TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudLastCode);
+            Notification notification = TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudWatcher.lastCode());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(RUNNING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
             } else {
@@ -192,8 +232,7 @@ public class TurnService extends Service {
         // A poll already in flight must not re-post notifications after
         // stopForeground has removed them.
         stopping = true;
-        cloudPending = false;
-        cloudGeneration += 1;
+        cloudWatcher.setActive(false);
         stopWatching();
         TurnNotifications.cancelAsks(this, watches.values());
         clearCounts();
@@ -238,11 +277,11 @@ public class TurnService extends Service {
             if (cloud) {
                 watcher.scheduleWithFixedDelay(() -> {
                     try {
-                        pollCloud();
+                        cloudWatcher.poll();
                     } catch (Exception e) {
                         Log.w(TAG, "cloud watch poll failed", e);
                     }
-                }, 5_000, CLOUD_POLL_MS, TimeUnit.MILLISECONDS);
+                }, 5_000, CloudWatcher.POLL_MS, TimeUnit.MILLISECONDS);
             } else {
                 watcher.scheduleWithFixedDelay(() -> {
                     try {
@@ -354,46 +393,6 @@ public class TurnService extends Service {
         refreshRunning();
     }
 
-    /**
-     * Ask the WebView for one cloud snapshot.
-     *
-     * The relay is a WebView transport; native code only evaluates the bridge
-     * installed by `net/cloudWatch.ts`. A sweep runs even while the activity is
-     * visible so the summary stays current, and the wake lock is taken every
-     * time because the visibility flag cannot prove the page will run.
-     */
-    private void pollCloud() {
-        if (stopping || !cloud) return;
-        if (cloudPending) return;
-        if (!MainActivity.requestCloudSweep()) {
-            cloudLastCode = "bridge.unavailable";
-            cloudLastAt = System.currentTimeMillis();
-            cloudLastRuntimes = 0;
-            cloudLastStatuses = 0;
-            cloudLastAsks = 0;
-            if (++cloudMisses >= 2) stopSelf();
-            else refreshRunning();
-            return;
-        }
-        cloudPending = true;
-        int generation = ++cloudGeneration;
-        acquireCloudWakeLock();
-        mainHandler.postDelayed(() -> {
-            if (!cloudPending || generation != cloudGeneration || stopping) return;
-            cloudPending = false;
-            releaseCloudWakeLock();
-            cloudLastCode = "client.timeout";
-            cloudLastAt = System.currentTimeMillis();
-            cloudLastRuntimes = 0;
-            cloudLastStatuses = 0;
-            cloudLastAsks = 0;
-            cloudMisses = 0;
-            Log.d(TAG, "cloud sweep timed out");
-            notePoll(false);
-            refreshRunning();
-        }, CLOUD_TIMEOUT_MS);
-    }
-
     /** Stop the cloud watcher, leaving a LAN watcher untouched. */
     static void stopCloudWatchIfCloud() {
         TurnService service = active;
@@ -406,7 +405,7 @@ public class TurnService extends Service {
         if (service == null) return;
         for (PaneWatch watch : service.watches.values()) watch.askSignature = "";
         service.mainHandler.post(service::refreshRunning);
-        if (service.cloud) service.pollCloudSoon();
+        if (service.cloud) service.cloudWatcher.pollSoon();
     }
 
     /**
@@ -466,14 +465,14 @@ public class TurnService extends Service {
             out.put("active", true);
             out.put("cloud", service.cloud);
             out.put("visible", MainActivity.visible);
-            out.put("pending", service.cloudPending);
-            out.put("misses", service.cloudMisses);
+            out.put("pending", service.cloudWatcher.pending());
+            out.put("misses", service.cloudWatcher.misses());
             out.put("watches", service.watches.size());
-            out.put("code", service.cloudLastCode);
-            out.put("at", service.cloudLastAt);
-            out.put("runtimes", service.cloudLastRuntimes);
-            out.put("statuses", service.cloudLastStatuses);
-            out.put("asks", service.cloudLastAsks);
+            out.put("code", service.cloudWatcher.lastCode());
+            out.put("at", service.cloudWatcher.lastAt());
+            out.put("runtimes", service.cloudWatcher.lastRuntimes());
+            out.put("statuses", service.cloudWatcher.lastStatuses());
+            out.put("asks", service.cloudWatcher.lastAsks());
         } catch (Exception ignored) {
             // Every field above is a scalar or a size; none can fail.
         }
@@ -483,44 +482,17 @@ public class TurnService extends Service {
     /** The WebView's result bridge; called on its own thread. */
     static void deliverCloud(String json) {
         TurnService service = active;
-        if (service != null) service.onCloudSnapshot(json);
+        if (service != null) service.cloudWatcher.deliver(json);
     }
 
     /** The app just went to the background; do not wait out the next minute. */
     static void wakeCloud() {
         TurnService service = active;
-        if (service != null) service.pollCloudSoon();
+        if (service != null) service.cloudWatcher.pollSoon();
     }
 
-    private void pollCloudSoon() {
-        if (!cloud) return;
-        mainHandler.postDelayed(this::pollCloud, 500);
-    }
-
-    private void onCloudSnapshot(String json) {
-        mainHandler.post(() -> handleCloudSnapshot(json));
-    }
-
-    private void handleCloudSnapshot(String json) {
-        if (stopping || !cloud) return;
-        if (!cloudPending) return;
-        cloudPending = false;
-        releaseCloudWakeLock();
-        CloudSnapshot snapshot = CloudSnapshot.parse(json);
-        cloudLastAt = System.currentTimeMillis();
-        cloudLastCode = snapshot.ok ? "ok" : (snapshot.code.isEmpty() ? "watch.failed" : snapshot.code);
-        if (!snapshot.ok) {
-            cloudLastRuntimes = 0;
-            cloudLastStatuses = 0;
-            cloudLastAsks = 0;
-            Log.d(TAG, "cloud sweep failed: " + cloudLastCode);
-            cloudMisses = 0;
-            notePoll(false);
-            refreshRunning();
-            return;
-        }
-
-        CloudSweep.Counts counts = CloudSweep.apply(snapshot, new CloudSweep.Sink() {
+    private CloudSweep.Counts applyCloudSnapshot(CloudSnapshot snapshot) {
+        return CloudSweep.apply(snapshot, new CloudSweep.Sink() {
             @Override
             public PaneWatch get(String runtimeId) {
                 return watches.get(runtimeId);
@@ -555,14 +527,6 @@ public class TurnService extends Service {
                 TurnService.this.applyStatus(watch, status);
             }
         });
-        cloudLastRuntimes = counts.runtimes;
-        cloudLastStatuses = counts.statuses;
-        cloudLastAsks = counts.asks;
-        Log.d(TAG, "cloud sweep ok: runtimes=" + counts.runtimes
-                + " statuses=" + counts.statuses + " asks=" + counts.asks);
-        cloudMisses = 0;
-        notePoll(true);
-        refreshRunning();
     }
 
     /** The one place a status becomes notification state, LAN or cloud. */
@@ -768,7 +732,7 @@ public class TurnService extends Service {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager == null) return;
         try {
-            manager.notify(RUNNING_ID, TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudLastCode));
+            manager.notify(RUNNING_ID, TurnNotifications.running(this, watches.values(), cloud, pollFailures >= OFFLINE_AFTER, cloudWatcher.lastCode()));
         } catch (RuntimeException e) {
             // A permission revoked mid-turn must not stop the watcher.
             Log.w(TAG, "cannot refresh the running notification", e);
@@ -846,7 +810,7 @@ public class TurnService extends Service {
             if (cloud) {
                 MainActivity.requestCloudDecision(path, body.toString());
                 // Let the relay POST land before the next sweep reads status.
-                mainHandler.postDelayed(this::pollCloud, 2_000);
+                mainHandler.postDelayed(cloudWatcher::poll, 2_000);
                 return;
             }
             decisions.execute(() -> {
