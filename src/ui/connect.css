@@ -17,12 +17,10 @@
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  /* See shell.css: the injected inset is the value that knows whether
-     Capacitor already padded the WebView down by the bars. `env()` reports the
-     real height either way, so putting it inside max() padded twice on
-     WebView < 140 and pushed this page's title bar clear of the status bar by
-     a whole extra bar. */
-  padding: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) var(--pad)
+  /* See shell.css: the top inset is measured natively into `--rx-inset-top`,
+     because `env()` reports the bar's height whether or not the window already
+     cleared it, and Capacitor's own variable was measured never to arrive. */
+  padding: var(--rx-inset-top, env(safe-area-inset-top, 0px)) var(--pad)
     calc(24px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   background: transparent;
   /* A vertical scroll keeps the page, a horizontal drag is the pane switch. */
