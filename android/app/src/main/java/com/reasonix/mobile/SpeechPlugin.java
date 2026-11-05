@@ -40,13 +40,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * listeners, so each listen() mints a session id and every event carries it;
  * listeners that own another session ignore the event.
  *
- * On API 33+ with an on-device engine installed, a hold uses that engine
- * instead of the system service. The service uploads audio to its own
- * servers, and a VPN/proxy on the phone can black-hole that request
- * (ERROR_NETWORK); the app cannot re-route another app's sockets, so an
- * on-device engine is the only path that works offline. Below 33, or when
- * no offline pack is installed, behaviour is unchanged and the error text
- * says what the person can do instead.
+ * The default service uploads audio to its own servers, and a VPN/proxy on
+ * the phone can black-hole that request (ERROR_NETWORK). The app cannot
+ * re-route another app's sockets, so when that happens on API 33+ with an
+ * on-device engine installed, the hold restarts once on that engine. Audio
+ * is streamed, not buffered: the person has to say the words again, but does
+ * not have to release and re-press. Online recognition stays the default
+ * (it is usually the better engine), and the error text says what to change.
  */
 @CapacitorPlugin(
     name = "Speech",
@@ -59,20 +59,60 @@ public class SpeechPlugin extends Plugin {
     private static final long LEVEL_INTERVAL_MS = 80;
     /** TIRAMISU (33) introduced createOnDeviceSpeechRecognizer(). */
     static final int ON_DEVICE_MIN_SDK = 33;
+    private static final int ERROR_LANGUAGE_NOT_SUPPORTED = 12;
+    private static final int ERROR_LANGUAGE_UNAVAILABLE = 13;
 
     private SpeechRecognizer recognizer;
     private final AtomicInteger sessions = new AtomicInteger();
+    /** Bumped on every start, stop and cancel so a queued retry cannot reopen the mic. */
+    private final AtomicInteger epochs = new AtomicInteger();
     /** Read and written on the main thread only, next to the callbacks. */
     private long lastLevelAt;
 
     /**
      * Pure decision, so the API floor is testable on the JVM without a
      * Context. An on-device engine only exists on 33+, and only when the ROM
-     * actually installed one; otherwise we must stay on the system service
-     * rather than claim an offline path that is not there.
+     * actually installed one; otherwise there is nothing to fall back to.
      */
     static boolean useOnDevice(int sdkInt, boolean installed) {
         return sdkInt >= ON_DEVICE_MIN_SDK && installed;
+    }
+
+    /** Only ERROR_NETWORK (2) is worth retrying offline. NETWORK_TIMEOUT (1)
+     * is mapped to "没听清" on the page, so reporting it after a failed
+     * fallback would be misleading. A no-match or a permission error is not
+     * a network failure at all.
+     */
+    static boolean isNetworkError(int error) {
+        return error == SpeechRecognizer.ERROR_NETWORK;
+    }
+
+    /**
+     * Pure policy functions so the branch matrix is testable on the JVM.
+     * Online is the default whenever a default service exists; the offline
+     * engine is only the starting point when it is the only engine at all.
+     */
+    static boolean startOnDevice(boolean systemAvailable, boolean offlineAvailable) {
+        return offlineAvailable && !systemAvailable;
+    }
+
+    static boolean canFallback(boolean systemAvailable, boolean offlineAvailable) {
+        return systemAvailable && offlineAvailable;
+    }
+
+    /**
+     * If the offline retry also fails on a network/language error, the honest
+     * report is still the original network failure (the VPN/proxy), not a
+     * vague "语音输入出了问题" and not a misleading "language unsupported".
+     * A speech timeout after the retry is a real new outcome and must stay.
+     */
+    static int reportAfterFallback(int original, int second) {
+        if (original != 0 && (isNetworkError(second)
+                || second == ERROR_LANGUAGE_NOT_SUPPORTED
+                || second == ERROR_LANGUAGE_UNAVAILABLE)) {
+            return original;
+        }
+        return second;
     }
 
     /**
@@ -103,10 +143,11 @@ public class SpeechPlugin extends Plugin {
 
     @PluginMethod
     public void listen(PluginCall call) {
-        boolean onDevice = onDeviceAvailable();
+        boolean offlineAvailable = onDeviceAvailable();
+        boolean systemAvailable = SpeechRecognizer.isRecognitionAvailable(getContext());
         // A phone with only an on-device engine has no default service; do
         // not turn it away with "no-service" when the offline path exists.
-        if (!SpeechRecognizer.isRecognitionAvailable(getContext()) && !onDevice) {
+        if (!systemAvailable && !offlineAvailable) {
             call.resolve(unavailable("no-service"));
             return;
         }
@@ -114,7 +155,7 @@ public class SpeechPlugin extends Plugin {
             requestPermissionForAlias("microphone", call, "micResult");
             return;
         }
-        start(call, onDevice);
+        start(call, systemAvailable, offlineAvailable);
     }
 
     @PermissionCallback
@@ -123,13 +164,15 @@ public class SpeechPlugin extends Plugin {
             call.resolve(unavailable("denied"));
             return;
         }
-        start(call, onDeviceAvailable());
+        start(call, SpeechRecognizer.isRecognitionAvailable(getContext()), onDeviceAvailable());
     }
 
     @PluginMethod
     public void stop(PluginCall call) {
-        // stopListening lets the service flush its final result; the page
-        // shows a finishing state until that final event arrives.
+        // Release also invalidates a queued offline retry: after the finger
+        // is up there is nobody left to speak again. The running recognizer
+        // still flushes its final result; only open() is blocked.
+        epochs.incrementAndGet();
         bridge.executeOnMainThread(() -> {
             if (recognizer != null) recognizer.stopListening();
         });
@@ -138,6 +181,8 @@ public class SpeechPlugin extends Plugin {
 
     @PluginMethod
     public void cancel(PluginCall call) {
+        // Also invalidates any offline retry that has been posted but not run.
+        epochs.incrementAndGet();
         bridge.executeOnMainThread(this::destroyRecognizer);
         call.resolve();
     }
@@ -145,15 +190,16 @@ public class SpeechPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         // Activity teardown already runs on the main thread.
+        epochs.incrementAndGet();
         destroyRecognizer();
         super.handleOnDestroy();
     }
 
-    private void start(PluginCall call, boolean onDevice) {
+    private void start(PluginCall call, boolean systemAvailable, boolean offlineAvailable) {
         String language = call.getString("language");
         if (language == null || language.isEmpty()) language = "zh-CN";
 
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        final Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, language);
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
@@ -164,11 +210,48 @@ public class SpeechPlugin extends Plugin {
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L);
 
-        int mySession = sessions.incrementAndGet();
+        // Online is the default; the offline engine is only the starting
+        // point when it is the only engine on the phone.
+        final boolean startOffline = startOnDevice(systemAvailable, offlineAvailable);
+        final boolean[] fallbackLeft = {canFallback(systemAvailable, offlineAvailable)};
+        final int[] networkError = {0};
+        final int myEpoch = epochs.incrementAndGet();
+        final int mySession = sessions.incrementAndGet();
+        final RecognitionListener[] holder = new RecognitionListener[1];
+        // open() is a private method of the anonymous listener below, so the
+        // outer method cannot name it. These slots hand the two calls in.
+        final Runnable[] openInitial = new Runnable[1];
+        final Runnable[] openOffline = new Runnable[1];
+
         RecognitionListener listener = new RecognitionListener() {
+            {
+                openInitial[0] = () -> open(startOffline);
+                openOffline[0] = () -> open(true);
+            }
+
             private void emit(String event, JSObject payload) {
                 payload.put("session", mySession);
                 notifyListeners(event, payload);
+            }
+
+            /** Always called on the main thread. */
+            private void open(boolean onDevice) {
+                if (myEpoch != epochs.get()) {
+                    // The hold ended (stop/cancel) while this offline retry
+                    // was queued. Report the network failure instead of
+                    // leaving the page waiting on its 15s final-result timer.
+                    if (networkError[0] != 0) {
+                        JSObject event = new JSObject();
+                        event.put("error", networkError[0]);
+                        emit("recerror", event);
+                    }
+                    return;
+                }
+                destroyRecognizer();
+                lastLevelAt = 0;
+                recognizer = createRecognizer(onDevice);
+                recognizer.setRecognitionListener(holder[0]);
+                recognizer.startListening(intent);
             }
 
             @Override
@@ -207,8 +290,18 @@ public class SpeechPlugin extends Plugin {
 
             @Override
             public void onError(int error) {
+                if (fallbackLeft[0] && isNetworkError(error)) {
+                    fallbackLeft[0] = false;
+                    networkError[0] = error;
+                    // Post past this callback: destroying the recognizer
+                    // inside its own onError is not safe on every ROM. The
+                    // session id stays the same, so the page keeps waiting
+                    // for the person to speak again.
+                    bridge.executeOnMainThread(openOffline[0]);
+                    return;
+                }
                 JSObject event = new JSObject();
-                event.put("error", error);
+                event.put("error", reportAfterFallback(networkError[0], error));
                 emit("recerror", event);
             }
 
@@ -224,15 +317,10 @@ public class SpeechPlugin extends Plugin {
             @Override
             public void onEvent(int eventType, Bundle params) {}
         };
+        holder[0] = listener;
         JSObject out = new JSObject();
         out.put("session", mySession);
-        bridge.executeOnMainThread(() -> {
-            destroyRecognizer();
-            lastLevelAt = 0;
-            recognizer = createRecognizer(onDevice);
-            recognizer.setRecognitionListener(listener);
-            recognizer.startListening(intent);
-        });
+        bridge.executeOnMainThread(openInitial[0]);
         call.resolve(out);
     }
 
