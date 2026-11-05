@@ -892,11 +892,9 @@ export function ChatScreen({
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   /**
    * When the running turn started being watched; a restored turn has no start.
-   * A ref rather than state: the fold loop reads it to vouch for frames, and
-   * the once-a-second tick is what actually redraws the count.
+   * A ref rather than state: the fold loop reads it to vouch for frames.
    */
   const runStartedAtRef = useRef<number | null>(null);
-  const [nowTick, setNowTick] = useState(Date.now());
   const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
     connection,
     snapshot,
@@ -1040,19 +1038,12 @@ export function ChatScreen({
     [transcript.rows, transcript.running, fold],
   );
 
-  // The working-time line: seconds since the running turn was first seen
-  // streaming here. A turn restored by a reload has no start on this phone —
-  // the wire carries no turn-start wall clock — so it shows without a count.
-  // The ref doubles as the fold loop's vouch: frames folded while a start is
-  // recorded are frames the phone watched land, and only those get a clock.
+  // Frames folded while a start is recorded are frames the phone watched land;
+  // the fold loop reads this to decide which rows get a clock. A turn restored
+  // by a reload has no start here, because the wire carries no wall clock.
   useEffect(() => {
     if (streaming && runStartedAtRef.current === null) runStartedAtRef.current = Date.now();
     if (!streaming && runStartedAtRef.current !== null) runStartedAtRef.current = null;
-  }, [streaming]);
-  useEffect(() => {
-    if (!streaming) return;
-    const timer = window.setInterval(() => setNowTick(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
   }, [streaming]);
 
   // The pane is on screen; its answer ticking as it grows is the "still
@@ -1926,14 +1917,6 @@ export function ChatScreen({
           <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
             插话
           </button>
-        </div>
-      ) : null}
-
-      {streaming ? (
-        <div className="run-status" role="status">
-          {runStartedAtRef.current !== null
-            ? `已工作 ${Math.max(1, Math.floor((nowTick - runStartedAtRef.current) / 1000))} 秒`
-            : "正在运行"}
         </div>
       ) : null}
 
