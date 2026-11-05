@@ -2,11 +2,13 @@ package com.reasonix.mobile;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.os.Build;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -78,7 +80,32 @@ public final class LoopbackProxy {
     private static final String PROXY_COOKIE = "reasonix_loopback";
     static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
     private static final String IDENTITY = "https://id.reasonix.io";
-    private static final String USER_AGENT = "reasonix-android/0.1";
+    /**
+     * The product token keeps its `rx-android/` prefix — the account service
+     * may key on it and its source is not ours to check — but the version and
+     * model are real now. A hardcoded "/0.1" made every release look like the
+     * first one, and every paired phone identical in the device list.
+     *
+     * Pure, so both fallbacks are testable without a Context.
+     */
+    static String userAgentFor(String version, String model) {
+        String v = version == null ? "" : version.trim();
+        if (v.isEmpty() || "null".equals(v)) v = "unknown";
+        String m = model == null ? "" : model.trim();
+        return m.isEmpty()
+                ? "reasonix-android/" + v
+                : "reasonix-android/" + v + " (" + m + ")";
+    }
+
+    private static String appVersion(Context context) {
+        try {
+            return String.valueOf(context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0).versionName);
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            // An unreadable version costs precision, not correctness.
+            return "";
+        }
+    }
     /**
      * The full Studio page is a second WebView on this same origin. Its UA
      * carries this marker so the proxy knows to send its requests to the
@@ -175,11 +202,14 @@ public final class LoopbackProxy {
             new ThreadPoolExecutor.AbortPolicy());
     private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
     private final String secret;
+    /** Sent to the account service; computed once, the ROM's model never changes. */
+    private final String userAgent;
 
     private LoopbackProxy(Context context) throws IOException {
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.secret = proxySecret(context);
+        this.userAgent = userAgentFor(appVersion(context), Build.MODEL);
         this.server = new ServerSocket();
         this.server.setReuseAddress(true);
         this.server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT));
@@ -742,7 +772,7 @@ public final class LoopbackProxy {
         conn.setReadTimeout(20000);
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + token);
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         // The web page calls this endpoint from reasonix.io with the account
         // cookie. A service that checks Origin needs the same one; the proxy
         // is not a browser and would otherwise send none.
@@ -787,7 +817,7 @@ public final class LoopbackProxy {
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(20000);
         conn.setRequestProperty("Authorization", "Bearer " + token);
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         int status = conn.getResponseCode();
         String text = readText(conn);
         conn.disconnect();
@@ -1205,7 +1235,7 @@ public final class LoopbackProxy {
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(20000);
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
         conn.setFixedLengthStreamingMode(payload.length);
         try (OutputStream out = conn.getOutputStream()) {
@@ -1233,7 +1263,7 @@ public final class LoopbackProxy {
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(20000);
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         byte[] payload = new JSONObject().put("deviceCode", deviceCode).toString().getBytes(StandardCharsets.UTF_8);
         conn.setFixedLengthStreamingMode(payload.length);
         try (OutputStream out = conn.getOutputStream()) {
@@ -1287,7 +1317,7 @@ public final class LoopbackProxy {
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Origin", "https://reasonix.io");
         conn.setRequestProperty("Referer", "https://reasonix.io/login/");
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         conn.setRequestProperty("Accept", "application/json");
         byte[] payload = new JSONObject().put("email", email).put("password", password)
                 .toString().getBytes(StandardCharsets.UTF_8);
@@ -1335,7 +1365,7 @@ public final class LoopbackProxy {
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Origin", "https://reasonix.io");
         conn.setRequestProperty("Referer", "https://reasonix.io/device/");
-        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("User-Agent", userAgent);
         conn.setRequestProperty("Accept", "application/json");
         conn.setRequestProperty("Cookie", cookie);
         byte[] payload = new JSONObject().put("userCode", userCode).toString().getBytes(StandardCharsets.UTF_8);
@@ -1393,7 +1423,7 @@ public final class LoopbackProxy {
             conn.setReadTimeout(2500);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Origin", "https://reasonix.io");
-            conn.setRequestProperty("User-Agent", USER_AGENT);
+            conn.setRequestProperty("User-Agent", userAgent);
             if (!cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
             if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
             byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);

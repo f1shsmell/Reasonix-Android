@@ -353,4 +353,22 @@ public class LoopbackProxyTest {
         assertEquals("", LoopbackProxy.machineOf("{\"id\":\"paired-1\"}"));
         assertEquals("", LoopbackProxy.machineOf("not json"));
     }
+
+    @Test
+    public void namesTheRealVersionAndModelInTheUserAgent() {
+        // The account service lists paired devices by this string. A constant
+        // "0.1" made every release look like the first one and every phone
+        // identical; the prefix has to stay, though it may key on it.
+        assertEquals("reasonix-android/0.2.7 (Redmi K30 Pro Zoom Edition)",
+                LoopbackProxy.userAgentFor("0.2.7", "Redmi K30 Pro Zoom Edition"));
+        // No model (an emulator, a stripped ROM): keep the version, drop the suffix.
+        assertEquals("reasonix-android/0.2.7", LoopbackProxy.userAgentFor("0.2.7", ""));
+        assertEquals("reasonix-android/0.2.7", LoopbackProxy.userAgentFor("0.2.7", null));
+        // PackageManager reports the literal string "null" for a version it
+        // cannot read, and an empty version must not produce "rx-android/".
+        assertEquals("reasonix-android/unknown", LoopbackProxy.userAgentFor(null, null));
+        assertEquals("reasonix-android/unknown", LoopbackProxy.userAgentFor("   ", ""));
+        assertEquals("reasonix-android/unknown (Pixel 8)",
+                LoopbackProxy.userAgentFor("null", "  Pixel 8  "));
+    }
 }
