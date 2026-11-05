@@ -1018,15 +1018,6 @@ html[data-chat-font="xl"] {
 
 /* ---- composer ---- */
 
-/* The working-time line the ZCode mobile layout carries above its composer:
-   a quiet "how long has this been running" that costs nothing to read. */
-.run-status {
-  text-align: center;
-  padding: 2px 12px 0;
-  color: var(--fg-dim);
-  font-size: 12px;
-}
-
 .composer {
   display: flex;
   flex-direction: column;
