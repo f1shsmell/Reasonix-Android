@@ -41,8 +41,9 @@ const ERRORS: Record<number, string> = {
   1: "没听清，再试一次",
   // ERROR_NETWORK comes from the phone's own speech service, not from the
   // desktop link. Naming "网络" alone made people think the pairing had
-  // dropped; say which network it is and point at the offline pack.
-  2: "手机语音服务需要联网或离线语音包，与电脑连接无关",
+  // dropped. A VPN/proxy on the phone is the usual trigger (it black-holes
+  // the service's own upload), so say what to change and how to go offline.
+  2: "手机语音服务连不上网：关掉 VPN/代理或装离线语音包，与电脑连接无关",
   3: "没能录到声音，检查麦克风后重试",
   4: "语音服务没响应，再试一次",
   5: "手机没有可用的语音服务",

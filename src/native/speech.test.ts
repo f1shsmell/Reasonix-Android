@@ -174,6 +174,9 @@ describe("beginSpeechHold", () => {
     // Saying only "网络" made people think the pairing had dropped.
     expect(hold.state.error).toContain("与电脑连接无关");
     expect(hold.state.error).not.toContain("检查网络后重试");
+    // The usual trigger is the phone's VPN/proxy, not the desktop link.
+    expect(hold.state.error).toContain("VPN/代理");
+    expect(hold.state.error).toContain("离线语音包");
   });
 
   it("ends a tap that never reached the service without blaming it", async () => {

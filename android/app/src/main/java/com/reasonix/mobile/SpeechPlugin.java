@@ -2,6 +2,7 @@ package com.reasonix.mobile;
 
 import android.Manifest;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
@@ -38,6 +39,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * One plugin instance exists while every page generation registers its own
  * listeners, so each listen() mints a session id and every event carries it;
  * listeners that own another session ignore the event.
+ *
+ * On API 33+ with an on-device engine installed, a hold uses that engine
+ * instead of the system service. The service uploads audio to its own
+ * servers, and a VPN/proxy on the phone can black-hole that request
+ * (ERROR_NETWORK); the app cannot re-route another app's sockets, so an
+ * on-device engine is the only path that works offline. Below 33, or when
+ * no offline pack is installed, behaviour is unchanged and the error text
+ * says what the person can do instead.
  */
 @CapacitorPlugin(
     name = "Speech",
@@ -48,15 +57,56 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SpeechPlugin extends Plugin {
     /** Level events arrive per audio frame; 80ms matches the waveform step. */
     private static final long LEVEL_INTERVAL_MS = 80;
+    /** TIRAMISU (33) introduced createOnDeviceSpeechRecognizer(). */
+    static final int ON_DEVICE_MIN_SDK = 33;
 
     private SpeechRecognizer recognizer;
     private final AtomicInteger sessions = new AtomicInteger();
     /** Read and written on the main thread only, next to the callbacks. */
     private long lastLevelAt;
 
+    /**
+     * Pure decision, so the API floor is testable on the JVM without a
+     * Context. An on-device engine only exists on 33+, and only when the ROM
+     * actually installed one; otherwise we must stay on the system service
+     * rather than claim an offline path that is not there.
+     */
+    static boolean useOnDevice(int sdkInt, boolean installed) {
+        return sdkInt >= ON_DEVICE_MIN_SDK && installed;
+    }
+
+    /**
+     * isOnDeviceRecognitionAvailable() does not exist below 33, so the query
+     * sits inside an explicit TIRAMISU guard that lint can recognise.
+     */
+    private boolean onDeviceAvailable() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && SpeechRecognizer.isOnDeviceRecognitionAvailable(getContext())) {
+            return useOnDevice(Build.VERSION.SDK_INT, true);
+        }
+        return false;
+    }
+
+    /** A few ROMs advertise an on-device engine but fail to create one. */
+    private SpeechRecognizer createRecognizer(boolean onDevice) {
+        // Repeat the guard at the call site: lint cannot prove a boolean
+        // parameter only becomes true above the API floor.
+        if (onDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                return SpeechRecognizer.createOnDeviceSpeechRecognizer(getContext());
+            } catch (RuntimeException ignored) {
+                // Fall back to the system's default service.
+            }
+        }
+        return SpeechRecognizer.createSpeechRecognizer(getContext());
+    }
+
     @PluginMethod
     public void listen(PluginCall call) {
-        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+        boolean onDevice = onDeviceAvailable();
+        // A phone with only an on-device engine has no default service; do
+        // not turn it away with "no-service" when the offline path exists.
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext()) && !onDevice) {
             call.resolve(unavailable("no-service"));
             return;
         }
@@ -64,7 +114,7 @@ public class SpeechPlugin extends Plugin {
             requestPermissionForAlias("microphone", call, "micResult");
             return;
         }
-        start(call);
+        start(call, onDevice);
     }
 
     @PermissionCallback
@@ -73,7 +123,7 @@ public class SpeechPlugin extends Plugin {
             call.resolve(unavailable("denied"));
             return;
         }
-        start(call);
+        start(call, onDeviceAvailable());
     }
 
     @PluginMethod
@@ -99,7 +149,7 @@ public class SpeechPlugin extends Plugin {
         super.handleOnDestroy();
     }
 
-    private void start(PluginCall call) {
+    private void start(PluginCall call, boolean onDevice) {
         String language = call.getString("language");
         if (language == null || language.isEmpty()) language = "zh-CN";
 
@@ -179,7 +229,7 @@ public class SpeechPlugin extends Plugin {
         bridge.executeOnMainThread(() -> {
             destroyRecognizer();
             lastLevelAt = 0;
-            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer = createRecognizer(onDevice);
             recognizer.setRecognitionListener(listener);
             recognizer.startListening(intent);
         });
