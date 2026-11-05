@@ -11,10 +11,18 @@ import java.util.Map;
 
 /** Serves the WebView bundle from the APK; anything else is the kernel's. */
 final class ProxyAssets {
-    private final Context context;
+    interface Source {
+        java.io.InputStream open(String name) throws IOException;
+    }
+
+    private final Source source;
 
     ProxyAssets(Context context) {
-        this.context = context;
+        this(name -> context.getAssets().open(name));
+    }
+
+    ProxyAssets(Source source) {
+        this.source = source;
     }
 
     boolean serve(Socket socket, String method, String path) throws IOException {
@@ -30,9 +38,8 @@ final class ProxyAssets {
         boolean hasExtension = name.lastIndexOf('.') > name.lastIndexOf('/');
         if (!hasExtension && !name.equals("index.html")) return false;
         try {
-            InputStream in = context.getAssets().open("public/" + name);
             byte[] bytes;
-            try (InputStream stream = in) {
+            try (InputStream stream = source.open("public/" + name)) {
                 bytes = ProxyWire.readAll(stream);
             }
             Map<String, String> extra = new LinkedHashMap<>();
