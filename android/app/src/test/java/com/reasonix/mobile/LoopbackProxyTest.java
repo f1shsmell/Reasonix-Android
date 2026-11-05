@@ -371,4 +371,32 @@ public class LoopbackProxyTest {
         assertEquals("reasonix-android/unknown (Pixel 8)",
                 LoopbackProxy.userAgentFor("null", "  Pixel 8  "));
     }
+
+    @Test
+    public void keepsTheHeaderPrintableWhenTheModelIsNotAscii() {
+        // HttpURLConnection rejects any header char outside 0x20..0x7e, and a
+        // ROM with a Chinese marketing name would otherwise break every
+        // account call, not just this label.
+        String ua = LoopbackProxy.userAgentFor("0.2.7", "红米K30 Pro Zoom Edition");
+        assertEquals("reasonix-android/0.2.7 (K30 Pro Zoom Edition)", ua);
+        assertTrue(isPrintableAscii(ua));
+
+        // The whole name is non-ASCII: omit the suffix rather than send "()".
+        assertEquals("reasonix-android/0.2.7", LoopbackProxy.userAgentFor("0.2.7", "小米手机"));
+        assertTrue(isPrintableAscii(LoopbackProxy.userAgentFor("0.2.7", "小米手机")));
+
+        // A control character would end the header early; it is dropped, not
+        // replaced, so the rest of the name still arrives.
+        assertEquals("K30Pro", LoopbackProxy.asciiOnly("K30\nPro"));
+        assertEquals("K30Pro", LoopbackProxy.asciiOnly("K30\tPro"));
+        assertEquals("", LoopbackProxy.asciiOnly(null));
+    }
+
+    private static boolean isPrintableAscii(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 || c > 0x7e) return false;
+        }
+        return true;
+    }
 }

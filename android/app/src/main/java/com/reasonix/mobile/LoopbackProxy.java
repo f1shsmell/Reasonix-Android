@@ -89,12 +89,39 @@ public final class LoopbackProxy {
      * Pure, so both fallbacks are testable without a Context.
      */
     static String userAgentFor(String version, String model) {
-        String v = version == null ? "" : version.trim();
+        String v = asciiOnly(version).trim();
         if (v.isEmpty() || "null".equals(v)) v = "unknown";
-        String m = model == null ? "" : model.trim();
+        String m = asciiOnly(model).trim();
         return m.isEmpty()
                 ? "reasonix-android/" + v
                 : "reasonix-android/" + v + " (" + m + ")";
+    }
+
+    /**
+     * Header values must be printable ASCII: HttpURLConnection throws on any
+     * character outside 0x20..0x7e. A ROM whose Build.MODEL is a Chinese
+     * marketing name would otherwise break every account call, not just the
+     * label.
+     *
+     * Non-ASCII characters are dropped rather than transliterated, and become
+     * a space so the readable part does not fuse together: "红米K30 Pro" keeps
+     * "K30 Pro", which still tells one phone from another. A name that is
+     * entirely non-ASCII leaves nothing, and the caller then omits the suffix
+     * altogether — "??" would be worse than no model at all.
+     */
+    static String asciiOnly(String raw) {
+        if (raw == null) return "";
+        StringBuilder out = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c >= 0x20 && c <= 0x7e) {
+                out.append(c);
+            } else if (c > 0x7e) {
+                out.append(' ');
+            }
+            // Control characters are dropped: they would end the header.
+        }
+        return out.toString().replaceAll("\\s+", " ").trim();
     }
 
     private static String appVersion(Context context) {
