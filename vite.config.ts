@@ -80,5 +80,17 @@ export default defineConfig({
     // test build. Without this every component test warns, and the batching
     // that makes them deterministic quietly stops applying.
     setupFiles: ["./src/test-setup.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test-setup.ts", "src/env.d.ts"],
+      reporter: ["text-summary"],
+      thresholds: {
+        statements: 78,
+        branches: 71,
+        functions: 78,
+        lines: 81,
+      },
+    },
   },
 });

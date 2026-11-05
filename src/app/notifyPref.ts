@@ -20,17 +20,15 @@
  *   which is why there are two ask channels rather than a boolean on one.
  */
 
-/** What a notification surface does when nothing is stored. */
-export interface NotificationPrefs {
-  /** The ongoing "turn running" notification. Off keeps it, but silent. */
-  ongoing: boolean;
-  /** `ask` notifications: a turn is blocked on a decision. */
-  ask: boolean;
-  /** `done` notifications: a turn finished. */
-  done: boolean;
-  /** Ask notifications may heads-up instead of waiting in the shade. */
-  headsUp: boolean;
-}
+import {
+  readFlag,
+  writeFlag,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type NotificationPrefs,
+} from "./settings";
+
+export type { NotificationPrefs };
 
 /**
  * Defaults.
@@ -42,43 +40,18 @@ export interface NotificationPrefs {
  * the one place where "silent but present" is the better default than a
  * permanent status-bar icon nobody can dismiss.
  */
-const DEFAULTS: NotificationPrefs = {
-  ongoing: false,
-  ask: true,
-  done: true,
-  headsUp: true,
-};
+const DEFAULTS: NotificationPrefs = { ...SETTINGS_DEFAULTS.notify };
 
-const KEYS: Record<keyof NotificationPrefs, string> = {
-  ongoing: "reasonix.notify.ongoing",
-  ask: "reasonix.notify.ask",
-  done: "reasonix.notify.done",
-  headsUp: "reasonix.notify.headsUp",
-};
+const KEYS: Record<keyof NotificationPrefs, string> = SETTINGS_KEYS.notify;
 
 function read(name: keyof NotificationPrefs): boolean {
-  const fallback = DEFAULTS[name];
-  try {
-    const stored = localStorage.getItem(KEYS[name]);
-    if (stored === null) return fallback;
-    return stored === "on";
-  } catch {
-    return fallback;
-  }
+  return readFlag(KEYS[name], DEFAULTS[name]);
 }
 
 function write(name: keyof NotificationPrefs, on: boolean): void {
-  try {
-    // Only the difference is stored, so an untouched switch follows its
-    // default if that default ever changes.
-    if (on === DEFAULTS[name]) {
-      localStorage.removeItem(KEYS[name]);
-      return;
-    }
-    localStorage.setItem(KEYS[name], on ? "on" : "off");
-  } catch {
-    // A closed store keeps the previous choice.
-  }
+  // Only the difference is stored, so an untouched switch follows its default
+  // if that default ever changes.
+  writeFlag(KEYS[name], on, DEFAULTS[name]);
 }
 
 export function loadNotificationPrefs(): NotificationPrefs {

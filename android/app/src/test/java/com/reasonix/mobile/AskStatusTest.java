@@ -126,4 +126,14 @@ public class AskStatusTest {
         assertEquals(null, freeText.choice);
         assertEquals(null, longLabel.choice);
     }
+
+    @Test
+    public void readsTheSharedContractFixture() throws Exception {
+        AskStatus status = AskStatus.parse(Fixtures.read("status-ask.json"));
+
+        assertEquals(2, status.count);
+        assertTrue(status.running);
+        assertTrue(status.text.contains("先做哪个"));
+        assertTrue(status.signature.contains("d2"));
+    }
 }

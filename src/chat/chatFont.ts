@@ -9,7 +9,15 @@
  * choice belongs to this phone, not to the kernel.
  */
 
-export type ChatFont = "sm" | "standard" | "lg" | "xl";
+import {
+  readChoice,
+  writeChoice,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type ChatFont,
+} from "../app/settings";
+
+export type { ChatFont };
 
 export const CHAT_FONT_CHOICES: ReadonlyArray<{ value: ChatFont; label: string }> = [
   { value: "sm", label: "小" },
@@ -21,30 +29,16 @@ export const CHAT_FONT_CHOICES: ReadonlyArray<{ value: ChatFont; label: string }
 export const CHAT_FONT_NOTE =
   "只改变会话正文的字号，标题、代码和时间戳等元信息保持原样。只影响这台手机。";
 
-const KEY = "reasonix.chat-font.v1";
-const DEFAULT: ChatFont = "standard";
-
 export function isChatFont(value: unknown): value is ChatFont {
   return value === "sm" || value === "standard" || value === "lg" || value === "xl";
 }
 
 export function loadChatFont(): ChatFont {
-  try {
-    const stored = localStorage.getItem(KEY);
-    return isChatFont(stored) ? stored : DEFAULT;
-  } catch {
-    // A blocked storage API costs the setting, not the screen.
-    return DEFAULT;
-  }
+  return readChoice(SETTINGS_KEYS.chatFont, ["sm", "standard", "lg", "xl"], SETTINGS_DEFAULTS.chatFont);
 }
 
 export function saveChatFont(font: ChatFont): void {
-  try {
-    if (font === DEFAULT) localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, font);
-  } catch {
-    // The next cold start reads the default; this session keeps the choice.
-  }
+  writeChoice(SETTINGS_KEYS.chatFont, font, SETTINGS_DEFAULTS.chatFont);
 }
 
 /**
@@ -54,6 +48,6 @@ export function saveChatFont(font: ChatFont): void {
  */
 export function applyChatFont(font: ChatFont): void {
   const root = document.documentElement;
-  if (font === DEFAULT) root.removeAttribute("data-chat-font");
+  if (font === SETTINGS_DEFAULTS.chatFont) root.removeAttribute("data-chat-font");
   else root.setAttribute("data-chat-font", font);
 }

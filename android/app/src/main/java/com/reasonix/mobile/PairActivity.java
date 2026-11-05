@@ -1,6 +1,7 @@
 package com.reasonix.mobile;
 
-import android.app.Activity;
+import android.annotation.SuppressLint;
+
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -20,6 +21,9 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+
 /**
  * The Studio share page, loaded invisibly to spend a pairing code.
  *
@@ -29,7 +33,8 @@ import android.widget.TextView;
  * WebView loads the same link. It succeeds when the `reasonix_device` cookie
  * appears, then finishes and hands the result to PairPlugin.
  */
-public class PairActivity extends Activity {
+@SuppressLint("SetJavaScriptEnabled")
+public class PairActivity extends ComponentActivity {
     private static final long TIMEOUT_MS = 15_000;
     static final String EXTRA_REASON = "reason";
 
@@ -41,6 +46,12 @@ public class PairActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                finishWith(RESULT_CANCELED, "cancelled");
+            }
+        });
         String url = getIntent().getStringExtra("url");
         origin = getIntent().getStringExtra("origin");
         if (!Urls.isWebUrl(url) || !Urls.isWebUrl(origin)) {
@@ -139,12 +150,6 @@ public class PairActivity extends Activity {
         data.putExtra(EXTRA_REASON, reason);
         setResult(resultCode, data);
         finish();
-    }
-
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onBackPressed() {
-        finishWith(RESULT_CANCELED, "cancelled");
     }
 
     @Override

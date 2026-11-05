@@ -15,10 +15,15 @@
  * shows — the native side is the authority, this is the last answer given.
  */
 
-export type NetPolicy = "auto" | "bypass" | "system";
+import {
+  readChoice,
+  writeChoice,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type NetPolicy,
+} from "./settings";
 
-const STORAGE_KEY = "reasonix.net-policy";
-const DEFAULT: NetPolicy = "auto";
+export type { NetPolicy };
 
 export const NET_POLICY_CHOICES: ReadonlyArray<{ value: NetPolicy; label: string }> = [
   { value: "auto", label: "自动" },
@@ -34,20 +39,9 @@ export function isNetPolicy(value: unknown): value is NetPolicy {
 }
 
 export function loadNetPolicy(): NetPolicy {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return isNetPolicy(stored) ? stored : DEFAULT;
-  } catch {
-    // A blocked storage API costs the setting, not the screen.
-    return DEFAULT;
-  }
+  return readChoice(SETTINGS_KEYS.netPolicy, ["auto", "bypass", "system"], SETTINGS_DEFAULTS.netPolicy);
 }
 
 export function saveNetPolicy(policy: NetPolicy): void {
-  try {
-    if (policy === DEFAULT) localStorage.removeItem(STORAGE_KEY);
-    else localStorage.setItem(STORAGE_KEY, policy);
-  } catch {
-    // The next cold start reads the default; this session keeps the choice.
-  }
+  writeChoice(SETTINGS_KEYS.netPolicy, policy, SETTINGS_DEFAULTS.netPolicy);
 }

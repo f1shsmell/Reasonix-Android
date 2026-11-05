@@ -1,0 +1,17 @@
+[
+  {
+    "id": "r1",
+    "base": "/rt/r1",
+    "root": "C:\\work",
+    "name": "app",
+    "sessionPath": "C:\\work\\.reasonix\\one.jsonl",
+    "readOnly": true,
+    "host": "192.168.5.3:57074"
+  },
+  {
+    "id": "r2",
+    "base": "/rt/r2",
+    "root": "/work/docs",
+    "name": "docs"
+  }
+]

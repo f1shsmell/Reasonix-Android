@@ -75,9 +75,9 @@ public class TurnPlugin extends Plugin {
     @PluginMethod
     public void setNotificationOptions(PluginCall call) {
         boolean show = Boolean.TRUE.equals(call.getBoolean("showOptions", false));
-        getContext().getSharedPreferences(TurnService.PREFS_NOTIFY, Context.MODE_PRIVATE)
+        getContext().getSharedPreferences(TurnNotifyPrefs.PREFS, Context.MODE_PRIVATE)
                 .edit()
-                .putBoolean(TurnService.KEY_SHOW_OPTIONS, show)
+                .putBoolean(TurnNotifyPrefs.KEY_SHOW_OPTIONS, show)
                 .apply();
         TurnService.notificationOptionsChanged();
         call.resolve(new JSObject());
@@ -94,16 +94,16 @@ public class TurnPlugin extends Plugin {
     @PluginMethod
     public void setNotificationPrefs(PluginCall call) {
         SharedPreferences.Editor editor = getContext()
-                .getSharedPreferences(TurnService.PREFS_NOTIFY, Context.MODE_PRIVATE)
+                .getSharedPreferences(TurnNotifyPrefs.PREFS, Context.MODE_PRIVATE)
                 .edit();
         Boolean ongoing = call.getBoolean("ongoing");
         Boolean ask = call.getBoolean("ask");
         Boolean done = call.getBoolean("done");
         Boolean headsUp = call.getBoolean("headsUp");
-        if (ongoing != null) editor.putBoolean(TurnService.KEY_NOTIFY_ONGOING, ongoing);
-        if (ask != null) editor.putBoolean(TurnService.KEY_NOTIFY_ASK, ask);
-        if (done != null) editor.putBoolean(TurnService.KEY_NOTIFY_DONE, done);
-        if (headsUp != null) editor.putBoolean(TurnService.KEY_NOTIFY_HEADS_UP, headsUp);
+        if (ongoing != null) editor.putBoolean(TurnNotifyPrefs.KEY_ONGOING, ongoing);
+        if (ask != null) editor.putBoolean(TurnNotifyPrefs.KEY_ASK, ask);
+        if (done != null) editor.putBoolean(TurnNotifyPrefs.KEY_DONE, done);
+        if (headsUp != null) editor.putBoolean(TurnNotifyPrefs.KEY_HEADS_UP, headsUp);
         editor.apply();
         // Whether an ask is affected decides how much has to be rebuilt: the
         // ongoing notification always is (its channel may have moved), while an
@@ -116,11 +116,7 @@ public class TurnPlugin extends Plugin {
 
     private void launch(Intent intent) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
+            getContext().startForegroundService(intent);
         } catch (RuntimeException e) {
             // A background start can be refused; the turn still runs, and the
             // next foreground entry will try again.

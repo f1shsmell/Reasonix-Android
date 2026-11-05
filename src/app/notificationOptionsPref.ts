@@ -5,21 +5,12 @@
  * the system. Off means every ask notification carries one action, 去回答,
  * which opens that conversation instead of guessing at a truncated label.
  */
-const KEY = "reasonix.notificationOptions.v1";
+import { readFlag, writeFlag, SETTINGS_KEYS, SETTINGS_DEFAULTS } from "./settings";
 
 export function loadNotificationOptions(): boolean {
-  try {
-    return localStorage.getItem(KEY) === "on";
-  } catch {
-    return false;
-  }
+  return readFlag(SETTINGS_KEYS.notificationOptions, SETTINGS_DEFAULTS.notificationOptions);
 }
 
 export function saveNotificationOptions(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(KEY, "on");
-    else localStorage.removeItem(KEY);
-  } catch {
-    // A closed store keeps the previous choice.
-  }
+  writeFlag(SETTINGS_KEYS.notificationOptions, on, SETTINGS_DEFAULTS.notificationOptions);
 }

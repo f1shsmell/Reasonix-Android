@@ -1,5 +1,7 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
+
 import android.app.Activity;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -36,6 +38,7 @@ import android.widget.Toast;
  * approve-ish button an explicit color; a native "同意并批准" button is the
  * fallback when the page's own button is still invisible.
  */
+@SuppressLint("SetJavaScriptEnabled")
 public class LoginActivity extends Activity {
     private static final String FIX_APPROVAL_JS =
             "(function(){" +
@@ -86,7 +89,7 @@ public class LoginActivity extends Activity {
         root.setBackgroundColor(Color.rgb(247, 248, 250));
 
         TextView title = new TextView(this);
-        title.setText("登录 Reasonix");
+        title.setText(R.string.login_title);
         title.setTextSize(18);
         title.setTextColor(Color.rgb(20, 23, 28));
         title.setPadding(48, 64, 48, 16);
@@ -201,7 +204,7 @@ public class LoginActivity extends Activity {
         loadPage();
         web.postDelayed(() -> {
             if (!pageLoaded && !loadFailed) {
-                status.setText("登录页加载很慢，可能连不上 reasonix.io。可以继续等待，或点「重试」。");
+                status.setText(R.string.login_slow);
                 retry.setVisibility(View.VISIBLE);
             }
         }, SLOW_PAGE_HINT_MS);

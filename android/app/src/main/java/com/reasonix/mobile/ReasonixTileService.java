@@ -1,5 +1,6 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -48,6 +49,7 @@ public class ReasonixTileService extends TileService {
         tile.updateTile();
     }
 
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private void openApp() {
         Intent intent = new Intent(this, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK

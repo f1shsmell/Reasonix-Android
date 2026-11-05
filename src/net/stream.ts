@@ -8,6 +8,8 @@
  */
 
 import type { EventPayload } from "../wire/events";
+import { kernelTransport } from "./transport";
+import type { KernelEventSource } from "./transport";
 
 export type StreamState =
   | { kind: "idle" }
@@ -30,7 +32,7 @@ const CURSOR_KEY = "reasonix.cursor.";
 export class RuntimeStream {
   private url: string;
   private handlers: StreamHandlers;
-  private source: EventSource | null = null;
+  private source: KernelEventSource | null = null;
   private attempt = 0;
   private timer: number | null = null;
   private stopped = false;
@@ -118,9 +120,9 @@ export class RuntimeStream {
     // reconnects. A connection we create fresh needs it on the query, which
     // the kernel reads through lastEventID.
     const url = this.lastEventId > 0 ? `${this.url}?lastEventId=${this.lastEventId}` : this.url;
-    let source: EventSource;
+    let source: KernelEventSource;
     try {
-      source = new EventSource(url, { withCredentials: true });
+      source = kernelTransport().eventSource(url, { withCredentials: true });
     } catch {
       // During a relay -> LAN switch the relay wrapper can be gone before the
       // stream has reconnected. Retry through the transport installed by then

@@ -8,7 +8,9 @@
  * glance here.
  */
 
-export type FoldMode = "compact" | "standard" | "full";
+import { readChoice, writeChoice, SETTINGS_KEYS, SETTINGS_DEFAULTS, type FoldMode } from "../app/settings";
+
+export type { FoldMode };
 
 export const FOLD_CHOICES: ReadonlyArray<{ value: FoldMode; label: string }> = [
   { value: "compact", label: "精简" },
@@ -19,27 +21,11 @@ export const FOLD_CHOICES: ReadonlyArray<{ value: FoldMode; label: string }> = [
 export const FOLD_NOTE =
   "精简只留结论和一行操作摘要；详尽把每一步都摊开。只影响这台手机。";
 
-const KEY = "reasonix.folding.v1";
-const DEFAULT: FoldMode = "standard";
-
-function isFoldMode(value: unknown): value is FoldMode {
-  return value === "compact" || value === "standard" || value === "full";
-}
 
 export function loadFoldMode(): FoldMode {
-  try {
-    const stored = localStorage.getItem(KEY);
-    return isFoldMode(stored) ? stored : DEFAULT;
-  } catch {
-    return DEFAULT;
-  }
+  return readChoice(SETTINGS_KEYS.folding, ["compact", "standard", "full"], SETTINGS_DEFAULTS.folding);
 }
 
 export function saveFoldMode(mode: FoldMode): void {
-  try {
-    localStorage.setItem(KEY, mode);
-  } catch {
-    // A blocked storage API means the next session starts at the default;
-    // the current one still reads the chosen mode from component state.
-  }
+  writeChoice(SETTINGS_KEYS.folding, mode, SETTINGS_DEFAULTS.folding);
 }

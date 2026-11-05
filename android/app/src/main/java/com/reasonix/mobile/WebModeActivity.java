@@ -1,6 +1,7 @@
 package com.reasonix.mobile;
 
-import android.app.Activity;
+import android.annotation.SuppressLint;
+
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
@@ -20,6 +21,9 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 
 /**
  * The paired computer's own Studio page, full screen.
@@ -42,7 +46,8 @@ import android.widget.TextView;
  * sign-in page, an external link in the transcript — is handed to the browser
  * so the page never becomes a general-purpose window.
  */
-public class WebModeActivity extends Activity {
+@SuppressLint("SetJavaScriptEnabled")
+public class WebModeActivity extends ComponentActivity {
     private WebView web;
     private TextView errorCard;
     private Button retryButton;
@@ -57,6 +62,16 @@ public class WebModeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (web != null && web.canGoBack()) {
+                    web.goBack();
+                    return;
+                }
+                finish();
+            }
+        });
         Intent source = getIntent();
         String url = source.getStringExtra("url");
         if (!Urls.isWebUrl(url)) {
@@ -100,7 +115,7 @@ public class WebModeActivity extends Activity {
             String agent = settings.getUserAgentString();
             settings.setUserAgentString(
                     (agent == null || agent.isEmpty() ? "Mozilla/5.0" : agent)
-                            + " " + LoopbackProxy.STUDIO_UA_MARKER);
+                            + " " + ProxyPaths.STUDIO_UA_MARKER);
         }
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -118,7 +133,7 @@ public class WebModeActivity extends Activity {
                     // forms, which carry no slash after the authority.
                     String base = kernelOrigin.endsWith("/")
                             ? kernelOrigin.substring(0, kernelOrigin.length() - 1) : kernelOrigin;
-                    String path = LoopbackProxy.loopbackPath(base, target);
+                    String path = ProxyPaths.loopbackPath(base, target);
                     if (path != null) {
                         view.loadUrl(LoopbackProxy.LOOPBACK_ORIGIN + path);
                         return true;
@@ -243,16 +258,6 @@ public class WebModeActivity extends Activity {
         } catch (RuntimeException e) {
             return url == null ? "" : url;
         }
-    }
-
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onBackPressed() {
-        if (web != null && web.canGoBack()) {
-            web.goBack();
-            return;
-        }
-        super.onBackPressed();
     }
 
     @Override

@@ -90,6 +90,14 @@ npm run build
 REASONIX_SERVE=http://<desktop>:8791 npm run dev
 ```
 
+不启动内核、只改界面时：
+
+```bash
+npm run dev:mock
+```
+
+`dev:mock` 使用本地脚本化内核（演示项目与固定对话），不会读取真实会话；生产构建不会包含这份 fixture。
+
 构建 Android 包：
 
 ```bash
@@ -100,9 +108,9 @@ cd android && ./gradlew assembleDebug
 
 产物在 `android/app/build/outputs/apk/debug/app-debug.apk`。
 
-**项目结构** — `src/app/` 应用外壳与连接状态机 · `src/chat/` 对话折叠与输入区 · `src/net/` 内核 / 代理 / 中继客户端 · `android/` Capacitor 壳与原生插件 · `docs/` 交接文档与渲染图。
+**项目结构** — `src/app/` 应用外壳与连接状态机 · `src/chat/` 对话折叠与输入区 · `src/net/` 内核 / 代理 / 中继客户端 · `src/native/` Capacitor 插件桥 · `src/wire/` 内核契约类型 · `src/ui/` 设计 token 与样式 · `android/` Capacitor 壳与原生插件 · `fixtures/wire/` 前后端共用的契约样本 · `docs/` 交接文档与渲染图。
 
-**发布** — `ci.yml` 在每次 push / PR 跑类型检查、测试与 debug APK（artifact，非发布）；`release.yml` 只在 `vX.Y.Z` tag 时运行，校验 tag、发布说明与版本号后构建签名包。流程见 [RELEASING.md](RELEASING.md)。
+**发布** — `ci.yml` 在每次 push / PR 跑 lint、类型检查、测试与 debug APK（artifact，非发布）；`release.yml` 只在 `vX.Y.Z` tag 时运行，校验 tag、发布说明与版本号后构建签名包。流程见 [RELEASING.md](RELEASING.md)。
 
 更多文档：[交接与决策](docs/HANDOFF.md)、[自建与排障](docs/SELF_HOST.md)、[已知限制](docs/KNOWN_LIMITATIONS.md)、[发版流程](RELEASING.md)。
 

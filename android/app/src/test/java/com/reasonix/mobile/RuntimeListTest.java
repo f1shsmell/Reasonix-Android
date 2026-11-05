@@ -51,4 +51,14 @@ public class RuntimeListTest {
         assertEquals("app", RuntimeList.titleOf("C:\\work\\", "app"));
         assertEquals("b.jsonl", RuntimeList.titleOf("/work/b.jsonl", "app"));
     }
+
+    @Test
+    public void readsTheSharedContractFixture() throws Exception {
+        List<RuntimeList.Row> rows = RuntimeList.parse(Fixtures.read("runtimes.json"));
+
+        assertEquals(2, rows.size());
+        assertEquals("/rt/r1", rows.get(0).base);
+        assertTrue(rows.get(0).readOnly);
+        assertEquals("docs", rows.get(1).title);
+    }
 }
