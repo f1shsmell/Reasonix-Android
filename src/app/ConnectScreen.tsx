@@ -1209,7 +1209,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         {/* The computer this phone is pointed at and what the link is doing:
             the one fact every control below is judged against, so it leads. */}
         {pane === "connect" ? (
-          <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} />
+          <ConnectionHero name={heroName} detail={heroDetail} link={link} busy={busy} onRepair={scan} />
         ) : null}
 
         {/* How this phone reaches the computer: which network is live, and

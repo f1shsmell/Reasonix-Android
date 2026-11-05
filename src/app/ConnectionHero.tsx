@@ -12,7 +12,7 @@
  * them.
  */
 
-import { LINK_STEPS, linkSummary, linkTone, stepLabel } from "../net/link";
+import { isStalePairing, LINK_STEPS, linkSummary, linkTone, stepLabel } from "../net/link";
 import type { LinkState } from "../net/link";
 import { RMark } from "./RMark";
 
@@ -23,9 +23,11 @@ export interface ConnectionHeroProps {
   link?: LinkState | undefined;
   /** A manual attempt the link machine has not been told about yet. */
   busy?: string;
+  /** Offered only for a stale pairing: a fresh scan writes a new credential. */
+  onRepair?: () => void;
 }
 
-export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHeroProps) {
+export function ConnectionHero({ name, detail, link, busy = "", onRepair }: ConnectionHeroProps) {
   const working = busy !== "" || link?.phase === "connecting" || link?.phase === "reconnecting";
   const tone = busy !== "" ? "busy" : link ? linkTone(link) : "idle";
   const line = busy !== "" ? `${busy}…` : link ? heroLine(link, detail) : detail;
@@ -36,12 +38,20 @@ export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHero
   // is nothing to animate while the phone has no way out.
   const compact = !working && !staged;
 
+  // A stale credential is not a network failure: no retry of the same address
+  // can repair it. Only a fresh scan writes a new one, so offer that one path
+  // right where the failure is shown, instead of a sentence telling the
+  // person to "reconnect" in settings.
+  const repair = Boolean(
+    !working && onRepair && link?.phase === "failed" && isStalePairing(link.error?.code),
+  );
+
   return (
     <section
       className="link-hero"
       data-tone={tone}
       data-live={working ? "true" : undefined}
-      data-compact={compact ? "true" : undefined}
+      data-compact={compact && !repair ? "true" : undefined}
       aria-label="连接状态"
     >
       <span className="link-hero-mark" aria-hidden="true">
@@ -51,6 +61,11 @@ export function ConnectionHero({ name, detail, link, busy = "" }: ConnectionHero
       <p className="link-hero-sub" role="status">
         {line}
       </p>
+      {repair ? (
+        <button type="button" className="link-hero-repair" onClick={onRepair}>
+          重新扫码配对
+        </button>
+      ) : null}
       {staged && link ? (
         <ol className="link-steps" aria-label="连接步骤">
           {LINK_STEPS.map((step) => {

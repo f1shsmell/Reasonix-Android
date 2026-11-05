@@ -45,6 +45,11 @@ export interface LinkError {
   retryable: boolean;
 }
 
+/** A dead pairing credential: retrying the same address can never bring it back. */
+export function isStalePairing(code: string | undefined): boolean {
+  return code === "device.unauthorized" || code === "http.401" || code === "http.403";
+}
+
 export interface LinkState {
   phase: LinkPhase;
   /** Stage in progress while connecting / reconnecting. */
@@ -149,7 +154,7 @@ export function linkFailure(code: string, detail?: string): LinkError {
     case "http.403":
       return {
         code,
-        message: "配对或登录已失效，请在设置里重新连接。",
+        message: "配对或登录已失效，请重新扫码配对或重新登录；重试旧地址不会恢复。",
         retryable: false,
         ...withDetail,
       };

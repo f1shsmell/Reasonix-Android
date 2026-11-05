@@ -289,6 +289,23 @@
 
 .link-hero[data-tone="bad"] .link-hero-sub { color: var(--bad); }
 
+/* The one failure a retry cannot fix: a fresh scan is the only way back, so
+   it gets its own button rather than a sentence pointing into settings. */
+.link-hero-repair {
+  margin-top: 10px;
+  padding: 9px 18px;
+  border: 1px solid var(--bad);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bad);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-hero-repair:active { background: rgba(var(--bad-rgb), 0.12); }
+
 .link-steps {
   display: flex;
   flex-wrap: wrap;
