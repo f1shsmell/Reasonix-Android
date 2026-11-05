@@ -21,6 +21,11 @@ import {
 } from "../net/server";
 import type { DeviceGrant, ProxyConfig, RemoteDevice } from "../net/server";
 import { RequestTimeout } from "../net/http";
+import { WebMode } from "../native/webmode";
+import {
+  studioAppUrl,
+  studioWebUrl,
+} from "../net/server";
 import { forgetFleetPeer } from "../net/fleet";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
@@ -99,6 +104,7 @@ vi.mock("../net/server", () => ({
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
   studioWebUrl: vi.fn(() => ""),
+  studioAppUrl: vi.fn(() => ""),
   probeUpstream: vi.fn(),
   readMachineIdentity: vi.fn(async () => null),
   ProxyError: class ProxyError extends Error {
@@ -1102,5 +1108,62 @@ describe("ConnectScreen verification", () => {
     await press("连接");
     await settle();
     expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ConnectScreen full Studio", () => {
+  const loopback = "http://127.0.0.1:8788/";
+  const kernel = "http://192.168.5.2:56789";
+
+  beforeEach(() => {
+    // The real URL helpers are mocked at module scope; give these tests the
+    // two answers a LAN door would produce so the wiring itself is exercised.
+    vi.mocked(studioWebUrl).mockReturnValue(kernel);
+    vi.mocked(studioAppUrl).mockReturnValue(loopback);
+    vi.mocked(readProxyConfig).mockResolvedValue(config({ studioUrl: loopback }));
+  });
+
+  afterEach(() => {
+    // The file-wide beforeEach only calls clearAllMocks(), which keeps
+    // implementations. Without this reset the next describe would see a
+    // "完整界面" section that its config never asked for.
+    vi.mocked(studioWebUrl).mockReturnValue("");
+    vi.mocked(studioAppUrl).mockReturnValue("");
+  });
+
+  it("opens the in-app Studio through the loopback proxy on a LAN door", async () => {
+    await renderScreen();
+    await pressRow("在应用内打开");
+
+    // A bare WebView on the kernel address is the "打不开完整界面" bug: it
+    // loses the VPN detour and the pairing cookie. The activity must be told
+    // to load the proxy's own origin and carry the UA marker.
+    expect(WebMode.open).toHaveBeenCalledWith({
+      url: loopback,
+      viaProxy: true,
+      origin: kernel,
+    });
+  });
+
+  it("hands the system browser the real kernel address", async () => {
+    await renderScreen();
+    await pressRow("在浏览器打开");
+
+    // The browser has no proxy cookie and cannot reach this app's 127.0.0.1.
+    expect(Browser.open).toHaveBeenCalledWith({ url: kernel });
+    expect(WebMode.open).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the real address when no native WebView exists", async () => {
+    vi.mocked(WebMode.open).mockRejectedValueOnce(new Error("no activity"));
+    await renderScreen();
+    await pressRow("在应用内打开");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The browser fallback must not be handed the loopback URL it cannot use.
+    expect(Browser.open).toHaveBeenCalledWith({ url: kernel });
   });
 });

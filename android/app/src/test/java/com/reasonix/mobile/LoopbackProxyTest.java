@@ -303,6 +303,48 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void identifiesTheStudioWebViewByItsUserAgentMarker() {
+        assertFalse(LoopbackProxy.isStudio(headers()));
+        assertFalse(LoopbackProxy.isStudio(headers("user-agent", "Mozilla/5.0 Chrome/96")));
+        assertTrue(LoopbackProxy.isStudio(headers(
+                "user-agent", "Mozilla/5.0 " + LoopbackProxy.STUDIO_UA_MARKER)));
+    }
+
+    @Test
+    public void keepsAKernelAbsoluteRedirectOnTheLoopbackOrigin() {
+        String origin = "http://192.168.5.3:55716";
+        // A SPA naming its own origin absolutely would put the WebView back on
+        // the LAN address and lose the proxy's VPN detour.
+        assertEquals("/", LoopbackProxy.studioLocation(origin, origin));
+        assertEquals("/tree/events?x=1",
+                LoopbackProxy.studioLocation(origin + "/tree/events?x=1", origin));
+        assertEquals("/settings",
+                LoopbackProxy.studioLocation(origin + "/settings", origin + "/"));
+        // A different host must stay absolute: it is not ours to rewrite.
+        assertEquals("https://id.reasonix.io/login",
+                LoopbackProxy.studioLocation("https://id.reasonix.io/login", origin));
+        assertEquals("/local", LoopbackProxy.studioLocation("/local", origin));
+        assertNull(LoopbackProxy.studioLocation(null, origin));
+        assertEquals("http://elsewhere/x",
+                LoopbackProxy.studioLocation("http://elsewhere/x", ""));
+    }
+
+    @Test
+    public void onlyTreatsTheExactKernelAuthorityAsALoopbackLink() {
+        String base = "http://192.168.5.3:55716";
+        // Query and fragment forms have no slash after the authority.
+        assertEquals("/?device=1", LoopbackProxy.loopbackPath(base, base + "?device=1"));
+        assertEquals("/#/tree", LoopbackProxy.loopbackPath(base, base + "#/tree"));
+        assertEquals("/", LoopbackProxy.loopbackPath(base, base + "/"));
+        // A host that merely starts with the same text is a different origin:
+        // swallowing it would let a foreign page inherit the pairing cookie.
+        assertNull(LoopbackProxy.loopbackPath(base, base + ".evil.com/path"));
+        assertNull(LoopbackProxy.loopbackPath(base, "http://192.168.5.3:55717/x"));
+        assertNull(LoopbackProxy.loopbackPath(base, "https://192.168.5.3:55716/x"));
+        assertNull(LoopbackProxy.loopbackPath(base, "/relative"));
+    }
+
+    @Test
     public void readsTheMachineNameADeviceAnswersWith() {
         assertEquals("Home Mac", LoopbackProxy.machineOf(
                 "{\"id\":\"paired-1\",\"ordinal\":1,\"machine\":\"Home Mac\"}"));

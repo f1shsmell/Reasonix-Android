@@ -76,9 +76,15 @@ public final class LoopbackProxy {
     /** Watching every remembered computer would make a sweep a port scan. */
     private static final int MAX_FLEET = 4;
     private static final String PROXY_COOKIE = "reasonix_loopback";
-    private static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
+    static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
     private static final String IDENTITY = "https://id.reasonix.io";
     private static final String USER_AGENT = "reasonix-android/0.1";
+    /**
+     * The full Studio page is a second WebView on this same origin. Its UA
+     * carries this marker so the proxy knows to send its requests to the
+     * kernel instead of serving the app's own bundle from the APK.
+     */
+    static final String STUDIO_UA_MARKER = "reasonix-studio/1";
 
     /** A 10 MB image becomes ~13.3 MB of base64 inside a JSON envelope. */
     private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
@@ -267,8 +273,11 @@ public final class LoopbackProxy {
                 return;
             }
             // The bundle is served from the APK, not from the kernel: only
-            // paths the bundle does not own are forwarded.
-            if (("GET".equals(method) || "HEAD".equals(method)) && serveStatic(s, method, path)) {
+            // paths the bundle does not own are forwarded. The full Studio
+            // WebView is the exception — it is a second client on this same
+            // origin and needs the kernel's own page and assets, not ours.
+            if (!isStudio(headers) && ("GET".equals(method) || "HEAD".equals(method))
+                    && serveStatic(s, method, path)) {
                 return;
             }
             forward(s, method, target, headers, body);
@@ -969,7 +978,16 @@ public final class LoopbackProxy {
         out.put("direct", direct);
         out.put("paired", !origin.isEmpty()
                 && (hasCookie(origin) || !webCookie(origin.endsWith("/") ? origin : origin + "/").isEmpty()));
-        out.put("mode", prefs.getString(KEY_MODE, "lan"));
+        String mode = prefs.getString(KEY_MODE, "lan");
+        out.put("mode", mode);
+        // The full Studio page can only reach a LAN kernel through this proxy:
+        // a direct WebView loses the VPN detour, the device cookie and the
+        // CSRF Origin that forwarding supplies. Hand the client the loopback
+        // address for its in-app WebView, but only for a LAN door with an
+        // upstream. The system browser keeps the kernel's real address — it
+        // has no proxy cookie and cannot use 127.0.0.1.
+        out.put("studioUrl", !origin.isEmpty() && !"relay".equals(mode)
+                ? LOOPBACK_ORIGIN + "/" : "");
         out.put("relayDevice", prefs.getString(KEY_RELAY_DEVICE, ""));
         out.put("vpn", vpnActive());
         out.put("lan", lanAvailable());
@@ -1579,7 +1597,7 @@ public final class LoopbackProxy {
             // A redirect or a download is useless if only Content-Type is
             // copied: the WebView follows a Location, and a file needs its name.
             Map<String, String> forwarded = new LinkedHashMap<>();
-            copyHeader(conn, forwarded, "Location");
+            copyLocation(conn, forwarded, origin, headers);
             copyHeader(conn, forwarded, "Content-Disposition");
             copyHeader(conn, forwarded, "ETag");
             copyHeader(conn, forwarded, "Last-Modified");
@@ -1599,6 +1617,58 @@ public final class LoopbackProxy {
     private static void copyHeader(HttpURLConnection conn, Map<String, String> out, String name) {
         String value = conn.getHeaderField(name);
         if (value != null && !value.isEmpty()) out.put(name, value);
+    }
+
+    /**
+     * Keep a Studio WebView on the loopback origin when the kernel redirects.
+     *
+     * A kernel-absolute Location would send that WebView back to the LAN
+     * address, which is exactly the path the loopback proxy exists to avoid
+     * (VPN routing, cookies, CSRF Origin). Only the Studio client needs this:
+     * the app's own API calls are unaffected.
+     */
+    private static void copyLocation(HttpURLConnection conn, Map<String, String> out,
+                                     String origin, Map<String, String> headers) {
+        String value = conn.getHeaderField("Location");
+        if (value == null || value.isEmpty()) return;
+        out.put("Location", isStudio(headers) ? studioLocation(value, origin) : value);
+    }
+
+    /** Whether a request came from the full Studio WebView, not the app. */
+    static boolean isStudio(Map<String, String> headers) {
+        String agent = headers.get("user-agent");
+        return agent != null && agent.contains(STUDIO_UA_MARKER);
+    }
+
+    /** Pure half of copyLocation, so the rewrite can be tested without a socket. */
+    static String studioLocation(String location, String origin) {
+        if (location == null || origin == null || origin.isEmpty()) return location;
+        String base = origin.endsWith("/") ? origin.substring(0, origin.length() - 1) : origin;
+        String path = loopbackPath(base, location);
+        // A relative Location, or one naming another host, is already safe.
+        return path == null ? location : path;
+    }
+
+    /**
+     * The path part of an absolute kernel URL, or null when the URL does not
+     * name this kernel at all.
+     *
+     * Shared by the redirect rewrite and the Studio WebView's link guard. The
+     * boundary after the authority matters: `?query` and `#fragment` have no
+     * slash, and a host such as `192.168.5.3:55716.evil.com` merely starts
+     * with the same text — treating either as a same-origin path would send
+     * the page back to the LAN address or let a foreign host through the guard.
+     */
+    static String loopbackPath(String base, String target) {
+        if (target == null || base == null || base.isEmpty()) return null;
+        if (target.equals(base)) return "/";
+        if (!target.startsWith(base)) return null;
+        String rest = target.substring(base.length());
+        if (rest.isEmpty()) return "/";
+        char next = rest.charAt(0);
+        if (next == '/') return rest;
+        if (next == '?' || next == '#') return "/" + rest;
+        return null;
     }
 
     private void applyCookies(HttpURLConnection conn, URI uri) {
