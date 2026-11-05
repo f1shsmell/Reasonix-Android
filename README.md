@@ -90,6 +90,14 @@ npm run build
 REASONIX_SERVE=http://<desktop>:8791 npm run dev
 ```
 
+不启动内核、只改界面时：
+
+```bash
+npm run dev:mock
+```
+
+`dev:mock` 使用本地脚本化内核（演示项目与固定对话），不会读取真实会话；生产构建不会包含这份 fixture。
+
 构建 Android 包：
 
 ```bash

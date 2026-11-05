@@ -13,6 +13,8 @@
  * that navigates away still cancels its request.
  */
 
+import { kernelTransport } from "./transport";
+
 export const DEFAULT_TIMEOUT_MS = 15_000;
 /** An image upload is 10 MB of base64 over a LAN; it needs its own budget. */
 export const UPLOAD_TIMEOUT_MS = 60_000;
@@ -54,7 +56,7 @@ export function fetchWithTimeout(
       reject(new RequestTimeout(timeoutMs));
     }, timeoutMs);
 
-    Promise.resolve(fetch(input, { ...init, signal: controller.signal })).then(
+    Promise.resolve(kernelTransport().fetch(input, { ...init, signal: controller.signal })).then(
       (response) => {
         clearTimeout(timer);
         resolve(response);
