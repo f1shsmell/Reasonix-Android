@@ -1,21 +1,20 @@
-/* The system bars are padded from whichever source knows whether the window
-   already did it:
+/* The top inset is measured natively, because neither CSS source can answer
+   it. `env(safe-area-inset-top)` reports the status bar's real height however
+   the window arranged itself — it describes the viewport's safe area, not who
+   moved the view — so a page already sitting below the bar padded a second
+   bar's worth beneath it. Capacitor's `--safe-area-inset-*` would answer that
+   question, but it is written onto one document's inline style and was
+   measured never to arrive, which the fallback then hid.
 
-   - WebView < 140: Capacitor pads the WebView down by the inset itself, then
-     injects `--safe-area-inset-top: 0px`. `env()` still reports the real
-     height there, so taking the max() of the two padded twice — one status
-     bar drew a second one's worth of empty space under it.
-   - WebView >= 140 with `viewport-fit=cover`: the WebView is laid under the
-     bar and the injected variable carries the real height.
-
-   In both cases the injected value is the one that knows the answer, so it
-   comes first; `env()` is only the fallback for a bridge that never injected
-   (insetsHandling is not "css"). See capacitor.config.ts. */
+   `--rx-inset-top` is what MainActivity actually measured: how much of the
+   bar the window has *not* cleared. 0 when the page already sits below it,
+   the bar's height when the page is laid under it. `env()` stays only as the
+   fallback for a ROM that exposes no status-bar dimension at all. */
 .shell {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-top: var(--rx-inset-top, env(safe-area-inset-top, 0px));
   padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 }
 

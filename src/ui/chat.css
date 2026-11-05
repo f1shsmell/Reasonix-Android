@@ -24,11 +24,11 @@ html[data-chat-font="xl"] {
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* See shell.css: the injected inset already accounts for whether Capacitor
-     padded the WebView itself, so it outranks `env()` rather than losing to
-     it in a max(). The bottom is left to the composer, which owns its own
-     clearance. */
-  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  /* See shell.css: the top inset is measured natively into `--rx-inset-top`,
+     because `env()` reports the bar's height whether or not the window already
+     cleared it, and Capacitor's own variable was measured never to arrive. The
+     bottom is left to the composer, which owns its own clearance. */
+  padding-top: var(--rx-inset-top, env(safe-area-inset-top, 0px));
   background: transparent;
 }
 

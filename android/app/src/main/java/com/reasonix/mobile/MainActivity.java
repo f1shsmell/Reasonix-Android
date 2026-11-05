@@ -39,6 +39,7 @@ public class MainActivity extends BridgeActivity {
         webView = view;
         if (view != null) {
             view.addJavascriptInterface(new CloudWatchBridge(), "__reasonixCloudWatchResult");
+            InsetBridge.install(this, view, getBridge());
         }
         // The pre-super install is the load-bearing one: Capacitor starts
         // its first navigation inside super.onCreate. This retry only helps
