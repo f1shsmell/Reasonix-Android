@@ -591,7 +591,8 @@ describe("App", () => {
 
     expect(container.querySelector(".linkbar")?.textContent).toContain("连接失败");
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
-    expect(container.textContent).toContain("配对或登录已失效");
+    expect(container.textContent).toContain("重新扫码配对");
+    expect(container.textContent).not.toContain("请在设置里重新连接");
   });
 
   it("ends a live link the moment the pairing expires mid-session", async () => {
@@ -614,7 +615,7 @@ describe("App", () => {
     // The chip already carried the reason (device.unauthorized); opening the
     // switch sheet names it for the person.
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
-    expect(container.querySelector(".switch-sheet")?.textContent).toContain("配对或登录已失效");
+    expect(container.querySelector(".switch-sheet")?.textContent).toContain("重新扫码配对");
   });
 
   it("waits for the network instead of retrying into a dead one", async () => {

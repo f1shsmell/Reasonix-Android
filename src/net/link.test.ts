@@ -4,6 +4,7 @@ import {
   afterFailure,
   connectingLink,
   idleLink,
+  isStalePairing,
   linkFailure,
   linkSummary,
   linkTone,
@@ -46,6 +47,16 @@ describe("linkFailure", () => {
     for (const code of ["device.unauthorized", "http.401", "http.403", "account.signed_out"]) {
       expect(linkFailure(code).retryable).toBe(false);
     }
+  });
+
+  it("names the fresh scan as the way back from a stale pairing", () => {
+    for (const code of ["device.unauthorized", "http.401", "http.403"]) {
+      expect(isStalePairing(code)).toBe(true);
+      expect(linkFailure(code).message).toContain("重新扫码配对");
+    }
+    expect(isStalePairing(undefined)).toBe(false);
+    expect(isStalePairing("account.signed_out")).toBe(false);
+    expect(isStalePairing("client.offline")).toBe(false);
   });
 
   it("retries a network failure", () => {

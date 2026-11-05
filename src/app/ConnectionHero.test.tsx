@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionHero } from "./ConnectionHero";
 import { idleLink } from "../net/link";
 import type { LinkState } from "../net/link";
@@ -116,5 +116,54 @@ describe("ConnectionHero", () => {
   it("falls back to the detail when the machine has not started", () => {
     const hero = render({ name: "连接你的电脑", detail: "扫码、粘贴链接，或登录账号" });
     expect(hero.querySelector(".link-hero-sub")?.textContent).toBe("扫码、粘贴链接，或登录账号");
+  });
+});
+
+describe("ConnectionHero stale pairing", () => {
+  const failed = (code: string): LinkState =>
+    link({ phase: "failed", error: { code, message: "凭据已失效。", retryable: false } });
+
+  it("offers a fresh scan for a dead credential, not a retry", () => {
+    const onRepair = vi.fn();
+    const hero = render({ name: "工作站", detail: "", link: failed("device.unauthorized"), onRepair });
+
+    const button = hero.querySelector<HTMLButtonElement>(".link-hero-repair");
+    expect(button?.textContent).toBe("重新扫码配对");
+    // Not a one-line resting card: the failure needs room for its own action.
+    expect(hero.querySelector(".link-hero")?.getAttribute("data-compact")).toBeNull();
+    act(() => button?.click());
+    expect(onRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("also covers a raw 401 or 403 from the kernel", () => {
+    for (const code of ["http.401", "http.403"]) {
+      const hero = render({ name: "工作站", detail: "", link: failed(code), onRepair: vi.fn() });
+      expect(hero.querySelector(".link-hero-repair")).not.toBeNull();
+    }
+  });
+
+  it("keeps a network failure as a plain sentence", () => {
+    const hero = render({
+      name: "工作站",
+      detail: "",
+      link: failed("client.offline"),
+      onRepair: vi.fn(),
+    });
+    expect(hero.querySelector(".link-hero-repair")).toBeNull();
+    expect(hero.querySelector(".link-hero")?.getAttribute("data-compact")).toBe("true");
+  });
+
+  it("stays quiet while an attempt is running, and with no repair handler", () => {
+    const busy = render({
+      name: "工作站",
+      detail: "",
+      link: failed("device.unauthorized"),
+      busy: "正在连接",
+      onRepair: vi.fn(),
+    });
+    expect(busy.querySelector(".link-hero-repair")).toBeNull();
+
+    const noHandler = render({ name: "工作站", detail: "", link: failed("device.unauthorized") });
+    expect(noHandler.querySelector(".link-hero-repair")).toBeNull();
   });
 });
