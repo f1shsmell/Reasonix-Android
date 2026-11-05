@@ -15,8 +15,12 @@
           "header": "选一个",
           "prompt": "先做哪个",
           "options": [
-            { "label": "茶" },
-            { "label": "咖啡" }
+            {
+              "label": "茶"
+            },
+            {
+              "label": "咖啡"
+            }
           ]
         }
       ]
@@ -25,5 +29,20 @@
       "id": "d2",
       "kind": "tool_approval"
     }
-  ]
+  ],
+  "agentCompositionLocked": false,
+  "autoApproveTools": false,
+  "bypass": false,
+  "toolApprovalMode": "ask",
+  "approvalDefault": "ask",
+  "preset": "delivery",
+  "goal": "",
+  "goalStatus": "",
+  "cwd": "/work",
+  "used": 1200,
+  "window": 128000,
+  "cacheHit": 3,
+  "cacheMiss": 1,
+  "vision": true,
+  "visionDeclared": true
 }

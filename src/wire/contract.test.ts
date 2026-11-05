@@ -20,6 +20,7 @@ describe("wire fixtures", () => {
     expect(rows).toHaveLength(2);
     for (const row of rows) expect(isRuntimeView(row)).toBe(true);
     expect(rows[0]?.base).toBe("/rt/r1");
+    expect(rows[0]?.host).toBe("192.168.5.3:57074");
   });
 
   it("keeps the ask status the native watcher reads", () => {
@@ -28,6 +29,7 @@ describe("wire fixtures", () => {
     expect(status?.running).toBe(true);
     expect(status?.decisions.map((decision) => decision.id)).toEqual(["d1", "d2"]);
     expect(status?.decisions[0]?.questions?.[0]?.prompt).toBe("先做哪个");
+    expect(status?.toolApprovalMode).toBe("ask");
   });
 
   it("keeps the fleet rows and their watchability", () => {

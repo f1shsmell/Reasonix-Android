@@ -5,7 +5,8 @@
     "root": "C:\\work",
     "name": "app",
     "sessionPath": "C:\\work\\.reasonix\\one.jsonl",
-    "readOnly": true
+    "readOnly": true,
+    "host": "192.168.5.3:57074"
   },
   {
     "id": "r2",
