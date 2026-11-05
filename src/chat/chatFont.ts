@@ -9,9 +9,15 @@
  * choice belongs to this phone, not to the kernel.
  */
 
-import { readChoice, writeChoice, SETTINGS_KEYS } from "../app/settings";
+import {
+  readChoice,
+  writeChoice,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type ChatFont,
+} from "../app/settings";
 
-export type ChatFont = "sm" | "standard" | "lg" | "xl";
+export type { ChatFont };
 
 export const CHAT_FONT_CHOICES: ReadonlyArray<{ value: ChatFont; label: string }> = [
   { value: "sm", label: "小" },
@@ -23,18 +29,16 @@ export const CHAT_FONT_CHOICES: ReadonlyArray<{ value: ChatFont; label: string }
 export const CHAT_FONT_NOTE =
   "只改变会话正文的字号，标题、代码和时间戳等元信息保持原样。只影响这台手机。";
 
-const DEFAULT: ChatFont = "standard";
-
 export function isChatFont(value: unknown): value is ChatFont {
   return value === "sm" || value === "standard" || value === "lg" || value === "xl";
 }
 
 export function loadChatFont(): ChatFont {
-  return readChoice(SETTINGS_KEYS.chatFont, ["sm", "standard", "lg", "xl"], DEFAULT);
+  return readChoice(SETTINGS_KEYS.chatFont, ["sm", "standard", "lg", "xl"], SETTINGS_DEFAULTS.chatFont);
 }
 
 export function saveChatFont(font: ChatFont): void {
-  writeChoice(SETTINGS_KEYS.chatFont, font, DEFAULT);
+  writeChoice(SETTINGS_KEYS.chatFont, font, SETTINGS_DEFAULTS.chatFont);
 }
 
 /**
@@ -44,6 +48,6 @@ export function saveChatFont(font: ChatFont): void {
  */
 export function applyChatFont(font: ChatFont): void {
   const root = document.documentElement;
-  if (font === DEFAULT) root.removeAttribute("data-chat-font");
+  if (font === SETTINGS_DEFAULTS.chatFont) root.removeAttribute("data-chat-font");
   else root.setAttribute("data-chat-font", font);
 }

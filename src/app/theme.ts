@@ -11,9 +11,9 @@
  */
 
 import { applyStatusBar } from "../native/themeBar";
-import { readChoice, writeChoice, SETTINGS_KEYS } from "./settings";
+import { readChoice, writeChoice, SETTINGS_KEYS, SETTINGS_DEFAULTS, type ThemeChoice } from "./settings";
 
-export type ThemeChoice = "auto" | "light" | "dark";
+export type { ThemeChoice };
 
 /** The three choices, in the order the segmented control draws them. */
 export const THEME_CHOICES: { value: ThemeChoice; label: string }[] = [
@@ -27,11 +27,11 @@ export function isTheme(value: unknown): value is ThemeChoice {
 }
 
 export function loadTheme(): ThemeChoice {
-  return readChoice(SETTINGS_KEYS.theme, ["auto", "light", "dark"], "auto");
+  return readChoice(SETTINGS_KEYS.theme, ["auto", "light", "dark"], SETTINGS_DEFAULTS.theme);
 }
 
 export function saveTheme(choice: ThemeChoice): void {
-  writeChoice(SETTINGS_KEYS.theme, choice, "auto");
+  writeChoice(SETTINGS_KEYS.theme, choice, SETTINGS_DEFAULTS.theme);
 }
 
 /**

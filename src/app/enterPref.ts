@@ -11,11 +11,15 @@
  * this device's keyboard, not about the kernel.
  */
 
-import { readChoice, writeChoice, SETTINGS_KEYS } from "./settings";
+import {
+  readChoice,
+  writeChoice,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type EnterPref,
+} from "./settings";
 
-export type EnterPref = "send" | "newline";
-
-const DEFAULT: EnterPref = "newline";
+export type { EnterPref };
 
 export const ENTER_CHOICES: ReadonlyArray<{ value: EnterPref; label: string }> = [
   { value: "newline", label: "换行" },
@@ -27,9 +31,9 @@ export function isEnterPref(value: unknown): value is EnterPref {
 }
 
 export function loadEnterPref(): EnterPref {
-  return readChoice(SETTINGS_KEYS.enter, ["send", "newline"], DEFAULT);
+  return readChoice(SETTINGS_KEYS.enter, ["send", "newline"], SETTINGS_DEFAULTS.enter);
 }
 
 export function saveEnterPref(pref: EnterPref): void {
-  writeChoice(SETTINGS_KEYS.enter, pref, DEFAULT);
+  writeChoice(SETTINGS_KEYS.enter, pref, SETTINGS_DEFAULTS.enter);
 }

@@ -20,19 +20,15 @@
  *   which is why there are two ask channels rather than a boolean on one.
  */
 
-import { readFlag, writeFlag, SETTINGS_KEYS } from "./settings";
+import {
+  readFlag,
+  writeFlag,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type NotificationPrefs,
+} from "./settings";
 
-/** What a notification surface does when nothing is stored. */
-export interface NotificationPrefs {
-  /** The ongoing "turn running" notification. Off keeps it, but silent. */
-  ongoing: boolean;
-  /** `ask` notifications: a turn is blocked on a decision. */
-  ask: boolean;
-  /** `done` notifications: a turn finished. */
-  done: boolean;
-  /** Ask notifications may heads-up instead of waiting in the shade. */
-  headsUp: boolean;
-}
+export type { NotificationPrefs };
 
 /**
  * Defaults.
@@ -44,12 +40,7 @@ export interface NotificationPrefs {
  * the one place where "silent but present" is the better default than a
  * permanent status-bar icon nobody can dismiss.
  */
-const DEFAULTS: NotificationPrefs = {
-  ongoing: false,
-  ask: true,
-  done: true,
-  headsUp: true,
-};
+const DEFAULTS: NotificationPrefs = { ...SETTINGS_DEFAULTS.notify };
 
 const KEYS: Record<keyof NotificationPrefs, string> = SETTINGS_KEYS.notify;
 

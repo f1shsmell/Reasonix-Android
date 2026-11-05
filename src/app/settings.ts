@@ -10,6 +10,32 @@
 const VERSION_KEY = "reasonix.settings.version";
 const VERSION = 1;
 
+export type ThemeChoice = "auto" | "light" | "dark";
+export type EnterPref = "send" | "newline";
+export type NetPolicy = "auto" | "bypass" | "system";
+export type ChatFont = "sm" | "standard" | "lg" | "xl";
+export type FoldMode = "compact" | "standard" | "full";
+export type HapticSurface = "drag" | "stream";
+
+export interface NotificationPrefs {
+  ongoing: boolean;
+  ask: boolean;
+  done: boolean;
+  headsUp: boolean;
+}
+
+export const SETTINGS_DEFAULTS = {
+  theme: "auto",
+  enter: "newline",
+  netPolicy: "auto",
+  chatFont: "standard",
+  folding: "standard",
+  notificationOptions: false,
+  cloudWatch: false,
+  notify: { ongoing: false, ask: true, done: true, headsUp: true },
+  haptics: { master: true, drag: true, stream: false },
+} as const;
+
 export const SETTINGS_KEYS = {
   theme: "reasonix.theme",
   enter: "reasonix.enter",

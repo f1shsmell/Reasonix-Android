@@ -15,11 +15,15 @@
  * shows — the native side is the authority, this is the last answer given.
  */
 
-import { readChoice, writeChoice, SETTINGS_KEYS } from "./settings";
+import {
+  readChoice,
+  writeChoice,
+  SETTINGS_KEYS,
+  SETTINGS_DEFAULTS,
+  type NetPolicy,
+} from "./settings";
 
-export type NetPolicy = "auto" | "bypass" | "system";
-
-const DEFAULT: NetPolicy = "auto";
+export type { NetPolicy };
 
 export const NET_POLICY_CHOICES: ReadonlyArray<{ value: NetPolicy; label: string }> = [
   { value: "auto", label: "自动" },
@@ -35,9 +39,9 @@ export function isNetPolicy(value: unknown): value is NetPolicy {
 }
 
 export function loadNetPolicy(): NetPolicy {
-  return readChoice(SETTINGS_KEYS.netPolicy, ["auto", "bypass", "system"], DEFAULT);
+  return readChoice(SETTINGS_KEYS.netPolicy, ["auto", "bypass", "system"], SETTINGS_DEFAULTS.netPolicy);
 }
 
 export function saveNetPolicy(policy: NetPolicy): void {
-  writeChoice(SETTINGS_KEYS.netPolicy, policy, DEFAULT);
+  writeChoice(SETTINGS_KEYS.netPolicy, policy, SETTINGS_DEFAULTS.netPolicy);
 }
