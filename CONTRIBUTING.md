@@ -42,7 +42,7 @@ cd android
 | `src/wire/` | 内核契约类型，与 `fixtures/wire/` 共同约束前后端字段 |
 | `src/ui/` | 手机端样式与设计 token |
 | `android/app/src/main/java/` | 原生壳、代理、通知与更新器 |
-| `fixtures/wire/` | Vitest 与 JUnit 共用的契约样本 |
+| `fixtures/wire/` | Vitest 与 JUnit 共用的契约样本；用 `REASONIX_SERVE=... REASONIX_TOKEN=... npm run fixtures` 从真实内核刷新 |
 
 ## 改动规则
 
