@@ -1,5 +1,7 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
+
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
@@ -44,6 +46,7 @@ import androidx.activity.OnBackPressedCallback;
  * sign-in page, an external link in the transcript — is handed to the browser
  * so the page never becomes a general-purpose window.
  */
+@SuppressLint("SetJavaScriptEnabled")
 public class WebModeActivity extends ComponentActivity {
     private WebView web;
     private TextView errorCard;

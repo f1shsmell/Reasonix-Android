@@ -1,5 +1,6 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -14,6 +15,7 @@ public class MainActivity extends BridgeActivity {
     /** Whether an activity is resumed; the turn service uses it to stay quiet. */
     public static volatile boolean visible = false;
     /** The page the cloud watcher asks for status; null once the screen is gone. */
+    @SuppressLint("StaticFieldLeak") // Cleared in onDestroy; the service needs it while visible.
     private static volatile WebView webView;
     /** This activity's own page, so an old destroy cannot clear a newer one. */
     private WebView ownWebView;

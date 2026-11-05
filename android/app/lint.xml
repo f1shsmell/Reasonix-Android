@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- AGP pins 8.14.3; a newer Gradle is not tested with this plugin. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+
+    <!-- Legacy launcher PNGs are generated art; the adaptive icon is the one
+         the launcher actually draws on every supported version. -->
+    <issue id="IconLauncherShape" severity="ignore" />
+
+    <!-- The v26 adaptive pair has no monochrome layer; API 33+ reads the v33
+         override, and duplicating the layer into v26 buys nothing. -->
+    <issue id="MonochromeLauncherIcon">
+        <ignore path="src/main/res/mipmap-anydpi-v26/ic_launcher.xml" />
+        <ignore path="src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml" />
+    </issue>
+
+    <!-- minSdk is 26, but the v26 qualifier documents why the adaptive icon
+         starts there; merging it into anydpi would hide that boundary. -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+</lint>

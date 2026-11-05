@@ -3,7 +3,6 @@ package com.reasonix.mobile;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
-import android.os.Build;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -81,9 +80,6 @@ final class TurnNotifications {
             if (added < 3) {
                 builder.addAction(R.drawable.ic_notification, "去回答", open);
             }
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setPriority(Notification.PRIORITY_HIGH);
         }
         return builder.build();
     }

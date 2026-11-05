@@ -116,11 +116,7 @@ public class TurnPlugin extends Plugin {
 
     private void launch(Intent intent) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
+            getContext().startForegroundService(intent);
         } catch (RuntimeException e) {
             // A background start can be refused; the turn still runs, and the
             // next foreground entry will try again.

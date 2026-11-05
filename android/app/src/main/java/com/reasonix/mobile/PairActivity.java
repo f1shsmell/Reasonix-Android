@@ -1,5 +1,7 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
+
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -31,6 +33,7 @@ import androidx.activity.OnBackPressedCallback;
  * WebView loads the same link. It succeeds when the `reasonix_device` cookie
  * appears, then finishes and hands the result to PairPlugin.
  */
+@SuppressLint("SetJavaScriptEnabled")
 public class PairActivity extends ComponentActivity {
     private static final long TIMEOUT_MS = 15_000;
     static final String EXTRA_REASON = "reason";

@@ -4,7 +4,6 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 
 import static com.reasonix.mobile.TurnNotificationIds.REQUEST_DECISION_BASE;
 import static com.reasonix.mobile.TurnNotificationIds.sessionBucket;
@@ -60,8 +59,6 @@ final class TurnIntents {
     }
 
     private static int flags() {
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        return flags;
+        return PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
     }
 }

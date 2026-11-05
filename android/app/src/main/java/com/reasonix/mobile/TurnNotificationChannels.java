@@ -4,7 +4,6 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
-import android.os.Build;
 
 /** The notification channels, fixed once at creation by Android. */
 final class TurnNotificationChannels {
@@ -36,7 +35,6 @@ final class TurnNotificationChannels {
     static final String CHANNEL_ASK_QUIET = "turn_ask_quiet";
 
     static void create(Context context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return;
         NotificationChannel running = new NotificationChannel(

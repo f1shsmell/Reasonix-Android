@@ -242,11 +242,7 @@ public class TurnService extends Service {
         releaseCloudWakeLock();
         if (active == this) active = null;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE);
-            } else {
-                stopForeground(true);
-            }
+            stopForeground(STOP_FOREGROUND_REMOVE);
         } catch (RuntimeException ignored) {
             // already gone
         }

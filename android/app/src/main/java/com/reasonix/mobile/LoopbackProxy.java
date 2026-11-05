@@ -1,5 +1,6 @@
 package com.reasonix.mobile;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -128,6 +129,7 @@ public final class LoopbackProxy {
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
             "te", "trailers", "transfer-encoding", "upgrade"));
 
+    @SuppressLint("StaticFieldLeak") // Holds the application context for the process lifetime.
     private static volatile LoopbackProxy instance;
 
     public static synchronized boolean start(Context context) {
