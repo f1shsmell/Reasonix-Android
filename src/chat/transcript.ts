@@ -214,6 +214,28 @@ function isOpenAssistant(row: Row): row is AssistantRow {
 }
 
 /**
+ * The answer a settled `message` frame belongs to: the newest assistant bubble
+ * still streaming, searched back from the end. -1 when there is none.
+ *
+ * Not simply the last row. A tool call the answer made lands between its
+ * deltas and the frame that settles it, so `text -> tool -> message` is one
+ * answer — and reading only the last row drew that answer twice, once as the
+ * deltas and once as the settled copy below the tool card.
+ *
+ * The search stops at a user row: an answer can never settle into the turn
+ * before it.
+ */
+function settledAnswerIndex(rows: Row[]): number {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row === undefined) break;
+    if (row.kind === "user") return -1;
+    if (isOpenAssistant(row)) return i;
+  }
+  return -1;
+}
+
+/**
  * Append, or extend the last row when it is the one this event continues.
  *
  * Neither branch mutates: a renderer holds the previous transcript, and a fold
@@ -483,27 +505,35 @@ export function reduce(
       const thoughtMs = typeof event.thoughtMs === "number" ? event.thoughtMs : undefined;
       // The clock only lands on an answer the caller vouched for; see reduce.
       const finishedAt = stampClock ? Date.now() : undefined;
-      const rows = appendOrExtend(
-        transcript.rows,
-        isOpenAssistant,
-        () => ({
-          kind: "assistant",
-          id: nextId("message"),
-          text,
-          reasoning,
-          ...(thoughtMs !== undefined ? { thoughtMs } : {}),
-          ...(finishedAt !== undefined ? { finishedAt } : {}),
-          streaming: false,
-        }),
-        (row) => ({
-          ...row,
-          ...(text ? { text } : {}),
-          ...(reasoning ? { reasoning } : {}),
-          ...(thoughtMs !== undefined ? { thoughtMs } : {}),
-          ...(finishedAt !== undefined ? { finishedAt } : {}),
-          streaming: false,
-        }),
-      );
+      const settled = settledAnswerIndex(transcript.rows);
+      // Settle the bubble the deltas built, wherever the turn's tool calls
+      // pushed it to; only a genuinely new answer appends a row.
+      const rows =
+        settled >= 0
+          ? transcript.rows.map((row, index) =>
+              index === settled && row.kind === "assistant"
+                ? {
+                    ...row,
+                    ...(text ? { text } : {}),
+                    ...(reasoning ? { reasoning } : {}),
+                    ...(thoughtMs !== undefined ? { thoughtMs } : {}),
+                    ...(finishedAt !== undefined ? { finishedAt } : {}),
+                    streaming: false,
+                  }
+                : row,
+            )
+          : [
+              ...transcript.rows,
+              {
+                kind: "assistant" as const,
+                id: nextId("message"),
+                text,
+                reasoning,
+                ...(thoughtMs !== undefined ? { thoughtMs } : {}),
+                ...(finishedAt !== undefined ? { finishedAt } : {}),
+                streaming: false,
+              },
+            ];
       return { ...transcript, rows };
     }
 
