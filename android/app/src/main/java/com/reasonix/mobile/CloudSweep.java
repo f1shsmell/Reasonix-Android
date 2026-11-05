@@ -47,7 +47,9 @@ final class CloudSweep {
             }
         }
         for (PaneWatch watch : new java.util.ArrayList<>(sink.watches())) {
-            if (seen.contains(watch.runtime)) continue;
+            // The key is the identity; a peer watch shares the runtime id with
+            // the same pane on this computer but is a different row.
+            if (seen.contains(watch.key)) continue;
             sink.remove(watch);
         }
         int asks = 0;

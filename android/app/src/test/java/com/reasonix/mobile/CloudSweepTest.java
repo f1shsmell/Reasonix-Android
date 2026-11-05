@@ -83,6 +83,21 @@ public class CloudSweepTest {
     }
 
     @Test
+    public void removesAPeerWhoseRuntimeMatchesALocalPane() {
+        FakeSink sink = new FakeSink();
+        sink.watches.put("p:r1", new PaneWatch("r1", "p:r1", "/rt/r1", "/peer", "peer", "http://a:1", "A", false));
+
+        CloudSweep.apply(
+                CloudSnapshot.parse(
+                        "{\"ok\":true,\"runtimes\":[{\"id\":\"r1\",\"base\":\"/rt/r1\",\"root\":\"/work\",\"name\":\"one\"}],"
+                                + "\"statuses\":{}}"),
+                sink);
+
+        assertEquals(List.of("r1"), sink.removed);
+        assertFalse(sink.watches.containsKey("p:r1"));
+    }
+
+    @Test
     public void leavesAnUnnamedPaneWithoutAStatusAlone() {
         FakeSink sink = new FakeSink();
         sink.watches.put("r1", new PaneWatch("r1", "r1", "/rt/r1", "/work", "one", "", "", false));
