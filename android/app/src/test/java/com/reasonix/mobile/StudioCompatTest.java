@@ -65,4 +65,14 @@ public class StudioCompatTest {
         assertFalse(css.contains("\\"));
         assertFalse(css.contains("\n"));
     }
+
+    @Test
+    public void theSheetGivesBodyAHeightWithoutViewportUnits() {
+        // 100dvh needs Chrome 108; on an older engine the page's own
+        // height:calc(100dvh/...) is invalid, body gets no height, and
+        // overflow:hidden stops clipping. 100vh is the same box in a WebView.
+        String css = StudioCompat.css();
+        assertTrue(css.contains("body{height:calc(100vh / var(--zoom,1)) !important;}"));
+        assertFalse(css.contains("100dvh"));
+    }
 }

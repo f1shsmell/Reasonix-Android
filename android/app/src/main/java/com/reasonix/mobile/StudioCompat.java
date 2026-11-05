@@ -85,6 +85,12 @@ final class StudioCompat {
                 + ":root:not([data-theme=light]){" + dark + "}"
                 + "}"
                 + ":root{color-scheme:light;}"
-                + ":root[data-theme=dark]{color-scheme:dark;}";
+                + ":root[data-theme=dark]{color-scheme:dark;}"
+                // 100dvh needs Chrome 108. Without it body has no height at
+                // all, so overflow:hidden stops clipping and every panel sized
+                // in percent collapses to its content. 100vh is the same box
+                // on a WebView (there is no collapsing browser chrome), so the
+                // substitute costs nothing on the engine this sheet targets.
+                + "body{height:calc(100vh / var(--zoom,1)) !important;}";
     }
 }
