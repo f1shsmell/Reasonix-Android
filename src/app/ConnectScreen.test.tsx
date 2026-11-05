@@ -1167,3 +1167,72 @@ describe("ConnectScreen full Studio", () => {
     expect(Browser.open).toHaveBeenCalledWith({ url: kernel });
   });
 });
+
+describe("ConnectScreen on an old WebView", () => {
+  const loopback = "http://127.0.0.1:8788/";
+  const kernel = "http://192.168.5.2:56789";
+  const jsdomAgent = navigator.userAgent;
+
+  beforeEach(() => {
+    vi.mocked(studioWebUrl).mockReturnValue(kernel);
+    vi.mocked(studioAppUrl).mockReturnValue(loopback);
+    vi.mocked(readProxyConfig).mockResolvedValue(config({ studioUrl: loopback }));
+  });
+
+  afterEach(() => {
+    vi.mocked(studioWebUrl).mockReturnValue("");
+    vi.mocked(studioAppUrl).mockReturnValue("");
+    // The agent is read at render time, so it has to be put back for the rest
+    // of the file: jsdom's own agent carries no Chrome token, which is what
+    // keeps every other test on the "unknown, say nothing" path.
+    Object.defineProperty(navigator, "userAgent", {
+      value: jsdomAgent,
+      configurable: true,
+    });
+  });
+
+  function setAgent(value: string): void {
+    Object.defineProperty(navigator, "userAgent", { value, configurable: true });
+  }
+
+  it("warns on the rows instead of opening a page that will look broken", async () => {
+    // The reported phone before its WebView was updated.
+    setAgent(
+      "Mozilla/5.0 (Linux; Android 12; Redmi K30 Pro Zoom Edition; wv) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.104 Mobile Safari/537.36",
+    );
+    await renderScreen();
+
+    // The row itself says why, rather than promising a working page.
+    expect(container.textContent).toContain("系统 WebView 是 Chrome 96");
+    // And the note names the way out.
+    expect(container.textContent).toContain("Android 系统 WebView");
+    // The browser row is offered as the working alternative.
+    expect(container.textContent).toContain("自带内核");
+  });
+
+  it("still opens the page, because half a page beats none", async () => {
+    setAgent("Mozilla/5.0 (Linux; Android 12; wv) Chrome/96.0.4664.104 Mobile Safari/537.36");
+    await renderScreen();
+    await pressRow("在应用内打开");
+
+    // A warning is not a block: the compatibility sheet already restores the
+    // colours and the height, so the page stays reachable.
+    expect(WebMode.open).toHaveBeenCalledWith({
+      url: loopback,
+      viaProxy: true,
+      origin: kernel,
+    });
+  });
+
+  it("says nothing on an engine new enough for the page", async () => {
+    setAgent(
+      "Mozilla/5.0 (Linux; Android 12; Redmi K30 Pro) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/158.0.8127.2 Mobile Safari/537.36",
+    );
+    await renderScreen();
+
+    expect(container.textContent).not.toContain("系统 WebView 是 Chrome");
+    expect(container.textContent).toContain("电脑上那套 Studio 页面");
+  });
+});
