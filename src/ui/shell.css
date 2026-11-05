@@ -1127,6 +1127,59 @@ pre.frame {
   min-width: 96px;
 }
 
+/* The whole release note, opened from the About row whose summary is one
+   truncated sentence. Typography only: headings step down, lists hang, and a
+   quote reads as a note rather than as another paragraph. */
+.release-notes-body {
+  margin-top: 4px;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* This backdrop is a child of `section.group`, whose `> * + *` rule would
+   draw a hairline across the top of the viewport. */
+.release-notes-backdrop {
+  border-top: 0;
+}
+
+.release-notes-body > :first-child {
+  margin-top: 0;
+}
+
+.release-notes-body h3 {
+  margin: 18px 0 6px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--fg-dim);
+  letter-spacing: 0.01em;
+}
+
+.release-notes-body p {
+  margin: 8px 0;
+}
+
+.release-notes-body ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.release-notes-body li {
+  margin: 6px 0;
+}
+
+.release-notes-body li::marker {
+  color: var(--fg-dim);
+}
+
+.release-notes-quote {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
 .sheet-actions button.danger {
   color: var(--bad);
 }

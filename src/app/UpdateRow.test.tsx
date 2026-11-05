@@ -90,4 +90,42 @@ describe("UpdateRow", () => {
     expect(container.textContent).toContain("已是最新版本 0.2.1");
     expect(container.textContent).toContain("重新检查");
   });
+
+  it("opens the whole note, because the row only fits one cut sentence", () => {
+    const notes = ["# 0.2.7", "", "这一版收了三处小毛病。", "", "## 修复", "", "- 状态栏"].join("\n");
+    render({
+      kind: "available",
+      version: "0.2.7",
+      versionCode: 17,
+      url: "https://example.test/app.apk",
+      mirrors: [],
+      notes,
+    });
+
+    // The row keeps its one-line summary, which is cut where the note wraps.
+    expect(container.querySelector("[role='dialog']")).toBeNull();
+    const opener = container.querySelector("button.update-notes-setting");
+    expect(opener?.textContent).toContain("查看完整更新说明");
+
+    act(() => (opener as HTMLButtonElement).click());
+
+    const dialog = container.querySelector("[role='dialog']");
+    expect(dialog?.getAttribute("aria-label")).toBe("0.2.7 更新说明");
+    // The full body, not the truncated summary.
+    expect(dialog?.textContent).toContain("这一版收了三处小毛病。");
+    expect(dialog?.textContent).toContain("状态栏");
+  });
+
+  it("offers no note door when the release carries no notes", () => {
+    render({
+      kind: "available",
+      version: "0.2.7",
+      versionCode: 17,
+      url: "https://example.test/app.apk",
+      mirrors: [],
+      notes: "   ",
+    });
+
+    expect(container.querySelector("button.update-notes-setting")).toBeNull();
+  });
 });
