@@ -6,6 +6,7 @@
   "description": "Reasonix For Android — an unofficial Android client for Reasonix Studio.",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --mode mock",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
