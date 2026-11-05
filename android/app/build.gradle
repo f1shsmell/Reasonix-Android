@@ -34,6 +34,12 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
     if (keystorePropertiesFile.exists()) {
         signingConfigs {
             release {
@@ -71,6 +77,9 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // Notification behavior needs Android's NotificationManager; Robolectric
+    // keeps it on the JVM so the build does not need an emulator.
+    testImplementation "org.robolectric:robolectric:4.17"
     // Android's org.json is a stub in local unit tests; this gives AskStatus
     // the real parser without an instrumented run.
     testImplementation "org.json:json:20260814"
