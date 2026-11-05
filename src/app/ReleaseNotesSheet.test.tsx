@@ -53,6 +53,38 @@ describe("parseNotes", () => {
     expect(blocks).toEqual([{ kind: "list", items: ["见 已知限制，不要跳过"] }]);
   });
 
+  it("drops backticks, which the note uses around literal syntax", () => {
+    const blocks = parseNotes("- **公式显示成源码**：`$...$` 现在会渲染成真正的数学公式");
+    expect(blocks).toEqual([
+      { kind: "list", items: ["公式显示成源码：$...$ 现在会渲染成真正的数学公式"] },
+    ]);
+  });
+
+  it("joins a sentence the author wrapped, instead of splitting it", () => {
+    // The notes are typed to a column: one sentence, broken at the margin.
+    const blocks = parseNotes("这一版收了三处小毛病：色带修掉了，VPN 也能\n在 App 内打开完整 Studio。");
+
+    expect(blocks).toEqual([
+      {
+        kind: "para",
+        text: "这一版收了三处小毛病：色带修掉了，VPN 也能在 App 内打开完整 Studio。",
+      },
+    ]);
+  });
+
+  it("keeps a wrapped list item whole rather than leaking a paragraph", () => {
+    const blocks = parseNotes("- **状态栏**：上一版只改了颜色。\n  现在两层一起刷。\n- 第二条");
+
+    expect(blocks).toEqual([
+      { kind: "list", items: ["状态栏：上一版只改了颜色。现在两层一起刷。", "第二条"] },
+    ]);
+  });
+
+  it("puts a space back between two wrapped ASCII words", () => {
+    const blocks = parseNotes("uses the loopback\nproxy for this");
+    expect(blocks).toEqual([{ kind: "para", text: "uses the loopback proxy for this" }]);
+  });
+
   it("ends a list at a blank line so two lists stay separate", () => {
     const blocks = parseNotes("- 一\n\n说明一句\n\n- 二");
     expect(blocks.map((block) => block.kind)).toEqual(["list", "para", "list"]);

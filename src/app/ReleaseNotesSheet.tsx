@@ -16,7 +16,22 @@ function plain(line: string): string {
   return line
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\*\*/g, "")
+    .replace(/`/g, "")
     .trim();
+}
+
+/**
+ * Two lines of one sentence. Release notes are written to a column, so a
+ * Chinese sentence is broken wherever it reached the margin and normally
+ * joins with nothing between; only two ASCII words need the space.
+ */
+function joinLine(prev: string, next: string): string {
+  if (!prev) return next;
+  const asciiWord = (code: number) =>
+    (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  const tail = prev.charCodeAt(prev.length - 1);
+  const head = next.charCodeAt(0);
+  return asciiWord(tail) && asciiWord(head) ? `${prev} ${next}` : prev + next;
 }
 
 type Block =
@@ -26,45 +41,70 @@ type Block =
   | { kind: "para"; text: string };
 
 /**
- * Split a note into the blocks it is written in. A blank line ends a list, so
- * two lists separated by prose stay separate.
+ * Split a note into the blocks it is written in.
+ *
+ * A blank line ends a block; a bare line continues the one above it, because
+ * that is how the notes are typed — one sentence wrapped at the margin is
+ * still one sentence. Without this a paragraph became a stack of fragments
+ * and every multi-line list item lost its second half to a stray paragraph.
  */
 export function parseNotes(notes: string): Block[] {
   const blocks: Block[] = [];
-  let items: string[] = [];
-  const flush = () => {
-    if (items.length > 0) {
-      blocks.push({ kind: "list", items });
-      items = [];
+  let list: string[] | null = null;
+  let para: string | null = null;
+
+  const flushList = () => {
+    if (list !== null) {
+      blocks.push({ kind: "list", items: list });
+      list = null;
     }
   };
+  const flushPara = () => {
+    if (para !== null && para !== "") blocks.push({ kind: "para", text: para });
+    para = null;
+  };
+  const flushAll = () => {
+    flushList();
+    flushPara();
+  };
+
   for (const raw of notes.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) {
-      flush();
+      flushAll();
       continue;
     }
     if (line.startsWith("#")) {
-      flush();
+      flushAll();
       const text = plain(line.replace(/^#+\s*/, ""));
       if (text) blocks.push({ kind: "heading", text });
       continue;
     }
     if (line.startsWith(">")) {
-      flush();
+      flushAll();
       const text = plain(line.replace(/^>\s*/, ""));
       if (text) blocks.push({ kind: "quote", text });
       continue;
     }
     if (/^[-*•]\s+/.test(line)) {
+      flushPara();
       const text = plain(line.replace(/^[-*•]\s+/, ""));
-      if (text) items.push(text);
+      if (text) {
+        if (list === null) list = [];
+        list.push(text);
+      }
       continue;
     }
-    flush();
-    blocks.push({ kind: "para", text: plain(line) });
+    // A bare line continues whatever it follows: a list item that wrapped,
+    // or the paragraph above it.
+    if (list !== null) {
+      const at = list.length - 1;
+      list[at] = joinLine(list[at] ?? "", plain(line));
+      continue;
+    }
+    para = para === null ? plain(line) : joinLine(para, plain(line));
   }
-  flush();
+  flushAll();
   return blocks;
 }
 
@@ -83,7 +123,11 @@ export function ReleaseNotesSheet({
   if (blocks[0]?.kind === "heading" && blocks[0].text === version) blocks.shift();
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className="sheet-backdrop release-notes-backdrop"
+      role="presentation"
+      onClick={onClose}
+    >
       <section
         className="sheet release-notes"
         role="dialog"

@@ -1128,6 +1128,12 @@ pre.frame {
   line-height: 1.6;
 }
 
+/* This backdrop is a child of `section.group`, whose `> * + *` rule would
+   draw a hairline across the top of the viewport. */
+.release-notes-backdrop {
+  border-top: 0;
+}
+
 .release-notes-body > :first-child {
   margin-top: 0;
 }
