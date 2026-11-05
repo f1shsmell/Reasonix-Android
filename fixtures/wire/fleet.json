@@ -1,0 +1,22 @@
+{
+  "peers": [
+    {
+      "kind": "lan",
+      "target": "http://192.168.5.3:57074",
+      "name": "工作站",
+      "watchable": true
+    },
+    {
+      "kind": "cloud",
+      "target": "dev-1",
+      "name": "Mac",
+      "watchable": false
+    },
+    {
+      "kind": "lan",
+      "target": "http://192.168.5.8:57074",
+      "name": "",
+      "watchable": true
+    }
+  ]
+}

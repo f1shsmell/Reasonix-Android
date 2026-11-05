@@ -44,4 +44,13 @@ public class FleetPeersTest {
         assertNull(FleetPeers.parse(null));
         assertTrue(FleetPeers.parse("{\"peers\":[]}").isEmpty());
     }
+
+    @Test
+    public void readsTheSharedContractFixture() throws Exception {
+        List<FleetPeers.Peer> peers = FleetPeers.parse(Fixtures.read("fleet.json"));
+
+        assertEquals(2, peers.size());
+        assertEquals(0, peers.get(0).index);
+        assertEquals("http://192.168.5.8:57074", peers.get(1).name);
+    }
 }
