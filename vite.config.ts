@@ -21,10 +21,22 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
   version: string;
 };
 
-/** Paths the kernel owns. Everything else is the app's own assets. */
+/**
+ * Paths the kernel owns. Everything else is the app's own assets.
+ *
+ * This list mirrors KERNEL_PATHS in src/net/relay.ts and the two must move
+ * together: a route the relay carries but the dev proxy does not makes every
+ * dev-session call to it 404 against Vite instead of reaching the kernel.
+ * Vite's proxy matches by prefix, so the two slash-suffixed relay entries are
+ * spelled bare here (`/rt` already covers `/rt/...`, `/auth` covers
+ * `/auth/...`).
+ */
 const KERNEL_PATHS = [
   "/runtimes",
   "/rt",
+  // The sidebar tree: projects and their conversations. The phone's whole
+  // first two screens are this one read, so a relay that did not carry it
+  // would leave the app with nothing to draw.
   "/tree",
   "/auth",
   "/pair",
@@ -32,6 +44,37 @@ const KERNEL_PATHS = [
   "/events",
   "/status",
   "/models",
+  "/share",
+  "/provider-setup",
+  "/context",
+  "/inbox",
+  "/adjudications",
+  "/checkpoints",
+  "/trajectory",
+  "/changes",
+  "/sessions",
+  "/balance",
+  "/usage",
+  "/permissions",
+  "/sandbox",
+  "/studio",
+  "/new",
+  "/submit",
+  "/cancel",
+  "/approve",
+  "/plan",
+  "/effort",
+  "/compact",
+  "/rewind",
+  "/branch",
+  "/summarize",
+  "/goal",
+  "/tools",
+  "/plugins",
+  "/hooks",
+  "/workspace",
+  "/config",
+  "/host",
 ];
 
 export default defineConfig({
@@ -75,6 +118,11 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // A fresh jsdom per file cost 125 s of the suite's runtime (84 contexts).
+    // vmThreads keeps per-file isolation but reuses one environment per
+    // worker; test-setup fills its missing webcrypto so the crypto-backed
+    // suites stay honest under it.
+    pool: "vmThreads",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // React 19's `act` refuses to work unless the environment says it is a
     // test build. Without this every component test warns, and the batching
