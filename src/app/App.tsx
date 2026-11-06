@@ -133,6 +133,14 @@ export function App() {
   const tree = useTree();
   const pending = useNeedsYou(snapshot.runtimes, tree.projects, tree.revision);
   const link = useLink(connection);
+  /**
+   * The callbacks below must read the live link without listing it as a
+   * dependency: `useLink` returns a fresh literal every render, and depending
+   * on it re-registers the native deep-link listener each time. A ref keeps
+   * the slices current while leaving the listener stable.
+   */
+  const linkRef = useRef(link);
+  linkRef.current = link;
   /** Cloud background reminders; default off and only meaningful on a cloud link. */
   const [cloudWatch, setCloudWatchState] = useState(() => loadCloudWatch());
   const pickCloudWatch = useCallback((on: boolean) => {
@@ -480,14 +488,15 @@ export function App() {
    * snapshot's runtimes, which may predate the notification by a few minutes.
    */
   const openChatLink = useCallback(async (raw: string) => {
+    const live = linkRef.current;
     const parsed = parseChatLink(raw);
     if (!parsed) return;
     const settling =
       boot === "loading" ||
-      link.state.phase === "connecting" ||
-      link.state.phase === "reconnecting" ||
-      link.state.phase === "offline" ||
-      (boot === "ready" && link.state.phase === "idle");
+      live.state.phase === "connecting" ||
+      live.state.phase === "reconnecting" ||
+      live.state.phase === "offline" ||
+      (boot === "ready" && live.state.phase === "idle");
     if (parsed.peer && settling) {
       setPendingLink(raw);
       return;
@@ -510,12 +519,12 @@ export function App() {
         return;
       }
       const here =
-        Boolean(link.state.target) && originKey("lan", link.state.target ?? "") === key;
+        Boolean(live.state.target) && originKey("lan", live.state.target ?? "") === key;
       if (!here) {
         const entry = saved.find(
           (row) => row.kind === "lan" && originKey("lan", row.target) === key,
         );
-        const result = await link.switchTo({
+        const result = await live.switchTo({
           kind: "lan",
           target: parsed.peer,
           name: entry?.name ?? parsed.peerName ?? parsed.peer,
@@ -534,10 +543,7 @@ export function App() {
     setChatFocusAsk(parsed.focusAsk === true);
     setOpenRuntime(parsed.runtimeId);
     void connection.refresh();
-    // Slices, not the `link` object: useLink returns a fresh literal every
-    // render, so listing it would rebuild this callback — and re-register the
-    // native `appUrlOpen` listener — on every render.
-  }, [boot, link.state.phase, link.state.target, link.switchTo]);
+  }, [boot]);
 
   useEffect(() => {
     if (pendingLink === null) return;
@@ -608,13 +614,14 @@ export function App() {
    */
   const openFleetItem = useCallback(
     async (item: FleetPendingItem | FleetRunningItem) => {
+      const live = linkRef.current;
       setActionError("");
       const peer = fleetWatcher.current.peers.find((candidate) => candidate.index === item.peer);
       if (!peer || !peer.target) {
         setActionError("找不到这台电脑的连接记录，请在设置里重新连接。");
         return;
       }
-      const result = await link.switchTo({
+      const result = await live.switchTo({
         kind: peer.kind,
         target: peer.target,
         name: peer.name,
@@ -643,7 +650,7 @@ export function App() {
       }
       setActionError("这个会话已经不在那台电脑上了。");
     },
-    [link.switchTo],
+    [],
   );
 
   // Coming back from the background must re-probe: the kernel may have been
