@@ -49,9 +49,11 @@ function reachCode(reach: ConnectionSnapshot["reach"]): string {
 
 /** Every LAN address worth trying, the ones this phone can reach directly first. */
 export function lanDoorsOf(config: ProxyConfig | null): string[] {
-  const saved = loadConnections()
-    .filter((row) => row.kind === "lan")
-    .map((row) => row.target);
+  const saved = config?.ephemeral
+    ? []
+    : loadConnections()
+        .filter((row) => row.kind === "lan")
+        .map((row) => row.target);
   // The proxy already ordered what it remembered by "is this a neighbour of
   // my Wi-Fi". Rows the app knows about but the proxy does not keep their
   // place at the end rather than jumping the queue.
@@ -97,7 +99,9 @@ export function orderedDoors(
       ...(machine ? { machine } : {}),
     });
   };
-  for (const row of saved) add(row.kind, row.target, row.name, row.machine);
+  if (!config?.ephemeral) {
+    for (const row of saved) add(row.kind, row.target, row.name, row.machine);
+  }
   // What the proxy remembers but the app does not, in the proxy's own order:
   // it is the side that can see which addresses are neighbours of this Wi-Fi.
   for (const origin of lanDoorsOf(config)) add("lan", origin, originName(origin));
