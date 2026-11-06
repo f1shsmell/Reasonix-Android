@@ -1,11 +1,11 @@
 {
-  "tag": "v0.3.1",
-  "version": "0.3.1",
-  "versionCode": 21,
-  "apk": "reasonix-for-android-0.3.1.apk",
-  "notes": "# 0.3.1\n\n这一版修的是 0.3.0 用下来暴露的连接、会话渲染和操作手感问题。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 修复\n\n- **开着蒲公英组网时切不回同一局域网的电脑**：分流 VPN 会让 Wi‑Fi 仍是「活动网络」，但把局域网网段的路由带进隧道。之前只有 Android 明确报告「当前网络是 VPN」才把请求绑定到 Wi‑Fi，于是切换列表显示「可直连」，实际请求却跟着蒲公英走了。现在只要目标地址在 Wi‑Fi / 以太网的直连网段内就固定绑定本地网络；蒲公英的 172.16.x 地址不在该网段，仍走隧道。\n- **同一条消息出现两次（幽灵消息）**：`turn_started` 确认乐观发送后，历史合并只按「未确认」标记去重，于是一旦历史晚到，同一句话就会并排出现两遍。现在用户消息会带上内核给出的消息序号，确认后按序号去重，重复的回合开始也不会再追加一条。\n- **公式和折叠块显示成源码**：模型常用的 `\\( … \\)`、`\\[ … \\]` 定界符现在会转成 KaTeX 能识别的形式；`<details><summary>` 会渲染成真正的折叠块，内部 Markdown 也能解析。原始 HTML 仍经过白名单过滤，脚本和 `onerror` 等事件处理器不会进入页面。\n- **选中文字一拖动就变黑**：选择态之前只设了半透明背景，Android 在拖动选择柄时会用系统默认墨色重绘文字。现在选中态有明确的前景和背景色，两套主题、明暗都可读。\n- **长按会话后点空白，会打开下面的会话**：操作面板原来在手指按下时就关闭，手指抬起产生的点击落到了下面那行。现在改为抬起后点击遮罩才关闭，这次手势不会穿透。\n- **切换连接里显示原始设备 ID**：云端行优先显示保存的电脑名，局域网行也优先显示机器名，地址留在副行；同一台电脑的两个入口更容易分辨。\n- **界面细节**：设置页顶栏改为不透明，滚动时不再透出下面的代理策略；局域网入口的详情不再重复地址、避免「可直/连」断行；「↓ 最新」不再浮在 ask 选项上面。\n\n## 说明\n\n- 已知限制统一记在\n  [docs/KNOWN_LIMITATIONS.md](https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md)，不写进发布说明。",
+  "tag": "v0.3.2",
+  "version": "0.3.2",
+  "versionCode": 22,
+  "apk": "reasonix-for-android-0.3.2.apk",
+  "notes": "# 0.3.2\n\n这一版收掉 0.3.1 遗留的两个操作问题。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 修复\n\n- **选中文字一拖动就变黑**：旧版 Android WebView 不解析 `::selection` 里的 CSS 变量，半透明背景失效，系统就用默认墨色重绘选中的字。现在改用各主题固定的文字色和背景色（暖纸为棕底米白字，深蓝为蓝底白字），拖动选择柄时保持可读。\n- **长按会话后点空白，会打开下面的会话**：关闭操作面板时补了一次性点击拦截。面板关闭后，同一次手势可能补发一个兼容性点击；这个点击会被吞掉，不会落到下面那行。新的按下手势会立即解除拦截，不影响随后正常点按。\n\n## 说明\n\n- 已知限制统一记在\n  [docs/KNOWN_LIMITATIONS.md](https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md)，不写进发布说明。",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.1/reasonix-for-android-0.3.1.apk",
-    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.1/reasonix-for-android-0.3.1.apk"
+    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.2/reasonix-for-android-0.3.2.apk",
+    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.2/reasonix-for-android-0.3.2.apk"
   ]
 }
