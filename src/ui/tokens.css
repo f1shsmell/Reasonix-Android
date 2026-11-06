@@ -303,7 +303,12 @@ body {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  /* Both halves explicitly, and opaque: with only a translucent background,
+     Android's selection pass painted the glyphs in its own default ink as
+     soon as the handle was dragged. */
+  background: var(--accent-fill);
+  color: var(--on-fill);
+  -webkit-text-fill-color: var(--on-fill);
 }
 
 button {
