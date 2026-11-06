@@ -18,7 +18,7 @@
  * what a phone list made of bare titles cannot explain on its own.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import { openRuntime } from "../net/workspaces";
 import { moveSessionTo, removeSession, renameSession, setArchived, setPinned } from "../net/pin";
@@ -321,14 +321,19 @@ export function SessionList({
    * repeat visit re-reads rather than caching, because archives change from
    * both sides — the desktop archives, the phone restores.
    */
+  /** True while the scoped read is running, so a second tap cannot start one beside it. */
+  const archiveLoading = useRef(false);
   const toggleArchiveList = async () => {
+    if (archiveLoading.current) return;
     if (archiveList !== null) {
       setArchiveList(null);
       return;
     }
+    archiveLoading.current = true;
     setArchiveList({ loading: true, sessions: [] });
     setArchiveError("");
     const result = await loadTree({ scope: "archived", limit: 60 });
+    archiveLoading.current = false;
     if (!result.ok) {
       setArchiveList(null);
       setArchiveError(result.code);

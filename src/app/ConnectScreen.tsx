@@ -1028,6 +1028,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     },
     [current, disconnect, forgetAsk, forgetDoor],
   );
+  // The forget sheet sits on the back stack like the trust one: back cancels
+  // it instead of closing the whole settings screen under it.
+  useBackCloser(forgetAsk !== null, () => settleForget(false));
 
   const known = config?.origin ?? "";
   /**

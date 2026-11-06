@@ -534,7 +534,10 @@ export function App() {
     setChatFocusAsk(parsed.focusAsk === true);
     setOpenRuntime(parsed.runtimeId);
     void connection.refresh();
-  }, [boot, link]);
+    // Slices, not the `link` object: useLink returns a fresh literal every
+    // render, so listing it would rebuild this callback — and re-register the
+    // native `appUrlOpen` listener — on every render.
+  }, [boot, link.state.phase, link.state.target, link.switchTo]);
 
   useEffect(() => {
     if (pendingLink === null) return;
@@ -640,7 +643,7 @@ export function App() {
       }
       setActionError("这个会话已经不在那台电脑上了。");
     },
-    [link],
+    [link.switchTo],
   );
 
   // Coming back from the background must re-probe: the kernel may have been

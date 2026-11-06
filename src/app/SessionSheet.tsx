@@ -189,6 +189,9 @@ export function SessionSheet({
                 value={nextTitle}
                 onChange={(event) => setNextTitle(event.target.value)}
                 onKeyDown={(event) => {
+                  // An IME confirm is also key === "Enter"; a composition in
+                  // progress must not submit the half-typed title.
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                   if (event.key === "Enter" && canRename) void run(() => onRename(rename));
                 }}
                 maxLength={120}

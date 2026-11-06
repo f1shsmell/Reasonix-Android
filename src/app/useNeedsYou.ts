@@ -126,8 +126,18 @@ export function useNeedsYou(
 
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
+  // The sweep reads the latest snapshots without depending on them: `runtimes`
+  // is a fresh array on every connection publish, and keying the effect on it
+  // would re-fetch `/rt/{id}/status` for every open pane even when the pane
+  // set has not changed. The id join is the identity that matters.
+  const runtimesRef = useRef(runtimes);
+  runtimesRef.current = runtimes;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const runtimeKey = runtimes.map((runtime) => runtime.id).join("|");
+
   useEffect(() => {
-    const candidates = paneCandidates(runtimes, projects);
+    const candidates = paneCandidates(runtimesRef.current, projectsRef.current);
     const at = ++request.current;
     if (candidates.length === 0) {
       // Nothing is open, so nothing can be blocked. Mark it loaded rather than
@@ -180,10 +190,10 @@ export function useNeedsYou(
       );
       setStatus("loaded");
     });
-    // `runtimes` is the connection's pane snapshot; `revision` is what makes a
-    // tree reload visible to the labels. Both can change without the other.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtimes, revision, tick]);
+    // `runtimeKey` is the pane set; `revision` is what makes a tree reload
+    // (and with it the labels in `projectsRef`) visible. Both can change
+    // without the other.
+  }, [runtimeKey, revision, tick]);
 
   // Home is the screen a person leaves open while work happens. Without a
   // clock the block only refreshed when the tree changed, which can be hours.

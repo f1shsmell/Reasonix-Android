@@ -34,7 +34,9 @@ export function relativeTime(ms: number | undefined, now = Date.now()): string {
  * on the difference between 1.2M and 1.23M.
  */
 export function compactCount(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  // Rounding happens in the branch: 999_500 rounds to "1.0M", so the k branch
+  // must hand it over before it can print a "1000k" no M would ever show.
+  if (value >= 999_500) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${Math.round(value / 100) / 10}k`;
   return String(value);
 }

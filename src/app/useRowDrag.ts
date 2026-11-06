@@ -338,8 +338,12 @@ export function useRowDrag<T extends HTMLElement = HTMLElement>({
           if (held && live.current.pointerId !== event.pointerId) return;
           settle();
         }
-        if (!rows.find((candidate) => candidate.key === key)?.movable) return;
+        // Cleared before the movable check: a tap on a row this list cannot
+        // reorder still ends in a click, and a swallow left over from the last
+        // real drag would eat it — the drag-ending click that set the flag
+        // never passes here, so this press is the only chance to reset it.
         swallowClick.current = false;
+        if (!rows.find((candidate) => candidate.key === key)?.movable) return;
         const current: Live = {
           key,
           node: event.currentTarget,
