@@ -10,3 +10,12 @@ The README renders come from `npm run dev:mock` at `?tour=1`, captured at
 390×844 through headless Edge. Every project, session and message is synthetic.
 The Studio panel uses Studio's own phone-layout capture; the app opens that page
 full screen and adds no chrome of its own.
+
+## Rebuilding
+
+```bash
+npm run dev:mock -- --host 127.0.0.1
+```
+
+Open `/?tour=1` at a 390×844 viewport, set `reasonix.ui-style` and
+`reasonix.theme` in localStorage, and capture with a headless browser.
