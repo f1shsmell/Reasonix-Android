@@ -21,6 +21,24 @@ export const LONG_PRESS_MS = 450;
 /** How far a finger may drift before the press becomes a scroll. */
 const SLOP_PX = 10;
 
+/**
+ * Swallow the next click after a sheet closes.
+ *
+ * A dismiss can leave a compatibility click that lands on the row the sheet
+ * covered; keeping the guard at the row's capture phase makes that click
+ * inert without a translucent overlay left behind.
+ */
+let swallowedUntil = 0;
+
+export function swallowNextClick(): void {
+  swallowedUntil = Date.now() + 400;
+}
+
+/** Test hook: a previous sheet close must not leak into the next case. */
+export function resetClickSwallow(): void {
+  swallowedUntil = 0;
+}
+
 export interface LongPressHandlers {
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLElement>) => void;
@@ -49,6 +67,8 @@ export function useLongPress(open: () => void): LongPressHandlers {
 
   return {
     onPointerDown: (event) => {
+      // A fresh press is a new gesture: drop a dismiss guard left by a sheet.
+      swallowedUntil = 0;
       swallow.current = false;
       if (event.pointerType === "mouse") return;
       clear();
@@ -83,10 +103,18 @@ export function useLongPress(open: () => void): LongPressHandlers {
     },
     onContextMenu: (event) => {
       event.preventDefault();
+      swallowedUntil = 0;
       swallow.current = false;
       open();
     },
     onClickCapture: (event) => {
+      if (Date.now() < swallowedUntil) {
+        swallowedUntil = 0;
+        swallow.current = false;
+        event.stopPropagation();
+        event.preventDefault();
+        return;
+      }
       if (!swallow.current) return;
       swallow.current = false;
       event.stopPropagation();
