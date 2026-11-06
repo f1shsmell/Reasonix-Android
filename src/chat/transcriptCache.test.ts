@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   dropCachedRows,
   loadCachedRows,
@@ -8,10 +8,12 @@ import {
 import type { Row } from "./transcript";
 
 /**
- * jsdom has no IndexedDB, so these run against the memory layer with every
- * disk path silently degraded — which is also the shape the cache takes in a
- * WebView that refuses the database. The disk layer adds persistence, not
- * different answers: the same rows go in and come back out.
+ * jsdom has no IndexedDB, so most of these run against the memory layer with
+ * every disk path silently degraded — which is also the shape the cache takes
+ * in a WebView that refuses the database. The disk layer adds persistence,
+ * not different answers: the same rows go in and come back out. The last
+ * suite stands a minimal fake IndexedDB up so the disk path itself is
+ * exercised too.
  *
  * The two-key rule is what these cover. A pane id changes on every reopen, so
  * an entry saved under one must be reachable by the other; that is the whole
@@ -99,5 +101,102 @@ describe("transcriptCache with two keys", () => {
     dropCachedRows(["C:\\w\\a.jsonl", "r1"]);
     await expect(loadCachedRows(["C:\\w\\a.jsonl"])).resolves.toBeNull();
     await expect(loadCachedRows(["r1"])).resolves.toBeNull();
+  });
+});
+
+/**
+ * A minimal IndexedDB: one store over a Map, and every callback handed to the
+ * event loop the way a real database answers — asynchronously. It exists
+ * because jsdom has none, and the disk layer was therefore invisible to every
+ * test above: loadCachedRows resolved null before a single request callback
+ * could speak, and no test could see a disk hit.
+ */
+class FakeRequest {
+  result: unknown;
+  onsuccess: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(result: unknown) {
+    this.result = result;
+    setTimeout(() => this.onsuccess?.(), 0);
+  }
+}
+
+function installIndexedDBShim(): void {
+  const data = new Map<string, unknown>();
+  const store = {
+    get: (key: IDBValidKey) => new FakeRequest(data.get(String(key))),
+    put: (value: unknown, key: IDBValidKey) => {
+      data.set(String(key), value);
+      return new FakeRequest(undefined);
+    },
+    getAll: () => new FakeRequest([...data.values()]),
+    delete: (key: IDBValidKey) => {
+      data.delete(String(key));
+      return new FakeRequest(undefined);
+    },
+  };
+  const db = {
+    objectStoreNames: { contains: () => true },
+    transaction: () => ({ objectStore: () => store }),
+  };
+  (globalThis as { indexedDB?: unknown }).indexedDB = {
+    open: () => {
+      const request: {
+        result: unknown;
+        onupgradeneeded: (() => void) | null;
+        onsuccess: (() => void) | null;
+        onerror: (() => void) | null;
+        onblocked: (() => void) | null;
+      } = { result: null, onupgradeneeded: null, onsuccess: null, onerror: null, onblocked: null };
+      setTimeout(() => {
+        request.result = db;
+        request.onsuccess?.();
+      }, 0);
+      return request;
+    },
+  };
+}
+
+describe("transcriptCache on disk", () => {
+  // A fresh module instance: the suites above already ran without IndexedDB,
+  // and openDb() caches its null answer — this block needs an instance whose
+  // first open sees the shim.
+  let cache: typeof import("./transcriptCache");
+
+  beforeAll(async () => {
+    vi.resetModules();
+    installIndexedDBShim();
+    cache = await import("./transcriptCache");
+    // The write coalesces behind WRITE_DELAY_MS and the shim's callbacks ride
+    // setTimeout(0), so the timer wheel is advanced by hand below.
+    vi.useFakeTimers();
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+    // Other suites must not see the shim.
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  beforeEach(() => cache.resetTranscriptCache());
+  afterEach(() => cache.resetTranscriptCache());
+
+  it("returns the rows a flush wrote to disk after the memory layer is cleared", async () => {
+    // The cold start: this process remembers nothing, and the entry only
+    // exists because a previous one flushed it.
+    const rows = [user("u1", "冷启动前的最后一屏")];
+    cache.scheduleSaveRows(["r1"], rows);
+    await vi.runAllTimersAsync();
+
+    cache.resetTranscriptCache();
+    const read = cache.loadCachedRows(["r1"]);
+    await vi.runAllTimersAsync();
+    await expect(read).resolves.toEqual(rows);
+  });
+
+  it("resolves null when every key misses instead of hanging", async () => {
+    const read = cache.loadCachedRows(["nope", "also-gone"]);
+    await vi.runAllTimersAsync();
+    await expect(read).resolves.toBeNull();
   });
 });

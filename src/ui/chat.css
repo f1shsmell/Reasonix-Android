@@ -1584,18 +1584,6 @@ html[data-chat-font="xl"] {
   border-radius: 7px;
 }
 
-/* The file name is the least useful part once there are several; it truncates
-   before the thumbnail does. */
-.attachment-name {
-  flex: 1;
-  min-width: 0;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
 .attachment span {
   flex: 1;
   min-width: 0;

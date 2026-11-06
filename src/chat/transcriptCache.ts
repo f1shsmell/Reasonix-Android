@@ -110,6 +110,18 @@ function openDb(): Promise<IDBDatabase | null> {
 /** Remember an entry under all its keys, so either path finds it later. */
 function remember(entry: Entry): void {
   for (const id of entry.ids) memory.set(id, entry);
+  // The disk prunes inside flushRows; without its counterpart here every
+  // conversation ever opened stays pinned in this process for its whole
+  // lifetime. Count entries, not map slots — an entry is filed under several
+  // keys, so keying the cap on size would halve it silently — and drop the
+  // oldest until the entry count fits, deleting every id each dropped one
+  // carries.
+  const unique = [...new Set(memory.values())].sort((a, b) => a.savedAt - b.savedAt);
+  const excess = unique.length - MAX_ENTRIES;
+  for (let index = 0; index < excess; index += 1) {
+    const stale = unique[index];
+    if (stale) forget(stale.ids);
+  }
 }
 
 function forget(ids: readonly string[]): void {
@@ -142,17 +154,28 @@ export async function loadCachedRows(keys: CacheKeys): Promise<Row[] | null> {
         if (rows && entry) remember(entry);
         resolve(rows);
       };
+      // The callbacks fire in later tasks — the reads were only dispatched in
+      // this one — so "nothing hit" is knowable only once every key has
+      // answered. Counting down is what keeps a miss from either hanging or
+      // resolving before the disk had its say.
+      let outstanding = wanted.length;
+      const miss = () => {
+        outstanding -= 1;
+        if (outstanding === 0) finish(null);
+      };
       for (const id of wanted) {
         const request = store.get(id);
         request.onsuccess = () => {
           const entry = request.result as Entry | undefined;
           const rows = entry && Array.isArray(entry.rows) && entry.rows.length > 0 ? entry.rows : null;
-          if (rows && entry) finish(rows, entry);
+          if (rows && entry) {
+            finish(rows, entry);
+            return;
+          }
+          miss();
         };
-        request.onerror = () => finish(null);
+        request.onerror = () => miss();
       }
-      // Every key missed, or the store answered nothing at all.
-      if (!settled) finish(null);
     } catch {
       resolve(null);
     }

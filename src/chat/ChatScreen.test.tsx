@@ -1643,6 +1643,25 @@ describe("ChatScreen interject", () => {
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("这条会被拒");
   });
 
+  it("keeps the draft when a 200 receipt says the kernel rejected the message", async () => {
+    // A `rejected_*` disposition rides an HTTP 200: the kernel took nothing,
+    // so clearing the composer would lose the message — the receipt's own
+    // wording is the error the person needs to see.
+    inboxKernel("rejected_busy");
+    await runningWithDraft("稍等再发的这条");
+
+    await act(async () => {
+      (Array.from(container.querySelectorAll(".interject button")).find(
+        (b) => b.textContent === "插话",
+      ) as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(container.textContent).toContain("稍等再试");
+    expect(container.textContent).not.toContain("已发送");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("稍等再发的这条");
+  });
+
   it("does not offer to interject into a read-only pane", async () => {
     stubKernel();
     render(

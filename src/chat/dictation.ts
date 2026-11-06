@@ -126,6 +126,13 @@ export function useDictation({
 
   useEffect(
     () => () => {
+      // Unmount can land while the hold is still being created. Marking the
+      // race lost here is what makes the late resolution abandon the hold
+      // (see the promise branch above) instead of assigning it to a dead hook
+      // whose release nobody will ever call — the native recognizer would
+      // keep the mic for the rest of the app's life.
+      cancelled.current = true;
+      pending.current = false;
       hold.current?.abandon();
     },
     [],

@@ -49,6 +49,11 @@ export function TodoPanel({ todos, state }: { todos: WireTodo[]; state: TodosSta
       : done === todos.length
         ? "全部完成"
         : "任务";
+  // Keys come from content, not position: an index key re-keys every row on
+  // any reorder, remounting the whole list mid-animation. Duplicate contents
+  // (the same line can appear at different levels) get an occurrence number
+  // so their keys stay unique — and stable per occurrence.
+  const occurrences = new Map<string, number>();
 
   return (
     <details className="todos">
@@ -65,11 +70,17 @@ export function TodoPanel({ todos, state }: { todos: WireTodo[]; state: TodosSta
         </span>
       </summary>
       <ol>
-        {todos.map((todo, index) => {
+        {todos.map((todo) => {
           const status = statusOf(todo);
+          const content = `${todo.level ?? 0}:${todo.content}`;
+          const seen = occurrences.get(content) ?? 0;
+          occurrences.set(content, seen + 1);
           return (
             <li
-              key={`${index}:${todo.content}`}
+              // The counter is appended unconditionally: a first occurrence's
+              // bare key would collide with a later occurrence of a title that
+              // itself ends in `#<n>`.
+              key={`${content}#${seen}`}
               className={`todo ${status}`}
               data-level={todo.level ?? 0}
             >
