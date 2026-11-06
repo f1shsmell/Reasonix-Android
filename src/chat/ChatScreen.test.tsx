@@ -1311,8 +1311,8 @@ describe("ChatScreen composer", () => {
     expect(textarea.value).toContain("@.reasonix/attachments/app.log");
     expect(container.querySelector(".attachment-file")?.textContent).toBe("LOG");
     expect(container.querySelector(".attachment img")).toBeNull();
-    const upload = fetchMock.mock.calls.find(([input]) =>
-      String(input).endsWith("/rt/r1/attachments"),
+    const upload = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/rt/r1/attachments"),
     );
     const body = JSON.parse(String(upload?.[1]?.body)) as {
       name: string;

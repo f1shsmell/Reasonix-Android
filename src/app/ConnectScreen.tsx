@@ -645,9 +645,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       // The link's progress and its errors are drawn on the computer pane;
       // the tap happened on the account pane, so follow the attempt back.
       setPane("connect");
-      let link: Awaited<ReturnType<typeof connectRelay>> | null = null;
+      let relayLink: Awaited<ReturnType<typeof connectRelay>> | null = null;
       try {
-        link = await connectRelay(deviceId, { confirm: confirmTrust });
+        relayLink = await connectRelay(deviceId, { confirm: confirmTrust });
         const next = await markRelay(deviceId);
         setConfig(next);
         setAccount(next.account);
@@ -670,7 +670,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         // `connectRelay` only replaces the active link after its handshake
         // succeeds. If it threw, `link` is null and an existing relay must be
         // left alone; otherwise remove the link that did replace it.
-        if (link !== null) clearRelayRouting();
+        if (relayLink !== null) clearRelayRouting();
         if (failure instanceof RelayError && failure.kind === "reauth") {
           setError("登录已过期，请重新登录 Reasonix 账号。");
         } else if (failure instanceof RelayError && failure.kind === "trust_cancelled") {
@@ -694,18 +694,18 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   );
 
   const applyLink = useCallback(
-    async (link: ServerLink) => {
-      if (link.kind === "cloud") {
+    async (serverLink: ServerLink) => {
+      if (serverLink.kind === "cloud") {
         if (!account.signedIn) {
           setError("这是互联网连接码。先登录 Reasonix 账号，再用它连接。");
           return;
         }
-        await connectCloud(link.device);
+        await connectCloud(serverLink.device);
         return;
       }
-      setOrigin(link.origin);
-      setPairCode(link.pairCode ?? "");
-      await connect(link.origin, link.pairCode ?? "");
+      setOrigin(serverLink.origin);
+      setPairCode(serverLink.pairCode ?? "");
+      await connect(serverLink.origin, serverLink.pairCode ?? "");
     },
     [account.signedIn, connect, connectCloud],
   );
@@ -728,12 +728,12 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         scanOrientation: CapacitorBarcodeScannerScanOrientation.ADAPTIVE,
         android: { scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.MLKIT },
       });
-      const link = parseServerLink(result.ScanResult);
-      if (!link) {
+      const scanned = parseServerLink(result.ScanResult);
+      if (!scanned) {
         setError("这个二维码里没有连接信息。");
         return;
       }
-      await applyLink(link);
+      await applyLink(scanned);
     } catch (failure) {
       setError(failure instanceof Error ? `扫码没完成：${failure.message}` : "扫码没完成");
     } finally {
@@ -745,12 +745,12 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     setError("");
     try {
       const { value } = await Clipboard.read();
-      const link = parseServerLink(value);
-      if (!link) {
+      const pasted = parseServerLink(value);
+      if (!pasted) {
         setError("剪贴板里没有连接链接。请复制浏览器地址栏里的完整 URL。");
         return;
       }
-      await applyLink(link);
+      await applyLink(pasted);
     } catch (failure) {
       setError(failure instanceof Error ? `读取剪贴板失败：${failure.message}` : "读取剪贴板失败");
     }
@@ -761,8 +761,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     let cancelled = false;
     let remove: (() => void) | undefined;
     void NativeApp.addListener("appUrlOpen", (event) => {
-      const link = parseServerLink(event.url);
-      if (link) void applyLink(link);
+      const opened = parseServerLink(event.url);
+      if (opened) void applyLink(opened);
     }).then((handle) => {
       if (cancelled) {
         void handle.remove();
@@ -1076,7 +1076,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
    */
   const doorDetail = (door: SavedConnection): string => {
     if (door.kind === "cloud") return "云端 · Reasonix 账号";
-    const near = direct.some((origin) => normalizeTarget("lan", origin) === door.target);
+    const near = direct.some((candidate) => normalizeTarget("lan", candidate) === door.target);
     return `局域网 · ${door.target}${near ? " · 可直连" : ""}`;
   };
   /** A door's own name, for the row under a computer. */
@@ -1092,7 +1092,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     const near = group.rows.some(
       (row) =>
         row.kind === "lan" &&
-        direct.some((origin) => normalizeTarget("lan", origin) === row.target),
+        direct.some((candidate) => normalizeTarget("lan", candidate) === row.target),
     );
     return near ? `${transport} · 可直连` : transport;
   };

@@ -75,7 +75,7 @@ vi.mock("../net/server", () => ({
   studioAppUrl: vi.fn(() => ""),
   probeUpstream: vi.fn(),
   readMachineIdentity: vi.fn(async () => null),
-  ProxyError: class ProxyError extends Error {
+  ProxyError: class MockProxyError extends Error {
     readonly status: number;
     readonly code: string;
     constructor(status: number, code: string) {

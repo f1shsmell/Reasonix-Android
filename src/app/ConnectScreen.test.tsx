@@ -81,7 +81,7 @@ vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
   connectRelay: vi.fn(),
   prefetchGrant: vi.fn(),
-  RelayError: class RelayError extends Error {
+  RelayError: class MockRelayError extends Error {
     readonly kind: string;
     constructor(kind: string, message: string) {
       super(message);
@@ -107,7 +107,7 @@ vi.mock("../net/server", () => ({
   studioAppUrl: vi.fn(() => ""),
   probeUpstream: vi.fn(),
   readMachineIdentity: vi.fn(async () => null),
-  ProxyError: class ProxyError extends Error {
+  ProxyError: class MockProxyError extends Error {
     readonly status: number;
     readonly code: string;
     constructor(status: number, code: string) {
@@ -285,21 +285,21 @@ describe("ConnectScreen", () => {
   describe("settings panes", () => {
     it("moves to the next pane on a left swipe and back on a right swipe", async () => {
       await renderScreen();
-      const root = container.querySelector(".connect") as Element;
+      const shell = container.querySelector(".connect") as Element;
       expect(activePane()).toBe("电脑");
 
-      swipeOn(root, [300, 300], [120, 310]);
+      swipeOn(shell, [300, 300], [120, 310]);
       expect(activePane()).toBe("账号");
 
-      swipeOn(root, [120, 300], [300, 310]);
+      swipeOn(shell, [120, 300], [300, 310]);
       expect(activePane()).toBe("电脑");
     });
 
     it("does not change pane on a vertical drag", async () => {
       await renderScreen();
-      const root = container.querySelector(".connect") as Element;
+      const shell = container.querySelector(".connect") as Element;
 
-      swipeOn(root, [300, 300], [120, 520]);
+      swipeOn(shell, [300, 300], [120, 520]);
 
       expect(activePane()).toBe("电脑");
     });
@@ -315,13 +315,13 @@ describe("ConnectScreen", () => {
 
     it("stops at the first and last pane instead of wrapping", async () => {
       await renderScreen();
-      const root = container.querySelector(".connect") as Element;
+      const shell = container.querySelector(".connect") as Element;
 
-      swipeOn(root, [120, 300], [300, 310]);
+      swipeOn(shell, [120, 300], [300, 310]);
       expect(activePane()).toBe("电脑");
 
       await press("偏好");
-      swipeOn(root, [300, 300], [120, 310]);
+      swipeOn(shell, [300, 300], [120, 310]);
       expect(activePane()).toBe("偏好");
     });
   });
@@ -665,7 +665,7 @@ describe("ConnectScreen saved connections", () => {
 
     // Both doors travelled together: one computer, one block.
     const rows = loadConnections();
-    expect(rows.filter((row) => row.machine === "studio-pc")).toHaveLength(2);
+    expect(rows.filter((saved) => saved.machine === "studio-pc")).toHaveLength(2);
   });
 
   it("forgets a saved computer without touching the rest", async () => {
