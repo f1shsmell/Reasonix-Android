@@ -25,10 +25,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/tour.png" width="420" alt="Home: waiting on you, running, and recent conversations">
+  <img src="docs/screenshots/tour.png" width="680" alt="Waiting and running turns, dispatch, queue or interrupt, and the in-app Studio">
 </p>
-
-<p align="center"><sub>Rendered from the web build in a headless browser; not a device screenshot.</sub></p>
 
 > [!IMPORTANT]
 > This is a third-party, unofficial client and it does not bundle the kernel. Install and run
@@ -44,11 +42,23 @@
 
 **Connecting** — Pair by QR code, pasted link or a typed address. LAN and cloud computers are kept as saved records; one tap switches between them, and returning to the same Wi-Fi prefers the direct link again. A cloud computer shows its identity fingerprint on first connect and is checked on every later one — a changed key is refused. A link only counts once `/runtimes` actually answers; failures back off, and a network change or foreground returns retry immediately.
 
-**Conversations** — "Recent" gathers every project; "Projects" browses by folder, with long-press drag to reorder. Activity rows fold thinking, commands and file reads into one line — tap for arguments, output and diffs, and the row collapses to a summary when the turn ends. While a turn runs you can stop it, queue a message or interrupt; long reasoning can be read on its own page and answers can be copied. Model selection, plan mode, image and camera attachments, task lists, approvals and structured questions are all here.
+**Conversations** — Three bottom destinations: Recent, Projects and Dispatch. "Recent" gathers every project; "Projects" browses by folder, with long-press drag to reorder. Activity rows fold thinking, commands and file reads into one line — tap for arguments, output and diffs, and the row collapses to a summary when the turn ends. While a turn runs you can stop it, queue a message or interrupt; long reasoning can be read on its own page and answers can be copied. Model selection, plan mode, image and camera attachments, task lists, approvals and structured questions are all here.
+
+**Dispatch** — Pick a project, describe the task, and send it to run in the background on the computer. A model and reasoning level can be chosen for that dispatch alone; when it finishes you can stay put, return to Recent, or open the new conversation, depending on the preference.
+
+**Full Studio** — "Open in the app" under Settings → Connection loads the computer's whole Studio page in the app, with no browser detour.
 
 **Rewind and reading** — Checkpoint rewind: pick a snapshot from before a turn in the `…` menu, review the restore plan first, then confirm — only files the editing tools wrote are restored. Three levels of transcript detail; drafts and reading position are kept per conversation. Scrolling far up floats a "↓ latest" button; a dropped connection backfills history and a broken stream says so.
 
-**Settings and background** — Settings is split into "Computer / Account / Preferences": connection and account, appearance, and background behaviour each get their own page. Notification permission and battery optimisation are shown directly, and one tap opens the matching system screen.
+**Settings and background** — Settings is split into "Connection / Account / Preferences": connection and account, appearance, and background behaviour each get their own page. Notification permission and battery optimisation are shown directly, and one tap opens the matching system screen.
+
+## Themes
+
+The default is warm paper — a cream page with a brown accent, easy to read for long stretches — and studio blue is one tap away. Both palettes support follow-system, light and dark; the choice is remembered.
+
+<p align="center">
+  <img src="docs/screenshots/themes.png" width="880" alt="Warm paper light and dark, studio blue light and dark">
+</p>
 
 ## Notifications
 

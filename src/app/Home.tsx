@@ -998,7 +998,7 @@ export function Home({
               {tab === "recent" && !needle ? (
                 <NeedsYou
                   pending={pending}
-                  computerName={link.name}
+                  computerName={linkName}
                   onOpen={(item) => onOpenRuntime(item.runtimeId, item.projectRoot, item.title)}
                 />
               ) : null}
