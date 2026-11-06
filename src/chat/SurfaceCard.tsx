@@ -23,7 +23,7 @@
  * are out of scope until the kernel exposes that route for a device.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SurfaceField, SurfaceNode, SurfaceOption, SurfaceSpec } from "../wire/surface";
 import { surfaceFields, parseSurface } from "../wire/surface";
 
@@ -329,6 +329,32 @@ export function SurfaceCard({ surface, pending, onAnswer }: SurfaceCardProps) {
   const [values, setValues] = useState<SurfaceValues>(() =>
     spec ? initialValues(spec.body) : {},
   );
+
+  // Prompt delivery is at-least-once: a reconnect re-sends the ask, and an
+  // upserted same-id one can carry changed fields. The mount-time defaults
+  // would then leave a new required field undefined and the form unable to
+  // submit. Merge instead: keep what was typed where the field survived, take
+  // defaults for fields the upsert added, drop fields it removed. An
+  // unchanged spec must come out as the same object — returning `current`
+  // makes React bail out, so mid-typing state is never clobbered.
+  useEffect(() => {
+    if (!spec) return;
+    setValues((current) => {
+      const fresh = initialValues(spec.body);
+      const keys = Object.keys(fresh);
+      let same = keys.length === Object.keys(current).length;
+      const next: SurfaceValues = {};
+      for (const key of keys) {
+        if (key in current) {
+          next[key] = current[key];
+        } else {
+          next[key] = fresh[key];
+          same = false;
+        }
+      }
+      return same ? current : next;
+    });
+  }, [spec]);
 
   if (!spec) return null;
 

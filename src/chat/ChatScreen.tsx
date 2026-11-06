@@ -595,6 +595,20 @@ function useTranscript(
   const hydrated = useRef(false);
   const historyDone = useRef(false);
   /**
+   * Which pane id has already had its hydration attempt, and whether cache
+   * rows are already on its screen. Without the first, a `sessionPath`
+   * landing after mount re-runs the effect below and prepends the same entry
+   * twice — duplicated bubbles until history replaces them. The second is
+   * what lets a cold start whose first read missed (the disk entry sits under
+   * the session-path key, which is not known yet) look again once the path
+   * arrives. "Painted", not "attempted", is the skip condition on purpose:
+   * StrictMode's first setup is cancelled before its read resolves, so an
+   * attempt-based flag would leave the second setup skipping a paint that
+   * never happened.
+   */
+  const hydratedFor = useRef<string | null>(null);
+  const painted = useRef(false);
+  /**
    * The last frame seq folded into the transcript.
    *
    * Frames are queued, not overwritten, because one relay poll delivers a
@@ -618,11 +632,23 @@ function useTranscript(
   // very wait it exists to hide. `runtimeId` is known the moment the screen
   // mounts, and the session path joins it once the runtime list lands.
   useEffect(() => {
+    const first = hydratedFor.current !== runtimeId;
+    if (first) {
+      hydratedFor.current = runtimeId;
+      hydrated.current = false;
+      historyDone.current = false;
+      painted.current = false;
+    }
+    // This pane's cache rows are already on screen; a second read would only
+    // prepend the same entry twice. A miss leaves the flag unset, so the run
+    // that follows a sessionPath landing retries with both keys.
+    if (painted.current) return;
+    // A retry run deliberately keeps hydrated/historyDone: history may have
+    // landed meanwhile, and its rows are already correct.
     let cancelled = false;
-    hydrated.current = false;
-    historyDone.current = false;
     void loadCachedRows([sessionPath, runtimeId]).then((cached) => {
       if (cancelled || !cached || historyDone.current) return;
+      painted.current = true;
       hydrated.current = true;
       setTranscript((current) =>
         current.rows.length === 0 ? { ...current, rows: cached } : { ...current, rows: [...cached, ...current.rows] },
@@ -724,12 +750,24 @@ function useTranscript(
     // start: a backlog batch (a reconnect replay, a restored session's first
     // read) lands after the fact, and its answers must not claim a landing
     // clock the phone never saw.
+    const sawStart = unseen.some((entry) => entry.event.kind === "turn_started");
     setTranscript((current) =>
       unseen.reduce(
         (acc, entry) => reduce(acc, entry.event, { stampClock: clockRef?.current !== null }),
         current,
       ),
     );
+    // The updater above runs at the next render, and the effect that seeds the
+    // clock from `running` only runs after that render's commit — so a turn
+    // whose whole run landed in one poll burst would fold with the clock still
+    // null and none of its frames stamped. Seeding here, before the updater
+    // executes, is what lets the rest of the burst claim a clock the phone did
+    // watch land. `??=` keeps a restored turn's missing clock missing. The
+    // cost is accepted and bounded: a turn replayed whole by a reconnect also
+    // carries a `turn_started`, so its answer draws a clock at the reconnect
+    // moment rather than none at all — cosmetic, and the stamp is still later
+    // than any frame it labels.
+    if (sawStart && clockRef) clockRef.current ??= Date.now();
     // Only the drained frames are acknowledged; anything queued after this
     // render stays for the next one.
     connection.drainEvents(foldedThrough.current);
@@ -745,7 +783,10 @@ function useTranscript(
       return;
     }
     scheduleSaveRows([sessionPath, runtimeId], transcript.rows);
-  }, [sessionPath, runtimeId, transcript.rows]);
+    // `gap` is in the deps because the fold leaves `rows` untouched when a
+    // stream_gap lands — without it a gap that is the last transition of a
+    // burst would never evict a cache holding the hole.
+  }, [sessionPath, runtimeId, transcript.rows, transcript.gap]);
 
   /**
    * Read the page before the current oldest one.
@@ -987,6 +1028,15 @@ export function ChatScreen({
   const readingTimer = useRef<number | null>(null);
   /** The composer's live value, readable after an await without stale state. */
   const draftRef = useRef(draft);
+  /** The preview URLs staged right now; the unmount effect reads it, because
+      capturing them there would snapshot the empty mount-time list. */
+  const stagedUrls = useRef<string[]>([]);
+  /** Prompt decisions in flight, by ask/approval id: a second tap on the same
+      card while its POST is a round trip away would fire the call twice. */
+  const deciding = useRef(new Set<string>());
+  /** Set while a jump button's smooth glide is in motion, so the follow
+      effect below skips the one run that would cancel it. */
+  const jumpGlide = useRef(false);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -1160,7 +1210,15 @@ export function ChatScreen({
   // Yanking the view down while they read back is the single worst thing a
   // streaming transcript can do.
   useLayoutEffect(() => {
-    if (atBottom) scrollToBottom(false);
+    if (!atBottom) return;
+    // The jump button's glide is already heading here, and setting atBottom
+    // re-renders straight into this effect — an instant scroll now would
+    // cancel the smooth animation mid-flight. Skip exactly that one run.
+    if (jumpGlide.current) {
+      jumpGlide.current = false;
+      return;
+    }
+    scrollToBottom(false);
   }, [transcript.rows, atBottom, scrollToBottom]);
 
   // Reopening a conversation puts the reader back where they were. The stored
@@ -1291,15 +1349,21 @@ export function ChatScreen({
     };
   }, [grow]);
 
-  // The preview URL is ours to release. This runs on unmount only: rerunning
-  // per change would revoke the images that are still in the composer.
+  // The preview URL is ours to release. The live list is mirrored into a ref
+  // because the revoke runs on unmount only — capturing state in the unmount
+  // effect itself would snapshot the empty mount-time list and leak every
+  // image staged since. Revoking a URL already released elsewhere (a removed
+  // chip, a sent message) is a harmless no-op.
   useEffect(() => {
-    const urls = attachments.flatMap((entry) => (entry.url ? [entry.url] : []));
-    return () => {
-      for (const url of urls) URL.revokeObjectURL(url);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    stagedUrls.current = attachments.flatMap((entry) => (entry.url ? [entry.url] : []));
+  }, [attachments]);
+
+  useEffect(
+    () => () => {
+      for (const url of stagedUrls.current) URL.revokeObjectURL(url);
+    },
+    [],
+  );
 
   // Editing a reference out of the draft is also removing that attachment;
   // otherwise the chip would stay but the turn would not mention the image.
@@ -1489,7 +1553,7 @@ export function ChatScreen({
       setTranscript((current) => removeLocalUser(current, local.id));
       lastRetry.current = outgoing;
     },
-    [runtime, scrollToBottom, attachments, forgetDraft],
+    [runtime, scrollToBottom, attachments, forgetDraft, setTranscript],
   );
 
   const onKeyDown = useCallback(
@@ -1539,6 +1603,13 @@ export function ChatScreen({
         setPromptError(inboxMessage(result.code));
         return;
       }
+      // A 200 can still be a no: a `rejected_*` disposition means the kernel
+      // took nothing, so the composer must keep the message it never held.
+      if (result.receipt.disposition.startsWith("rejected")) {
+        setInboxNote("");
+        setPromptError(receiptText(result.receipt));
+        return;
+      }
       setInboxNote(receiptText(result.receipt));
       // The kernel holds this message now, so the composer is free for the
       // next thought — the same rule a normal send follows.
@@ -1551,13 +1622,19 @@ export function ChatScreen({
         });
       }
     },
-    [runtime, draft, runtimeId, forgetDraft],
+    [runtime, draft, forgetDraft],
   );
 
   const handlers = useMemo<PromptHandlers>(
     () => ({
       onAnswer: (askId, selected) => {
         if (!runtime) return;
+        // One decision per prompt: a second tap while the POST is in flight
+        // would answer the same ask twice. The kernel calls a repeated
+        // identical answer safe, but the round trip is still wasted, and a
+        // refusal of a differing repeat is noise a person has to read.
+        if (deciding.current.has(askId)) return;
+        deciding.current.add(askId);
         const answers = Object.entries(selected).map(([questionId, labels]) => ({
           QuestionID: questionId,
           Selected: labels,
@@ -1565,41 +1642,57 @@ export function ChatScreen({
         // The row is marked answered only once the kernel says so. Optimism
         // here would show a question as settled when the POST was refused —
         // and the kernel's refusal is exactly what the person needs to see.
-        void answer(runtime.base, askId, answers).then((result) => {
-          if (!result.ok) {
-            setPromptError(`没答上：${result.code ?? "unknown"}`);
-            return;
-          }
-          setPromptError("");
-          setTranscript((current) => markAnswered(current, askId, selected));
-        });
+        void answer(runtime.base, askId, answers)
+          .then((result) => {
+            if (!result.ok) {
+              setPromptError(`没答上：${result.code ?? "unknown"}`);
+              return;
+            }
+            setPromptError("");
+            setTranscript((current) => markAnswered(current, askId, selected));
+          })
+          .finally(() => {
+            deciding.current.delete(askId);
+          });
       },
       onAnswerSurface: (askId, questionId, values) => {
         if (!runtime) return;
+        if (deciding.current.has(askId)) return;
+        deciding.current.add(askId);
         // A structured answer is one entry carrying `Value`, with `Selected`
         // empty: the kernel's own validation rejects anything else for a
         // surface question (`Selected` must be empty, and the ask holds
         // exactly one question).
         const entry: WireAskAnswer = { QuestionID: questionId, Selected: [], Value: values };
-        void answer(runtime.base, askId, [entry]).then((result) => {
-          if (!result.ok) {
-            setPromptError(`没答上：${result.code ?? "unknown"}`);
-            return;
-          }
-          setPromptError("");
-          setTranscript((current) => markAnsweredSurface(current, askId));
-        });
+        void answer(runtime.base, askId, [entry])
+          .then((result) => {
+            if (!result.ok) {
+              setPromptError(`没答上：${result.code ?? "unknown"}`);
+              return;
+            }
+            setPromptError("");
+            setTranscript((current) => markAnsweredSurface(current, askId));
+          })
+          .finally(() => {
+            deciding.current.delete(askId);
+          });
       },
       onApprove: (approvalId, allow, session, persist) => {
         if (!runtime) return;
-        void approve(runtime.base, approvalId, allow, session, persist).then((result) => {
-          if (!result.ok) {
-            setPromptError(`没处理成：${result.code ?? "unknown"}`);
-            return;
-          }
-          setPromptError("");
-          setTranscript((current) => closeApproval(current, approvalId, allow ? "allowed" : "denied"));
-        });
+        if (deciding.current.has(approvalId)) return;
+        deciding.current.add(approvalId);
+        void approve(runtime.base, approvalId, allow, session, persist)
+          .then((result) => {
+            if (!result.ok) {
+              setPromptError(`没处理成：${result.code ?? "unknown"}`);
+              return;
+            }
+            setPromptError("");
+            setTranscript((current) => closeApproval(current, approvalId, allow ? "allowed" : "denied"));
+          })
+          .finally(() => {
+            deciding.current.delete(approvalId);
+          });
       },
     }),
     [runtime, setTranscript],
@@ -1777,6 +1870,9 @@ export function ChatScreen({
             type="button"
             className="jump-latest"
             onClick={() => {
+              // The flag must go up before setAtBottom: that state change is
+              // what triggers the follow effect run the glide has to skip.
+              jumpGlide.current = true;
               scrollToBottom(true);
               setAtBottom(true);
             }}
