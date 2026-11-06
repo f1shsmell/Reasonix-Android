@@ -39,6 +39,8 @@ public class PairActivity extends ComponentActivity {
     static final String EXTRA_REASON = "reason";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Kept for onDestroy: an invisible WebView with JS running still leaks if only GC'd. */
+    private WebView web;
     private String origin = "";
     private long startedAt;
     private boolean done;
@@ -63,7 +65,7 @@ public class PairActivity extends ComponentActivity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.TRANSPARENT);
 
-        WebView web = new WebView(this);
+        WebView web = this.web = new WebView(this);
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(web, true);
@@ -155,6 +157,10 @@ public class PairActivity extends ComponentActivity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (web != null) {
+            web.destroy();
+            web = null;
+        }
         super.onDestroy();
     }
 }

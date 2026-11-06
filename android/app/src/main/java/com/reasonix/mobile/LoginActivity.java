@@ -145,8 +145,16 @@ public class LoginActivity extends Activity {
                 status.setVisibility(View.GONE);
                 retry.setVisibility(View.GONE);
                 view.evaluateJavascript(FIX_APPROVAL_JS, null);
-                view.postDelayed(() -> view.evaluateJavascript(FIX_APPROVAL_JS, null), 1200);
-                view.postDelayed(() -> view.evaluateJavascript(FIX_APPROVAL_JS, null), 3000);
+                view.postDelayed(() -> {
+                    // The delayed runs outlive a quick close: onDestroy nulls
+                    // the field, and a WebView method after destroy() throws.
+                    if (web == null) return;
+                    web.evaluateJavascript(FIX_APPROVAL_JS, null);
+                }, 1200);
+                view.postDelayed(() -> {
+                    if (web == null) return;
+                    web.evaluateJavascript(FIX_APPROVAL_JS, null);
+                }, 3000);
             }
 
             @Override
@@ -225,5 +233,24 @@ public class LoginActivity extends Activity {
         status.setText(message);
         status.setVisibility(View.VISIBLE);
         retry.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    protected void onDestroy() {
+        // WebModeActivity destroys its WebView for the same reason: the sign-in
+        // page's JS and renderers outlive this activity until GC otherwise.
+        // The cookie is flushed first — the account session the sign-in page
+        // just set is the credential everything else reads, and the system's
+        // own flush schedule would lose it to a process kill right after login.
+        try {
+            android.webkit.CookieManager.getInstance().flush();
+        } catch (RuntimeException ignored) {
+            // no cookie jar to flush
+        }
+        if (web != null) {
+            web.destroy();
+            web = null;
+        }
+        super.onDestroy();
     }
 }

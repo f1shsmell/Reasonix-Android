@@ -45,6 +45,12 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void capsAnUpstreamResponse() {
+        assertThrows(ProxyWire.PayloadTooLargeException.class, () ->
+                ProxyWire.readAll(bytes("12345"), 4));
+    }
+
+    @Test
     public void readsAChunkedBody() throws Exception {
         byte[] body = ProxyWire.readBody(
                 bytes("4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"),

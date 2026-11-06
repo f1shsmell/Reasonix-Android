@@ -51,8 +51,23 @@ public class SpeechPlugin extends Plugin {
 
     private SpeechRecognizer recognizer;
     private final AtomicInteger sessions = new AtomicInteger();
+    /** The hold the live recognizer belongs to; a stale page's stop must not touch it. */
+    private volatile int activeSession;
     /** Read and written on the main thread only, next to the callbacks. */
     private long lastLevelAt;
+
+    /**
+     * A session the caller knows (0 = "whatever is live", the legacy form).
+     * `>=` the last minted id counts as current too: a stop can arrive while
+     * the start runnable for its own session is still queued behind this
+     * call on the main thread, and dropping it would leave the hold running
+     * until the service's silence timeout.
+     */
+    private boolean isCurrent(PluginCall call) {
+        Integer session = call.getInt("session");
+        return session == null || session <= 0
+                || session == activeSession || session >= sessions.get();
+    }
 
     @PluginMethod
     public void listen(PluginCall call) {
@@ -79,16 +94,22 @@ public class SpeechPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         // stopListening lets the service flush its final result; the page
-        // shows a finishing state until that final event arrives.
-        bridge.executeOnMainThread(() -> {
-            if (recognizer != null) recognizer.stopListening();
-        });
+        // shows a finishing state until that final event arrives. A stop from
+        // a page generation whose hold already ended must not silence the
+        // hold a newer generation started.
+        if (isCurrent(call)) {
+            bridge.executeOnMainThread(() -> {
+                if (recognizer != null) recognizer.stopListening();
+            });
+        }
         call.resolve();
     }
 
     @PluginMethod
     public void cancel(PluginCall call) {
-        bridge.executeOnMainThread(this::destroyRecognizer);
+        if (isCurrent(call)) {
+            bridge.executeOnMainThread(this::destroyRecognizer);
+        }
         call.resolve();
     }
 
@@ -140,6 +161,14 @@ public class SpeechPlugin extends Plugin {
                 JSObject event = new JSObject();
                 event.put("text", firstTranscript(results));
                 emit("final", event);
+                // The hold is over either way. A page that died mid-hold never
+                // calls cancel, so the recognizer (and the resources its
+                // service keeps) must not outlive its own final answer. The
+                // session check keeps a callback that raced a newer listen
+                // from destroying the recognizer that replaced this one.
+                if (activeSession == mySession) {
+                    bridge.executeOnMainThread(SpeechPlugin.this::destroyRecognizer);
+                }
             }
 
             @Override
@@ -160,6 +189,11 @@ public class SpeechPlugin extends Plugin {
                 JSObject event = new JSObject();
                 event.put("error", error);
                 emit("recerror", event);
+                // The service has given up; an orphaned hold from a dead page
+                // releases its recognizer here instead of at process death.
+                if (activeSession == mySession) {
+                    bridge.executeOnMainThread(SpeechPlugin.this::destroyRecognizer);
+                }
             }
 
             @Override
@@ -179,6 +213,7 @@ public class SpeechPlugin extends Plugin {
         bridge.executeOnMainThread(() -> {
             destroyRecognizer();
             lastLevelAt = 0;
+            activeSession = mySession;
             recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
             recognizer.setRecognitionListener(listener);
             recognizer.startListening(intent);

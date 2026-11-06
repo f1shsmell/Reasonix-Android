@@ -20,6 +20,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import org.json.JSONArray;
 import org.json.JSONException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -72,13 +73,19 @@ public class UpdaterPlugin extends Plugin {
             .readTimeout(6, TimeUnit.SECONDS)
             .build();
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    /**
+     * Manifest reads get their own lane: a multi-minute download queued on the
+     * same single thread made the sheet's check spinner hang until the
+     * download finished, with no deadline of its own to break out.
+     */
+    private final ExecutorService checker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean downloading = new AtomicBoolean(false);
     private volatile Call activeDownload;
 
     @PluginMethod
     public void check(PluginCall call) {
         boolean force = Boolean.TRUE.equals(call.getBoolean("force", false));
-        worker.execute(() -> {
+        checker.execute(() -> {
             try {
                 long installedCode = installedCode();
                 UpdateManifest manifest = force ? null : cachedManifest();
@@ -175,6 +182,7 @@ public class UpdaterPlugin extends Plugin {
         Call active = activeDownload;
         if (active != null) active.cancel();
         worker.shutdownNow();
+        checker.shutdownNow();
         super.handleOnDestroy();
     }
 
@@ -260,10 +268,22 @@ public class UpdaterPlugin extends Plugin {
             if (!response.isSuccessful()) throw new IOException("http " + response.code());
             ResponseBody body = response.body();
             if (body == null) throw new IOException("empty response");
+            // A declared length is checked up front; a chunked answer without
+            // one is read with its own cap, because body.string() would buffer
+            // the whole stream before any length check could run — and the
+            // mirrors are third parties.
             if (body.contentLength() > MAX_MANIFEST_BYTES) throw new IOException("manifest too large");
-            String text = body.string();
-            if (text.length() > MAX_MANIFEST_BYTES) throw new IOException("manifest too large");
-            return text;
+            java.io.InputStream input = body.byteStream();
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            long total = 0;
+            int n;
+            while ((n = input.read(chunk)) != -1) {
+                total += n;
+                if (total > MAX_MANIFEST_BYTES) throw new IOException("manifest too large");
+                buffer.write(chunk, 0, n);
+            }
+            return buffer.toString("UTF-8");
         }
     }
 

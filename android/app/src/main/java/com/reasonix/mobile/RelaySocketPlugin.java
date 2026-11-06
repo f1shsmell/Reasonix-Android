@@ -46,7 +46,17 @@ public class RelaySocketPlugin extends Plugin {
      * failure.
      */
     private final Map<Integer, WebSocket> sockets = new ConcurrentHashMap<>();
-
+    /**
+     * A page reload orphans the previous generation's socket: nothing on the
+     * new page knows its tag, and OkHttp's ping keeps it healthy forever, so
+     * it would hold a live relay session (and battery) until process death.
+     * The page cannot name its generation, so every dial reaps every other
+     * tag. The page's socket protocol is one live link per page — a new dial
+     * names a fresh tag only after its previous socket closed or failed — and
+     * the one coexistence the protocol allows (a device switch opens the new
+     * link before closing the old) ends with the old link closed anyway, so
+     * an early reap changes which side sends the close, not the outcome.
+     */
     @PluginMethod
     public void connect(PluginCall call) {
         String url = call.getString("url");
@@ -64,6 +74,11 @@ public class RelaySocketPlugin extends Plugin {
             call.reject("missing url");
             return;
         }
+        for (Map.Entry<Integer, WebSocket> stale : sockets.entrySet()) {
+            if (stale.getKey().equals(tag)) continue;
+            stale.getValue().close(1000, "orphaned");
+        }
+        sockets.keySet().retainAll(java.util.Collections.singleton(tag));
         WebSocket previous = sockets.remove(tag);
         if (previous != null) {
             previous.close(1000, "replaced");
