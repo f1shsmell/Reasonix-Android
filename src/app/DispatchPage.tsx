@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TreeProject } from "../wire/tree";
 import { effortChoices, effortDisplayName, loadGlobalModels, modelShortName } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
@@ -38,7 +38,12 @@ export function DispatchPage({
   ) => Promise<DispatchResult>;
   onSent: (result: DispatchResult) => void;
 }) {
-  const usable = projects.filter((project) => project.missing !== true);
+  // Memoized, not computed bare: a fresh array every render would drag the
+  // root-adoption effect below along on every keystroke and focus change.
+  const usable = useMemo(
+    () => projects.filter((project) => project.missing !== true),
+    [projects],
+  );
   const [root, setRoot] = useState(usable[0]?.root ?? "");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,7 +67,7 @@ export function DispatchPage({
       return;
     }
     if (!usable.some((project) => project.root === root)) setRoot(firstRoot);
-  }, [firstRoot, projects, root, usable]);
+  }, [firstRoot, root, usable]);
 
   const grow = useCallback(() => {
     const input = inputRef.current;
