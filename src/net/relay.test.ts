@@ -196,6 +196,33 @@ describe("connectRelay trust", () => {
     expect(socket).not.toHaveBeenCalled();
   });
 
+  it("ends the connection when the grant names a relay it cannot parse", async () => {
+    // A malformed relay address must arrive as a decided answer, not a raw
+    // TypeError: the reconnect loop treats non-RelayError as transient and
+    // would burn its whole retry ladder on a string no retry can parse.
+    const socket = vi.fn();
+    vi.stubGlobal("WebSocket", socket);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            grant: { ticket: "ticket" },
+            device: { id: "dev1", publicKey: KEY_A, capabilities: ["desktop"], revokedAt: null },
+            relay: "not a relay address",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const failure = await connectRelay("dev1").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RelayError);
+    expect((failure as RelayError).kind).toBe("ended");
+    expect(socket).not.toHaveBeenCalled();
+  });
+
   it("opens the socket once the person approves the key", async () => {
     const attempted = new Error("socket attempted");
     vi.stubGlobal(

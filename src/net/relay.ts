@@ -248,7 +248,17 @@ function trustError(result: Extract<TrustResult, { ok: false }>): RelayError {
 
 function relayUrl(named: string): string {
   if (named === HOSTED_RELAY) return named;
-  const url = new URL(named);
+  let url: URL;
+  try {
+    url = new URL(named);
+  } catch {
+    // A malformed grant relay address would otherwise surface as a raw
+    // TypeError, and openConnection's reconnect loop treats non-RelayError as
+    // transient — it would burn the whole retry ladder over ~30 s on an
+    // address that can never work. "ended" is the honest kind: no retry
+    // parses the string any differently.
+    throw new RelayError("ended", "这台电脑使用的中继地址无法识别。");
+  }
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
     throw new RelayError("ended", "这台电脑使用的中继地址无法识别。");
   }
