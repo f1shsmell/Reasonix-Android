@@ -555,8 +555,8 @@ public final class LoopbackProxy {
         }
         // A VPN that owns the default route is exactly when binding to the
         // Wi-Fi matters: the neighbour is reachable there, not through the
-        // tunnel. A target on no local subnet stays on the default route so a
-        // mesh-VPN address still rides the tunnel.
+        // tunnel. The bind is chosen by subnet, so a mesh-VPN address on no
+        // local link still rides the default route.
         Network local = lanNetwork(target);
         switch (LanRoute.routeFor(policy, local != null, vpnActive())) {
             case "direct":
@@ -574,17 +574,16 @@ public final class LoopbackProxy {
      * The Wi-Fi or Ethernet network that can actually reach [target], or null
      * when the target is not on any of their subnets.
      *
-     * Only a VPN that owns the default route needs this: without one the
-     * default route already reaches the LAN. With one, a target on the Wi-Fi's
-     * own subnet must be sent out that link to avoid the tunnel, and a target
-     * that is on no local subnet must not be pinned to one at all.
+     * A neighbour is reached over the link that owns its subnet, whatever the
+     * active network says. Split-tunnel VPNs such as Pgy (蒲公英) can leave
+     * Wi-Fi as the active network while still capturing the LAN's routes in
+     * the tunnel; only an explicit bind keeps the request on the local link.
+     * The same lookup decides the "direct" label, so the path the app calls
+     * direct is the path it actually takes.
      */
     private Network lanNetwork(InetAddress target) {
         ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (manager == null) return null;
-        Network active = manager.getActiveNetwork();
-        NetworkCapabilities activeCaps = active == null ? null : manager.getNetworkCapabilities(active);
-        if (activeCaps == null || !activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
         for (Network network : manager.getAllNetworks()) {
             NetworkCapabilities caps = manager.getNetworkCapabilities(network);
             if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
@@ -736,19 +735,7 @@ public final class LoopbackProxy {
     private boolean directlyReachable(String origin) {
         String host = ProxyPaths.hostOf(origin);
         InetAddress target = LanRoute.lanTarget(host);
-        if (target == null) return false;
-        ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager == null) return false;
-        for (Network network : manager.getAllNetworks()) {
-            NetworkCapabilities caps = manager.getNetworkCapabilities(network);
-            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
-            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                    && !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
-                continue;
-            }
-            if (onLink(manager, network, target)) return true;
-        }
-        return false;
+        return target != null && lanNetwork(target) != null;
     }
 
 
