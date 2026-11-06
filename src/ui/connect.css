@@ -39,12 +39,9 @@
   margin: 0 calc(-1 * var(--pad));
   padding: 4px var(--pad) 10px;
   border-bottom: 1px solid var(--line-soft);
-  background: rgba(var(--bg-rgb), 0.8);
-  @supports (color: color-mix(in srgb, red, blue)) {
-  background: color-mix(in srgb, var(--bg) 80%, transparent);
-  }
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  /* Opaque: a translucent bar let the proxy control underneath read through
+     the title row once the page scrolled. */
+  background: var(--bg);
 }
 
 .settings-head {

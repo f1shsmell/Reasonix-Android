@@ -1050,6 +1050,20 @@ describe("Home connection bar", () => {
     expect(sheet?.textContent).toContain("当前");
   });
 
+  it("names switch rows by machine instead of the stored cloud id", () => {
+    const id = "f25ff408fc4001db5ffbc3effc4242dc";
+    rememberConnection("lan", "http://192.168.5.3:55716", "192.168.5.3:55716", "DESKTOP-I1RUBHL");
+    rememberConnection("cloud", id, id, "DESKTOP-I1RUBHL");
+    render({ link: connected() });
+    act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
+
+    const names = Array.from(container.querySelectorAll(".switch-name")).map(
+      (node) => node.textContent ?? "",
+    );
+    expect(names.filter((name) => name.includes("DESKTOP-I1RUBHL"))).toHaveLength(2);
+    expect(container.querySelector(".switch-sheet")?.textContent).not.toContain(id);
+  });
+
   it("switches to a row and closes the sheet", () => {
     rememberConnection("lan", "http://192.168.9.9:51234");
     const onSwitchConnection = vi.fn();
