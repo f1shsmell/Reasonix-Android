@@ -16,12 +16,17 @@ import { toolLabel, toolSummary } from "./toolMeta";
 export { toolLabel, toolSummary } from "./toolMeta";
 
 function stepTitle(step: ProcessStep): string {
-  return step.kind === "reasoning" ? "深度思考" : toolLabel(step.row.name);
+  if (step.kind === "reasoning") return "深度思考";
+  if (step.kind === "text") return "说明";
+  return toolLabel(step.row.name);
 }
 
 function stepSummary(step: ProcessStep): string {
   if (step.kind === "reasoning") {
     return step.thoughtMs !== undefined ? `思考了 ${Math.round(step.thoughtMs / 1000)} 秒` : "";
+  }
+  if (step.kind === "text") {
+    return step.text.replace(/\s+/g, " ").trim().slice(0, 60);
   }
   return toolSummary(step.row);
 }
@@ -36,9 +41,10 @@ export function ActivityRow({
 }) {
   const [open, setOpen] = useState(false);
   const reasoning = step.kind === "reasoning";
+  const prose = step.kind !== "tool";
   const long = reasoning && step.text.length > 900;
-  const failed = !reasoning && Boolean(step.row.err || step.row.refusalCode);
-  const running = !reasoning && step.row.running;
+  const failed = step.kind === "tool" && Boolean(step.row.err || step.row.refusalCode);
+  const running = step.kind === "tool" && step.row.running;
   const summary = stepSummary(step);
 
   const toggle = () => {
@@ -70,12 +76,14 @@ export function ActivityRow({
       </button>
       {open ? (
         <div className="activity-detail">
-          {reasoning ? (
+          {prose ? (
             <>
               <div className="reasoning-text">{step.text}</div>
-              <button type="button" className="linkbtn" onClick={() => onOpenSheet(step)}>
-                单页阅读
-              </button>
+              {reasoning ? (
+                <button type="button" className="linkbtn" onClick={() => onOpenSheet(step)}>
+                  单页阅读
+                </button>
+              ) : null}
             </>
           ) : (
             <ToolDetail row={step.row} />
@@ -91,16 +99,25 @@ export function ProcessSummary({
   steps,
   onOpen,
   running = false,
+  compact = false,
 }: {
   steps: ProcessStep[];
   onOpen: () => void;
   /** Compact fold: the run is still going, so the summary says so. */
   running?: boolean;
+  /** Qoder-style compact row: one "已处理 N 个操作" per turn. */
+  compact?: boolean;
 }) {
   const failed = steps.some(
     (step) => step.kind === "tool" && Boolean(step.row.err || step.row.refusalCode),
   );
-  const title = processTitle(steps);
+  const tools = steps.filter((step) => step.kind === "tool").length;
+  const title = compact ? "已处理" : processTitle(steps);
+  const count = compact
+    ? tools > 0
+      ? `${tools} 个操作`
+      : "过程记录"
+    : `${steps.length} 个操作`;
   return (
     <button type="button" className="process-row" onClick={onOpen}>
       <span
@@ -110,7 +127,7 @@ export function ProcessSummary({
         {failed ? "!" : running ? "•" : "✓"}
       </span>
       <span className="process-title">{title}</span>
-      <span className="process-count">{steps.length} 个操作</span>
+      <span className="process-count">{count}</span>
       <span className="chev" aria-hidden="true">
         ›
       </span>
@@ -149,7 +166,8 @@ export function ProcessSheet({
           {steps.map((step) => {
             const expanded = open === step.id;
             const reasoning = step.kind === "reasoning";
-            const failed = !reasoning && Boolean(step.row.err || step.row.refusalCode);
+            const prose = step.kind !== "tool";
+            const failed = step.kind === "tool" && Boolean(step.row.err || step.row.refusalCode);
             const summary = stepSummary(step);
             return (
               <li key={step.id} className={`timeline-step${expanded ? " open" : ""}`}>
@@ -173,7 +191,7 @@ export function ProcessSheet({
                 </button>
                 {expanded ? (
                   <div className="timeline-detail">
-                    {reasoning ? (
+                    {prose ? (
                       <div className="reasoning-text">{step.text}</div>
                     ) : (
                       <ToolDetail row={step.row} />

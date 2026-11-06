@@ -114,6 +114,49 @@ describe("buildDisplay", () => {
     expect(steps.steps.map((step) => step.kind)).toEqual(["tool"]);
   });
 
+  it("compact keeps only each turn's final message and folds the narration", () => {
+    const display = buildDisplay(
+      [
+        user("u1"),
+        tool("t1"),
+        assistant("a1", "我先看看"),
+        tool("t2"),
+        assistant("a2", "最终答案"),
+        user("u2"),
+        tool("t3"),
+      ],
+      true,
+      "compact",
+    );
+    expect(display.map((entry) => entry.kind)).toEqual([
+      "user",
+      "steps",
+      "assistant",
+      "user",
+      "steps",
+    ]);
+    const first = display[1];
+    if (first?.kind !== "steps") throw new Error("expected steps");
+    expect(first.compact).toBe(true);
+    expect(first.running).toBe(false);
+    expect(first.steps.map((step) => step.kind)).toEqual(["tool", "text", "tool"]);
+    expect(display[2]?.kind === "assistant" && display[2].row.text).toBe("最终答案");
+    const last = display[4];
+    expect(last?.kind === "steps" && last.running).toBe(true);
+  });
+
+  it("folds intermediate assistant text even without a tool", () => {
+    const display = buildDisplay(
+      [assistant("a1", "先说一下"), assistant("a2", "这才是回答")],
+      false,
+      "compact",
+    );
+    expect(display.map((entry) => entry.kind)).toEqual(["steps", "assistant"]);
+    const steps = display[0];
+    if (steps?.kind !== "steps") throw new Error("expected steps");
+    expect(steps.steps).toEqual([{ kind: "text", id: "a1", text: "先说一下" }]);
+  });
+
   it("folds a one-step compact run too, unlike the standard mode", () => {
     const standard = buildDisplay([tool("t1")], false);
     expect(standard[0]?.kind === "steps" && standard[0].live).toBe(true);

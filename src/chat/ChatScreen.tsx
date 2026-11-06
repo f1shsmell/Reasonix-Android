@@ -1750,8 +1750,17 @@ export function ChatScreen({
     );
   }
 
-  const openProcess = (entry: { steps: ProcessStep[] }) =>
-    setProcess({ title: `已处理 ${entry.steps.length} 个操作`, steps: entry.steps });
+  const openProcess = (entry: { steps: ProcessStep[]; compact?: boolean }) => {
+    const tools = entry.steps.filter((step) => step.kind === "tool").length;
+    setProcess({
+      title: entry.compact
+        ? tools > 0
+          ? `已处理 ${tools} 个操作`
+          : "过程记录"
+        : `已处理 ${entry.steps.length} 个操作`,
+      steps: entry.steps,
+    });
+  };
 
   return (
     <div className="chat">
@@ -1844,6 +1853,7 @@ export function ChatScreen({
                     key={entry.id}
                     steps={entry.steps}
                     running={entry.running}
+                    compact={entry.compact === true}
                     onOpen={() => openProcess(entry)}
                   />
                 )
