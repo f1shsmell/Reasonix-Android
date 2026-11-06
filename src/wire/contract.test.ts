@@ -4,6 +4,8 @@ import { parseRuntimeStatus } from "../net/status";
 import runtimes from "../../fixtures/wire/runtimes.json";
 import fleet from "../../fixtures/wire/fleet.json";
 import statusAsk from "../../fixtures/wire/status-ask.json";
+import recordedRuntimes from "../../fixtures/wire/recorded/runtimes.json";
+import recordedStatus from "../../fixtures/wire/recorded/status.json";
 import type { RuntimeView } from "./runtime";
 
 /**
@@ -30,6 +32,17 @@ describe("wire fixtures", () => {
     expect(status?.decisions.map((decision) => decision.id)).toEqual(["d1", "d2"]);
     expect(status?.decisions[0]?.questions?.[0]?.prompt).toBe("先做哪个");
     expect(status?.toolApprovalMode).toBe("ask");
+  });
+
+  it("keeps a recorded kernel response parseable", () => {
+    const rows = recordedRuntimes as RuntimeView[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(isRuntimeView(row)).toBe(true);
+
+    const status = parseRuntimeStatus(recordedStatus);
+    expect(status).not.toBeNull();
+    expect(status?.toolApprovalMode).toBe("ask");
+    expect(status?.workspaceRoot).toBe("/demo");
   });
 
   it("keeps the fleet rows and their watchability", () => {

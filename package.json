@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "manifest": "node scripts/latest-json.mjs",
-    "fixtures": "node scripts/record-wire-fixtures.mjs"
+    "fixtures": "node scripts/record-wire-fixtures.mjs",
+    "check:wire": "node scripts/check-wire.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.0",

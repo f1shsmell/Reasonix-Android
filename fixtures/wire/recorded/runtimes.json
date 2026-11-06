@@ -1,0 +1,9 @@
+[
+  {
+    "id": "r1",
+    "base": "/rt/r1",
+    "root": "/demo",
+    "name": "Reasonix-Android",
+    "sessionPath": "/demo/.reasonix/session.jsonl"
+  }
+]
