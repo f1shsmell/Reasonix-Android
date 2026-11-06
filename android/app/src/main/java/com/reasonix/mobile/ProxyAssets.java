@@ -37,10 +37,11 @@ final class ProxyAssets {
         // client route the bundle owns; only real files are served here.
         boolean hasExtension = name.lastIndexOf('.') > name.lastIndexOf('/');
         if (!hasExtension && !name.equals("index.html")) return false;
+        boolean head = "HEAD".equals(method);
         try {
             byte[] bytes;
             try (InputStream stream = source.open("public/" + name)) {
-                bytes = ProxyWire.readAll(stream);
+                bytes = head ? new byte[0] : ProxyWire.readAll(stream);
             }
             Map<String, String> extra = new LinkedHashMap<>();
             // Hashed asset names are safe to cache; the entry document is not,
@@ -48,6 +49,9 @@ final class ProxyAssets {
             extra.put("Cache-Control", "index.html".equals(name)
                     ? "no-store"
                     : "public, max-age=86400");
+            // A HEAD answers the headers only: writing the body would violate
+            // the method contract, and a strict client reads the trailing
+            // bytes as the start of the next response on a keep-alive socket.
             ProxyWire.writeResponse(socket, 200, contentType(name), bytes, extra);
             return true;
         } catch (IOException e) {

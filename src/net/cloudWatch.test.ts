@@ -25,6 +25,11 @@ beforeEach(() => {
   relay.ensureRelay.mockResolvedValue(undefined);
 });
 
+/** One alias for the bridge so the tests below do not each dangle an underscore. */
+const decide = (payload: string | { path: string; body: string }): void => {
+  window.__reasonixCloudDecide?.(payload);
+};
+
 afterEach(() => vi.clearAllMocks());
 
 describe("sweepCloud", () => {
@@ -88,7 +93,7 @@ describe("sweepCloud", () => {
     installCloudWatchBridge();
     http.fetchWithTimeout.mockResolvedValue(new Response(null, { status: 204 }));
 
-    window.__reasonixCloudDecide?.({
+    decide({
       path: "/rt/r1/approve",
       body: "{\"id\":\"d1\",\"allow\":true}",
     });
@@ -103,5 +108,37 @@ describe("sweepCloud", () => {
       }),
       15_000,
     );
+  });
+
+  it("parses the quoted string payload the native side hands over", async () => {
+    // MainActivity quotes the whole payload into a JS string literal; the
+    // page side must JSON.parse it before validating.
+    installCloudWatchBridge();
+    http.fetchWithTimeout.mockResolvedValue(new Response(null, { status: 204 }));
+
+    decide(JSON.stringify({ path: "/rt/r1/answer", body: "{\"id\":\"d2\",\"answers\":[]}" }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(http.fetchWithTimeout).toHaveBeenCalledWith(
+      "/rt/r1/answer",
+      expect.objectContaining({
+        method: "POST",
+        body: "{\"id\":\"d2\",\"answers\":[]}",
+      }),
+      15_000,
+    );
+  });
+
+  it("ignores a string payload that is not an object", async () => {
+    installCloudWatchBridge();
+    http.fetchWithTimeout.mockClear();
+
+    decide("not json");
+    decide(JSON.stringify("just a string"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(http.fetchWithTimeout).not.toHaveBeenCalled();
   });
 });

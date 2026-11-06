@@ -33,17 +33,59 @@ final class LanRoute {
         if (host == null || host.isEmpty()) return null;
         String value = host.startsWith("[") && host.endsWith("]")
                 ? host.substring(1, host.length() - 1) : host;
-        try {
-            InetAddress address = InetAddress.getByName(value);
-            if (address.isSiteLocalAddress() || address.isLinkLocalAddress() || address.isLoopbackAddress()) {
-                return address;
+        // A literal address parses without touching DNS; only a hostname pays
+        // the resolver, and then briefly: classification ran per request, and
+        // a dead resolver tied up a worker thread for the system timeout each
+        // time. Half a minute of memory changes no decision a resolver would.
+        if (value.contains(":") || value.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
+            try {
+                return classify(InetAddress.getByName(value));
+            } catch (Exception ignored) {
+                return null;
             }
-            byte[] bytes = address.getAddress();
-            if (bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc) return address;
-        } catch (Exception ignored) {
-            // A name that does not resolve cannot be classified; use the default network.
         }
+        Cached cached = RESOLVED.get(value);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.at < RESOLVE_TTL_MS) {
+            return cached.address == null ? null : classify(cached.address);
+        }
+        // A miss is cached like a hit: the motivation for caching at all is a
+        // dead resolver tying up a worker per request, and an unresolvable
+        // name is exactly the case that pays the full timeout each time.
+        InetAddress address;
+        try {
+            address = InetAddress.getByName(value);
+        } catch (Exception ignored) {
+            address = null;
+        }
+        if (RESOLVED.size() > 16) RESOLVED.clear();
+        RESOLVED.put(value, new Cached(address, now));
+        return address == null ? null : classify(address);
+    }
+
+    /** The address when it names a private neighbour, else null. */
+    private static InetAddress classify(InetAddress address) {
+        if (address.isSiteLocalAddress() || address.isLinkLocalAddress() || address.isLoopbackAddress()) {
+            return address;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc) return address;
         return null;
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, Cached> RESOLVED =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RESOLVE_TTL_MS = 30_000L;
+
+    /** A resolved name; a null address remembers that the name does not resolve. */
+    private static final class Cached {
+        final InetAddress address;
+        final long at;
+
+        Cached(InetAddress address, long at) {
+            this.address = address;
+            this.at = at;
+        }
     }
 
     /**

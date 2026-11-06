@@ -7,7 +7,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
 
@@ -63,10 +62,10 @@ final class ProxyWire {
         int read = 0;
         while (read < n) {
             int got = in.read(body, read, n - read);
-            if (got < 0) break;
+            if (got < 0) throw new BodyTruncatedException();
             read += got;
         }
-        return read == n ? body : Arrays.copyOf(body, read);
+        return body;
     }
 
     /** A chunked upload streams; buffer it under the same cap as a fixed body. */
@@ -110,11 +109,37 @@ final class ProxyWire {
         }
     }
 
+    /** The stream ended before Content-Length said it would. */
+    static final class BodyTruncatedException extends IOException {
+        BodyTruncatedException() {
+            super("request body ended early");
+        }
+    }
+
+    /**
+     * Responses buffer whole before they are written to the socket. A request
+     * body is capped at read time, but nothing capped the upstream's answer:
+     * one large artifact fetched through the in-app Studio page buffered to an
+     * OOM. Past the bound the transfer is refused rather than half-kept — a
+     * phone that needs a bigger file opens it in the system browser, which
+     * streams it instead of holding it.
+     */
+    static final long MAX_UPSTREAM_BYTES = 64L * 1024 * 1024;
+
     static byte[] readAll(InputStream in) throws IOException {
+        return readAll(in, MAX_UPSTREAM_BYTES);
+    }
+
+    static byte[] readAll(InputStream in, long maxBytes) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
+        long total = 0;
         int n;
-        while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
+        while ((n = in.read(buffer)) != -1) {
+            total += n;
+            if (total > maxBytes) throw new PayloadTooLargeException();
+            out.write(buffer, 0, n);
+        }
         return out.toByteArray();
     }
 

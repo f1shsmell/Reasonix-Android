@@ -44,17 +44,30 @@ final class ProxyAuth {
         return PROXY_COOKIE + "=" + secret(context);
     }
 
-    static String secret(Context context) {
+    /**
+     * The per-install secret, minted once and kept sealed by the phone's
+     * keystore. Synchronized because the proxy constructor and the turn
+     * service can ask on different threads at startup: two racing mints would
+     * leave the caller that cached its answer speaking a secret the other
+     * overwrote, and every later poll would refuse until a restart.
+     */
+    static synchronized String secret(Context context) {
         SharedPreferences prefs = context.getApplicationContext()
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String existing = prefs.getString(KEY_SECRET, "");
-        if (!existing.isEmpty()) return existing;
+        if (!existing.isEmpty()) {
+            String plain = SecretStore.unprotect(existing);
+            if (!plain.isEmpty()) return plain;
+            // The keystore lost the key it sealed with (a backup restore, a
+            // reset): mint fresh rather than fail. Both cookie paths derive
+            // from this one call, so they stay in step with the new secret.
+        }
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         StringBuilder out = new StringBuilder(64);
         for (byte b : bytes) out.append(String.format(Locale.ROOT, "%02x", b & 0xff));
         String value = out.toString();
-        prefs.edit().putString(KEY_SECRET, value).apply();
+        prefs.edit().putString(KEY_SECRET, SecretStore.protect(value)).apply();
         return value;
     }
 

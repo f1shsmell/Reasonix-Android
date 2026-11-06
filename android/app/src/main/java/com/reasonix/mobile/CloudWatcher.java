@@ -99,7 +99,11 @@ final class CloudWatcher {
         lastCode = "client.timeout";
         lastAt = System.currentTimeMillis();
         zeroCounts();
-        misses = 0;
+        // A sweep the page accepted but never answered is a miss like a sweep
+        // the bridge refused. Resetting the count here let a bridge that takes
+        // work and never answers keep the watcher alive forever, one wake-lock
+        // cycle per poll; two quiet sweeps in a row stop it like two refusals.
+        if (++misses >= 2) host.stopService();
         host.log("cloud sweep timed out");
         host.notePoll(false);
         host.stateChanged();
@@ -115,7 +119,9 @@ final class CloudWatcher {
         if (!snapshot.ok) {
             zeroCounts();
             host.log("cloud sweep failed: " + lastCode);
-            misses = 0;
+            // The bridge answered, but the sweep it ran did not: a relay that
+            // stays unreadable must stop the watcher too, not reset the count.
+            if (++misses >= 2) host.stopService();
             host.notePoll(false);
             host.stateChanged();
             return;

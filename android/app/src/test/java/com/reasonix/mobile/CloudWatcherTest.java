@@ -125,6 +125,39 @@ public class CloudWatcherTest {
     }
 
     @Test
+    public void twoTimedOutSweepsStopTheService() {
+        FakeHost host = new FakeHost();
+        FakeScheduler scheduler = new FakeScheduler();
+        CloudWatcher watcher = watcher(host, scheduler);
+
+        // A bridge that accepts sweeps but never answers them must not keep
+        // the watcher alive: a timeout counts as a miss.
+        watcher.poll();
+        scheduler.runDelayed();
+        assertEquals(0, host.stops);
+        watcher.poll();
+        scheduler.runDelayed();
+        assertEquals(1, host.stops);
+    }
+
+    @Test
+    public void aSuccessBetweenFailuresResetsTheMisses() {
+        FakeHost host = new FakeHost();
+        FakeScheduler scheduler = new FakeScheduler();
+        CloudWatcher watcher = watcher(host, scheduler);
+
+        watcher.poll();
+        scheduler.runDelayed();
+        watcher.poll();
+        watcher.deliver("{\"ok\":true,\"runtimes\":[],\"statuses\":{}}");
+        scheduler.runPosted();
+        assertEquals(0, host.stops);
+        watcher.poll();
+        scheduler.runDelayed();
+        assertEquals(0, host.stops);
+    }
+
+    @Test
     public void aSnapshotLandsTheCountsAndAnswersThePoll() {
         FakeHost host = new FakeHost();
         FakeScheduler scheduler = new FakeScheduler();

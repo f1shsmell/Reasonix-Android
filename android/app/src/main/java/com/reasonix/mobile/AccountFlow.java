@@ -38,8 +38,17 @@ final class AccountFlow {
         this.userAgent = userAgent;
     }
 
+    /**
+     * The stored session token, unsealed. It sits in prefs encrypted under the
+     * phone's keystore (an older build's plaintext value reads as-is), because
+     * this one string is the whole account credential.
+     */
+    private String token() {
+        return SecretStore.unprotect(prefs.getString(KEY_ACCOUNT_TOKEN, ""));
+    }
+
     void grant(Socket socket, byte[] body) throws IOException, JSONException {
-        String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
+        String token = token();
         if (token.isEmpty()) {
             ProxyWire.writeJson(socket, 401, "{\"code\":\"account.signed_out\"}");
             return;
@@ -92,7 +101,7 @@ final class AccountFlow {
     }
 
     void devices(Socket socket) throws IOException {
-        String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
+        String token = token();
         if (token.isEmpty()) {
             ProxyWire.writeJson(socket, 401, "{\"code\":\"account.signed_out\"}");
             return;
@@ -111,7 +120,7 @@ final class AccountFlow {
 
     JSONObject status() throws JSONException {
         JSONObject out = new JSONObject();
-        String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
+        String token = token();
         out.put("signedIn", !token.isEmpty());
         String user = prefs.getString(KEY_ACCOUNT_USER, "");
         if (!user.isEmpty()) {
@@ -180,7 +189,7 @@ final class AccountFlow {
             String token = out.optString("sessionToken", "");
             JSONObject user = out.optJSONObject("user");
             SharedPreferences.Editor edit = prefs.edit().remove(KEY_ACCOUNT_USER);
-            if (!token.isEmpty()) edit.putString(KEY_ACCOUNT_TOKEN, token);
+            if (!token.isEmpty()) edit.putString(KEY_ACCOUNT_TOKEN, SecretStore.protect(token));
             if (user != null) edit.putString(KEY_ACCOUNT_USER, user.toString());
             edit.apply();
             out.remove("sessionToken");
@@ -287,7 +296,7 @@ final class AccountFlow {
      * would still believe the previous person is here.
      */
     void logout() {
-        String token = prefs.getString(KEY_ACCOUNT_TOKEN, "");
+        String token = token();
         String cookie = ProxyCookies.webCookie();
         // The identity service's /auth/logout deletes one credential, cookie
         // first. Two calls end both sessions: the web cookie and the device

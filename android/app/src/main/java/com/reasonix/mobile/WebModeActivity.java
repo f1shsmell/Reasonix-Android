@@ -124,7 +124,13 @@ public class WebModeActivity extends ComponentActivity {
                 String target = uri.toString();
                 // Another host is not ours to swallow: the account sign-in and
                 // shared links go to the browser, like a tap in Chrome would.
-                if (!Urls.isWebUrl(target)) return true;
+                // A non-web scheme (mailto:, intent:, a deep link) belongs to
+                // whichever app handles it; swallowing it silently left a tap
+                // that did nothing at all.
+                if (!Urls.isWebUrl(target)) {
+                    handNonWebSchemeToSystem(uri);
+                    return true;
+                }
                 if (viaProxy && kernelOrigin != null && !kernelOrigin.isEmpty()) {
                     // The SPA can name its own host absolutely. Loaded as-is
                     // that would put the WebView back on the LAN address and
@@ -154,6 +160,31 @@ public class WebModeActivity extends ComponentActivity {
                 applyCompat(view);
                 progress.setVisibility(View.GONE);
                 CookieManager.getInstance().flush();
+            }
+
+            /** Dispatch a scheme this WebView cannot load to whoever declares it. */
+            private void handNonWebSchemeToSystem(Uri uri) {
+                String scheme = uri.getScheme();
+                if (scheme == null || scheme.equals("http") || scheme.equals("https")
+                        || scheme.equals("javascript") || scheme.equals("about")
+                        || scheme.equals("data")) {
+                    return;
+                }
+                try {
+                    // intent:// URIs carry a nested URL and a target package
+                    // that only the parser reads; a plain ACTION_VIEW on the
+                    // raw string is what left Play-Store-style links dead.
+                    // The explicit component is stripped: a web page never
+                    // names an exact activity to launch.
+                    Intent intent = "intent".equals(scheme)
+                            ? Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME)
+                            : new Intent(Intent.ACTION_VIEW, uri);
+                    intent.setComponent(null);
+                    startActivity(intent);
+                } catch (Exception e) {
+                    // Nothing on the phone handles it (or the URI is
+                    // malformed); staying put beats crashing.
+                }
             }
 
             @Override

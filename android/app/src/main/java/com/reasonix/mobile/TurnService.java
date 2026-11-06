@@ -107,6 +107,9 @@ public class TurnService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Notification ids must survive this process: a restarted watcher has
+        // to cancel the tray notifications the dead one left behind.
+        TurnNotificationIds.bind(this);
         active = this;
         TurnNotificationChannels.create(this);
         cloudWatcher = new CloudWatcher(
@@ -782,7 +785,23 @@ public class TurnService extends Service {
     private void decide(Intent intent) {
         String runtime = extra(intent, EXTRA_RUNTIME);
         PaneWatch watch = watches.get(runtime);
-        if (watch == null || watch.base.isEmpty()) return;
+        if (watch == null) {
+            // An intent from an older build carries the bare runtime id, and
+            // local keys are runtime ids, so scan before giving up.
+            watch = findByRuntime(runtime);
+        }
+        if (watch == null) {
+            // A notification outlives the service: a tap after process death
+            // arrives at an empty map. The tap must not die silently — the
+            // ask card read fresh from the kernel can still be answered in
+            // the chat, so open the conversation the key names.
+            openChatFallback(runtime);
+            return;
+        }
+        if (watch.base.isEmpty()) return;
+        // The executor's lambda needs a final name: `watch` was reassigned on
+        // the lookup paths above.
+        PaneWatch settled = watch;
         String decisionId = extra(intent, EXTRA_DECISION);
         if (decisionId.isEmpty()) return;
         boolean approval = intent.getBooleanExtra(EXTRA_APPROVAL, false);
@@ -794,14 +813,14 @@ public class TurnService extends Service {
                 body.put("allow", intent.getBooleanExtra(EXTRA_ALLOW, false));
                 body.put("session", intent.getBooleanExtra(EXTRA_SESSION, false));
                 body.put("persist", false);
-                path = watch.base + "/approve";
+                path = settled.base + "/approve";
             } else {
                 JSONObject answer = new JSONObject();
                 answer.put("QuestionID", extra(intent, EXTRA_QUESTION));
                 answer.put("Selected", new JSONArray().put(extra(intent, EXTRA_SELECTED)));
                 body.put("id", decisionId);
                 body.put("answers", new JSONArray().put(answer));
-                path = watch.base + "/answer";
+                path = settled.base + "/answer";
             }
             if (cloud) {
                 MainActivity.requestCloudDecision(path, body.toString());
@@ -811,13 +830,58 @@ public class TurnService extends Service {
             }
             decisions.execute(() -> {
                 if (post(path, body)) {
-                    pollStatus(watch, false);
+                    pollStatus(settled, false);
                     mainHandler.post(this::refreshRunning);
                 }
             });
         } catch (Exception e) {
             Log.d(TAG, "decision skipped", e);
         }
+    }
+
+    /** A watch whose key is not the map key the intent named (older builds). */
+    private PaneWatch findByRuntime(String runtime) {
+        if (runtime.isEmpty()) return null;
+        PaneWatch local = null;
+        for (PaneWatch candidate : watches.values()) {
+            if (!candidate.runtime.equals(runtime)) continue;
+            // This computer's own pane wins over a same-id pane on a peer.
+            if (candidate.peer.isEmpty()) return candidate;
+            local = candidate;
+        }
+        return local;
+    }
+
+    /**
+     * A decision the service can no longer settle: rebuild the conversation
+     * link from the key the intent carries and let the ask card be answered
+     * there. Peer keys parse back into their target and row id; a bare
+     * runtime id from an older build opens this computer's pane. The split
+     * takes the last colon because the target is a full origin and carries
+     * colons of its own (scheme, port); a runtime id never does.
+     */
+    private void openChatFallback(String key) {
+        String peer = "";
+        String id = key;
+        if (key.startsWith("p:")) {
+            int at = key.lastIndexOf(':');
+            if (at > 2) {
+                peer = key.substring(2, at);
+                id = key.substring(at + 1);
+            }
+        }
+        if (id.isEmpty()) return;
+        StringBuilder link = new StringBuilder("reasonix://chat?runtime=").append(Uri.encode(id));
+        if (!peer.isEmpty()) link.append("&peer=").append(Uri.encode(peer));
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link.toString()), this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivity(intent);
+        // Stop only when nothing else is watched: a tray notification left by
+        // a previous process can name a pane that no longer exists, and
+        // stopping the warm foreground service over it would cancel every
+        // live pane's ask with it.
+        if (watches.isEmpty()) stopSelf();
     }
 
     private boolean post(String path, JSONObject body) {

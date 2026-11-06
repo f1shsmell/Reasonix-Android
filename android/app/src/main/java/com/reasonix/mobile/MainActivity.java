@@ -135,7 +135,11 @@ public class MainActivity extends BridgeActivity {
             JSONObject payload = new JSONObject();
             payload.put("path", path);
             payload.put("body", body);
-            String js = "window.__reasonixCloudDecide&&window.__reasonixCloudDecide(" + payload + ")";
+            // Sent as a quoted string the page parses: string interpolation of
+            // JSON relied on org.json escaping everything a JS literal cannot
+            // carry (U+2028 once silently killed the whole evaluate call).
+            String js = "window.__reasonixCloudDecide&&window.__reasonixCloudDecide("
+                    + JSONObject.quote(payload.toString()) + ")";
             view.post(() -> {
                 try {
                     view.evaluateJavascript(js, null);

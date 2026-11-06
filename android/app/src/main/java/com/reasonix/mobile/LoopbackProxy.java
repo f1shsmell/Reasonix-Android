@@ -274,6 +274,11 @@ public final class LoopbackProxy {
             } catch (ProxyWire.PayloadTooLargeException e) {
                 ProxyWire.writeJson(s, 413, "{\"code\":\"request.too_large\"}");
                 return;
+            } catch (ProxyWire.BodyTruncatedException e) {
+                // Forwarding a short body would have the kernel answer 400 for
+                // a request the page believes it sent intact. Name the truncation.
+                ProxyWire.writeJson(s, 400, "{\"code\":\"proxy.body_truncated\"}");
+                return;
             }
             // Per-peer fleet reads live under /__reasonix/ but need the full
             // request target (query included) and the headers, which control()
@@ -765,25 +770,30 @@ public final class LoopbackProxy {
     private int pair(String origin, String code) throws IOException {
         URI uri = URI.create(origin + "/pair");
         HttpURLConnection conn = openKernelConnection(uri);
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(15000);
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Origin", origin);
-        conn.setRequestProperty("Referer", origin + "/");
-        byte[] payload = ("{\"code\":" + JSONObject.quote(code) + "}").getBytes(StandardCharsets.UTF_8);
-        conn.setFixedLengthStreamingMode(payload.length);
-        try (OutputStream out = conn.getOutputStream()) {
-            out.write(payload);
+        try {
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Origin", origin);
+            conn.setRequestProperty("Referer", origin + "/");
+            byte[] payload = ("{\"code\":" + JSONObject.quote(code) + "}").getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(payload);
+            }
+            int status = conn.getResponseCode();
+            if (status == 200 || status == 204) {
+                cookies.store(uri, conn);
+                persistWebCookie(uri, conn);
+            }
+            return status;
+        } finally {
+            // A refusal from an unreachable kernel used to leave the connection
+            // to GC; pairing retries on a flaky network piled up sockets.
+            conn.disconnect();
         }
-        int status = conn.getResponseCode();
-        if (status == 200 || status == 204) {
-            cookies.store(uri, conn);
-            persistWebCookie(uri, conn);
-        }
-        conn.disconnect();
-        return status;
     }
 
     /**
@@ -886,6 +896,9 @@ public final class LoopbackProxy {
             byte[] payload;
             try (InputStream response = status >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
                 payload = response == null ? new byte[0] : ProxyWire.readAll(response);
+            } catch (ProxyWire.PayloadTooLargeException e) {
+                ProxyWire.writeJson(socket, 502, "{\"code\":\"proxy.upstream_too_large\"}");
+                return;
             }
             // A redirect or a download is useless if only Content-Type is
             // copied: the WebView follows a Location, and a file needs its name.
@@ -909,7 +922,21 @@ public final class LoopbackProxy {
 
     private static void copyHeader(HttpURLConnection conn, Map<String, String> out, String name) {
         String value = conn.getHeaderField(name);
-        if (value != null && !value.isEmpty()) out.put(name, value);
+        if (value == null || value.isEmpty()) return;
+        // These arrive verbatim from the kernel over plain HTTP; a header that
+        // smuggled a CR or LF would end the line early and inject arbitrary
+        // headers into the WebView's loopback origin.
+        out.put(name, asciiLine(value));
+    }
+
+    /** Strip CR and LF, the characters that would break the response head. */
+    private static String asciiLine(String value) {
+        StringBuilder out = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c != '\r' && c != '\n') out.append(c);
+        }
+        return out.toString();
     }
 
     /**
@@ -924,6 +951,7 @@ public final class LoopbackProxy {
                                      String origin, Map<String, String> headers) {
         String value = conn.getHeaderField("Location");
         if (value == null || value.isEmpty()) return;
+        value = asciiLine(value);
         out.put("Location", ProxyPaths.isStudio(headers) ? ProxyPaths.studioLocation(value, origin) : value);
     }
 

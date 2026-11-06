@@ -75,7 +75,8 @@ declare global {
   interface Window {
     __reasonixCloudWatch?: () => void;
     __reasonixCloudWatchResult?: (json: string) => void;
-    __reasonixCloudDecide?: (payload: { path: string; body: string }) => void;
+    /** Native hands over a JSON string; an object meant an in-page call. */
+    __reasonixCloudDecide?: (payload: string | { path: string; body: string }) => void;
   }
 }
 
@@ -111,14 +112,21 @@ export function installCloudWatchBridge(): void {
     });
   };
   window.__reasonixCloudDecide = (payload) => {
-    if (
-      !payload ||
-      typeof payload.path !== "string" ||
-      typeof payload.body !== "string"
-    ) {
+    // Native quotes the payload into a string literal; parsing it here keeps
+    // the hand-off free of JS-literal edge cases (U+2028 and friends).
+    let data: { path?: unknown; body?: unknown } | null = null;
+    try {
+      data =
+        typeof payload === "string"
+          ? (JSON.parse(payload) as { path?: unknown; body?: unknown })
+          : payload;
+    } catch {
       return;
     }
-    void sendDecision(payload.path, payload.body).catch(() => {
+    if (!data || typeof data.path !== "string" || typeof data.body !== "string") {
+      return;
+    }
+    void sendDecision(data.path, data.body).catch(() => {
       // The notification stays; opening the chat is still the fallback.
     });
   };

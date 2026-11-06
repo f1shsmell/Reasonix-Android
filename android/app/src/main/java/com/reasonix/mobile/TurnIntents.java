@@ -44,7 +44,11 @@ final class TurnIntents {
                                          AskStatus.Choice choice, int index) {
         Intent intent = new Intent(context, TurnService.class);
         intent.setAction(TurnService.ACTION_DECIDE);
-        intent.putExtra(TurnService.EXTRA_RUNTIME, watch.runtime);
+        // The map key, not the bare runtime id: peer watches are filed under
+        // "p:<target>:<id>", so a decision tap must name the row the way the
+        // service looks it up, or it resolves to nothing (or to a same-id
+        // pane on another computer).
+        intent.putExtra(TurnService.EXTRA_RUNTIME, watch.key);
         intent.putExtra(TurnService.EXTRA_DECISION, choice.decisionId);
         intent.putExtra(TurnService.EXTRA_QUESTION, choice.questionId);
         intent.putExtra(TurnService.EXTRA_APPROVAL, choice.approval);
