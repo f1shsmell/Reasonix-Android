@@ -844,6 +844,40 @@ describe("ChatScreen composer", () => {
     );
   });
 
+  it("cancels dictation by tapping the live strip", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+    typeDraft("先看看");
+
+    const mic = container.querySelector('button[aria-label="按住说话"]') as HTMLButtonElement;
+    await act(async () => {
+      mic.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientY: 200 }));
+      await flush();
+    });
+    const live = container.querySelector(".voice-live") as HTMLButtonElement;
+    expect(live).toBeTruthy();
+    expect(live.textContent).not.toContain("取消");
+
+    act(() => live.click());
+    await flush();
+
+    expect(container.querySelector(".voice-live")).toBeNull();
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("先看看");
+  });
+
+  it("puts the mic immediately left of the send control", async () => {
+    stubKernel();
+    render(snapshot());
+    await flush();
+
+    const mic = container.querySelector('button[aria-label="按住说话"]') as HTMLButtonElement;
+    const send = container.querySelector('button[aria-label="发送"]') as HTMLButtonElement;
+    expect(mic).toBeTruthy();
+    expect(send).toBeTruthy();
+    expect(mic.nextElementSibling).toBe(send);
+  });
+
   it("keeps a long press from opening the copy menu on the mic", async () => {
     stubKernel();
     render(snapshot());
