@@ -97,7 +97,7 @@ export function foldHistory(
       if (message.hostAuthored) continue;
       const text = clean(message.content);
       if (!text) continue;
-      rows.push({ kind: "user", id: historyId(index, 0), text });
+      rows.push({ kind: "user", id: historyId(index, 0), text, msgIndex: index });
       continue;
     }
 

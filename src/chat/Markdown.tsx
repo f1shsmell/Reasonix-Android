@@ -1,9 +1,10 @@
 /**
  * Assistant text as Markdown.
  *
- * Raw HTML is deliberately not enabled (`rehype-raw` is absent), so a message
- * cannot inject markup into the phone UI. Links open outside the WebView;
- * tables scroll instead of forcing the bubble wider than the screen.
+ * Raw HTML is parsed and then sanitized: a message may use a safe `<details>`
+ * block, but scripts, event handlers and unknown tags never reach the DOM.
+ * Links open outside the WebView; tables scroll instead of forcing the bubble
+ * wider than the screen.
  *
  * The component is memoised by `text`: a long transcript re-renders on every
  * scroll, and parsing the same finished message again would be wasted work.
@@ -14,10 +15,13 @@ import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { CopyButton } from "./CopyButton";
 import { highlightCode } from "./highlight";
+import { normalizeMath } from "./mathText";
 import "highlight.js/styles/github-dark.css";
 import "katex/dist/katex.min.css";
 
@@ -74,15 +78,26 @@ const components: Components = {
   },
 };
 
+const schema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    details: ["open"],
+    // remark-math marks its nodes with these classes; keeping language-* also
+    // preserves the highlighter's fence hint after sanitising.
+    code: [["className", /^language-/, "math-inline", "math-display"]],
+  },
+};
+
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], rehypeKatex]}
         components={components}
       >
-        {text}
+        {normalizeMath(text)}
       </ReactMarkdown>
     </div>
   );

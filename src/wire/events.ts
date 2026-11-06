@@ -178,6 +178,9 @@ export interface EventPayload {
   source?: string;
   /** `turn_started` / `steer`: the person's own message for this turn. */
   attachments?: unknown[];
+  /** `turn_started`: which authored message this turn is about. */
+  authoredTurn?: number;
+  msgIndex?: number;
   /**
    * `todo_progress`: counters and three revisions. It never carries the list —
    * that is read from `GET /rt/{id}/todos`.

@@ -59,10 +59,30 @@ describe("Markdown", () => {
     expect(container.querySelectorAll("th")).toHaveLength(2);
   });
 
-  it("does not turn raw HTML in a message into DOM", () => {
-    render('<img src=x onerror="alert(1)">\n\n<script>alert(2)</script>');
-    expect(container.querySelector("img")).toBeNull();
+  it("sanitizes raw HTML but keeps a safe details block", () => {
+    render(
+      '<img src=x onerror="alert(1)">\n\n<script>alert(2)</script>\n\n' +
+        "<details open><summary>展开查看详情</summary>\n\n可折叠内容。</details>",
+    );
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("onerror")).toBeNull();
     expect(container.querySelector("script")).toBeNull();
+    expect(container.querySelector("details")?.hasAttribute("open")).toBe(true);
+    expect(container.querySelector("summary")?.textContent).toBe("展开查看详情");
+    expect(container.querySelector("details")?.textContent).toContain("可折叠内容。");
+  });
+
+  it("parses markdown inside a details block", () => {
+    render("<details><summary>展开</summary>\n\n包含 **粗体** 和 `代码`。\n\n</details>");
+    expect(container.querySelector("details strong")?.textContent).toBe("粗体");
+    expect(container.querySelector("details code")?.textContent).toBe("代码");
+  });
+
+  it("renders the LaTeX delimiters models actually write", () => {
+    render("行内 \\(E = mc^2\\)\n\n\\[\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\\]");
+    expect(container.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).not.toContain("\\(");
+    expect(container.textContent).not.toContain("\\[");
   });
 
   it("renders inline and block math via KaTeX", () => {

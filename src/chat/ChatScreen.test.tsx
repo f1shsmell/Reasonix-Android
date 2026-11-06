@@ -373,6 +373,39 @@ describe("ChatScreen history", () => {
     expect(container.textContent.split("之前发过的消息")).toHaveLength(2);
   });
 
+  it("drops a confirmed optimistic send history already contains", async () => {
+    // `turn_started` confirmed the optimistic row, so it is no longer marked
+    // local; matching only local rows left the send beside history's copy.
+    scheduleSaveRows(["r1"], [
+      { kind: "user", id: "local-7", text: "同一条消息", msgIndex: 4 },
+    ]);
+
+    const pending: ((value: Response) => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json([]));
+        if (url.endsWith("/status")) {
+          return Promise.resolve(json({ running: false, busy: false, decisions: [] }));
+        }
+        return new Promise<Response>((done) => pending.push(done));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    await act(async () => {
+      for (const done of pending) {
+        done(json({ messages: [{ role: "user", content: "同一条消息", msgIndex: 4 }], total: 1, hasMoreBefore: false }));
+      }
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(container.textContent.split("同一条消息")).toHaveLength(2);
+  });
+
   it("keeps a cached optimistic send history does not have", async () => {
     scheduleSaveRows(["r1"], [
       { kind: "user", id: "local-1", text: "这条还没进历史", local: true },

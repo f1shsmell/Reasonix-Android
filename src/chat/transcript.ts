@@ -55,6 +55,8 @@ export interface UserRow {
   text: string;
   /** Drawn before the kernel's `turn_started` confirms the send. */
   local?: boolean;
+  /** The session index of the authored message, when the wire named it. */
+  msgIndex?: number;
 }
 
 export interface NoticeRow {
@@ -145,7 +147,11 @@ export function removeLocalUser(transcript: Transcript, id: string): Transcript 
 }
 
 /** The oldest unconfirmed row, optionally narrowed to one text, is this turn. */
-function confirmLocalUser(rows: Row[], text?: string): Row[] | null {
+function confirmLocalUser(
+  rows: Row[],
+  text?: string,
+  msgIndex?: number,
+): Row[] | null {
   let at = -1;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
@@ -161,7 +167,13 @@ function confirmLocalUser(rows: Row[], text?: string): Row[] | null {
   if (at < 0) return null;
   const next = rows.slice();
   const row = rows[at];
-  if (row?.kind === "user") next[at] = { ...row, local: false };
+  if (row?.kind === "user") {
+    next[at] = {
+      ...row,
+      local: false,
+      ...(msgIndex !== undefined ? { msgIndex } : {}),
+    };
+  }
   return next;
 }
 
@@ -453,13 +465,33 @@ export function reduce(
         ...(typeof event.modelRef === "string" ? { modelRef: event.modelRef } : {}),
       };
       const text = typeof event.text === "string" ? event.text : "";
+      const msgIndex = typeof event.msgIndex === "number" ? event.msgIndex : undefined;
+      // A continuation after an ask re-announces the message it is about.
+      // The index names that message, so the same one is not drawn twice.
+      if (
+        msgIndex !== undefined &&
+        rows.some((row) => row.kind === "user" && row.msgIndex === msgIndex)
+      ) {
+        return next;
+      }
       if (!text) {
-        const confirmed = confirmLocalUser(rows);
+        const confirmed = confirmLocalUser(rows, undefined, msgIndex);
         return confirmed ? { ...next, rows: confirmed } : next;
       }
-      const confirmed = confirmLocalUser(rows, text);
+      const confirmed = confirmLocalUser(rows, text, msgIndex);
       if (confirmed) return { ...next, rows: confirmed };
-      return { ...next, rows: [...rows, { kind: "user", id: nextId("user"), text }] };
+      return {
+        ...next,
+        rows: [
+          ...rows,
+          {
+            kind: "user",
+            id: nextId("user"),
+            text,
+            ...(msgIndex !== undefined ? { msgIndex } : {}),
+          },
+        ],
+      };
     }
 
     case "steer": {

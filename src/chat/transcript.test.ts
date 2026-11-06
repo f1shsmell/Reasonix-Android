@@ -62,6 +62,31 @@ describe("transcript", () => {
     const row = after.rows[0];
     if (row?.kind !== "user") throw new Error("expected the optimistic row");
     expect(row.local).toBe(false);
+    expect(row.msgIndex).toBe(3);
+  });
+
+  it("does not draw one authored message twice when a turn re-announces it", () => {
+    // A continuation after an ask repeats the message the turn is about.
+    // The index names it; a second bubble with the same index is a ghost.
+    const first = reduce(emptyTranscript, {
+      kind: "turn_started",
+      text: "请发送几个连续的 ask 卡片",
+      msgIndex: 4,
+    });
+    const repeated = reduce(first, {
+      kind: "turn_started",
+      text: "请发送几个连续的 ask 卡片",
+      msgIndex: 4,
+    });
+    expect(repeated.rows.filter((row) => row.kind === "user")).toHaveLength(1);
+
+    // The same words as a genuinely new message have a new index.
+    const again = reduce(repeated, {
+      kind: "turn_started",
+      text: "请发送几个连续的 ask 卡片",
+      msgIndex: 9,
+    });
+    expect(again.rows.filter((row) => row.kind === "user")).toHaveLength(2);
   });
 
   it("closes a bubble a dead turn left open", () => {
