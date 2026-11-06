@@ -65,6 +65,19 @@ public class ProxyAssetsTest {
     }
 
     @Test
+    public void answersHeadWithTheGetHeadersAndNoBody() throws Exception {
+        ProxyAssets assets = new ProxyAssets(name ->
+                new ByteArrayInputStream("console.log(1)".getBytes(StandardCharsets.UTF_8)));
+        FakeSocket socket = new FakeSocket();
+
+        assertTrue(assets.serve(socket, "HEAD", "/app.js"));
+        String response = socket.text();
+        assertTrue(response.startsWith("HTTP/1.1 200 OK"));
+        assertTrue(response.contains("Content-Length: 14"));
+        assertFalse(response.endsWith("console.log(1)"));
+    }
+
+    @Test
     public void servesIndexWithoutCachingIt() throws Exception {
         ProxyAssets assets = new ProxyAssets(name -> new ByteArrayInputStream("<html>".getBytes()));
         FakeSocket socket = new FakeSocket();

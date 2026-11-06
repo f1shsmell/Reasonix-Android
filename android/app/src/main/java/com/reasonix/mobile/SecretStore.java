@@ -19,8 +19,8 @@ import javax.crypto.spec.GCMParameterSpec;
  *
  * The account session token and the proxy's per-install secret sit in
  * SharedPreferences, which any debuggable attach or accidental prefs dump can
- * read. A keystore key that never leaves the TEE (and is set to require it)
- * turns those values into ciphertext a dump cannot use. Each value carries its
+ * read. A keystore key, hardware-backed where the device provides it, turns
+ * those values into ciphertext a prefs dump cannot use. Each value carries its
  * own random IV; the format prefixes itself, so a plaintext value written by an
  * older build still reads as-is, and a device where the keystore is unavailable
  * (some emulators, ROM quirks, Robolectric) keeps storing plaintext rather than
@@ -79,7 +79,7 @@ final class SecretStore {
     }
 
     /** The app's AES key, generated on first use; null when the keystore is unavailable. */
-    private static SecretKey key() {
+    private static synchronized SecretKey key() {
         try {
             KeyStore store = KeyStore.getInstance(KEYSTORE);
             store.load(null);

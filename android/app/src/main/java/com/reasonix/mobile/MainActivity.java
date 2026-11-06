@@ -139,7 +139,7 @@ public class MainActivity extends BridgeActivity {
             // JSON relied on org.json escaping everything a JS literal cannot
             // carry (U+2028 once silently killed the whole evaluate call).
             String js = "window.__reasonixCloudDecide&&window.__reasonixCloudDecide("
-                    + JSONObject.quote(payload.toString()) + ")";
+                    + JsString.quote(payload.toString()) + ")";
             view.post(() -> {
                 try {
                     view.evaluateJavascript(js, null);

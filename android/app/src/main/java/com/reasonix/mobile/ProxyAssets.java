@@ -41,7 +41,9 @@ final class ProxyAssets {
         try {
             byte[] bytes;
             try (InputStream stream = source.open("public/" + name)) {
-                bytes = head ? new byte[0] : ProxyWire.readAll(stream);
+                // HEAD needs the real length for its Content-Length, so the
+                // asset is read here too; only the body is withheld below.
+                bytes = ProxyWire.readAll(stream);
             }
             Map<String, String> extra = new LinkedHashMap<>();
             // Hashed asset names are safe to cache; the entry document is not,
@@ -49,10 +51,11 @@ final class ProxyAssets {
             extra.put("Cache-Control", "index.html".equals(name)
                     ? "no-store"
                     : "public, max-age=86400");
-            // A HEAD answers the headers only: writing the body would violate
-            // the method contract, and a strict client reads the trailing
-            // bytes as the start of the next response on a keep-alive socket.
-            ProxyWire.writeResponse(socket, 200, contentType(name), bytes, extra);
+            // A HEAD answers the GET headers only: writing the body would
+            // violate the method contract, and a strict client reads the
+            // trailing bytes as the start of the next response.
+            if (head) ProxyWire.writeHead(socket, 200, contentType(name), bytes.length, extra);
+            else ProxyWire.writeResponse(socket, 200, contentType(name), bytes, extra);
             return true;
         } catch (IOException e) {
             return false;

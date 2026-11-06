@@ -120,11 +120,12 @@ final class ProxyWire {
      * Responses buffer whole before they are written to the socket. A request
      * body is capped at read time, but nothing capped the upstream's answer:
      * one large artifact fetched through the in-app Studio page buffered to an
-     * OOM. Past the bound the transfer is refused rather than half-kept — a
-     * phone that needs a bigger file opens it in the system browser, which
-     * streams it instead of holding it.
+     * OOM. The buffer and its final copy cost roughly twice the bound, so
+     * 16 MB keeps the peak well inside a phone heap; past it the transfer is
+     * refused rather than half-kept — a phone that needs a bigger file opens
+     * it in the system browser, which streams it instead of holding it.
      */
-    static final long MAX_UPSTREAM_BYTES = 64L * 1024 * 1024;
+    static final long MAX_UPSTREAM_BYTES = 16L * 1024 * 1024;
 
     static byte[] readAll(InputStream in) throws IOException {
         return readAll(in, MAX_UPSTREAM_BYTES);
@@ -160,6 +161,17 @@ final class ProxyWire {
 
     static void writeResponse(Socket socket, int status, String contentType, byte[] payload,
                               Map<String, String> extra) throws IOException {
+        write(socket, status, contentType, payload.length, payload, extra);
+    }
+
+    /** A HEAD answer: the GET headers, including its length, without the body. */
+    static void writeHead(Socket socket, int status, String contentType, long contentLength,
+                          Map<String, String> extra) throws IOException {
+        write(socket, status, contentType, contentLength, null, extra);
+    }
+
+    private static void write(Socket socket, int status, String contentType, long contentLength,
+                              byte[] payload, Map<String, String> extra) throws IOException {
         OutputStream out = socket.getOutputStream();
         StringBuilder head = new StringBuilder();
         head.append("HTTP/1.1 ").append(status).append(' ').append(reason(status)).append("\r\n");
@@ -180,11 +192,11 @@ final class ProxyWire {
         // A 204 must not carry Content-Length (RFC 9110 §8.6): some clients
         // read it as "a body of that length follows" and hang.
         if (status != 204 && status != 304) {
-            head.append("Content-Length: ").append(payload.length).append("\r\n");
+            head.append("Content-Length: ").append(contentLength).append("\r\n");
         }
         head.append("Connection: close\r\n\r\n");
         out.write(head.toString().getBytes(StandardCharsets.ISO_8859_1));
-        out.write(payload);
+        if (payload != null) out.write(payload);
         out.flush();
     }
 
