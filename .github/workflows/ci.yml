@@ -69,6 +69,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: esengine/DeepSeek-Reasonix
+          # The pin is the last snapshot check-wire was verified against. Bump
+          # it whenever the kernel contract changes on purpose — check-wire
+          # failing on an intended contract change is the signal. Keep it
+          # pinned so kernel-side drift is caught deliberately, not silently.
           ref: 2948ec98ec0cc3b2c8f5619a19c98ff98cd17e74
           path: kernel
           fetch-depth: 1
