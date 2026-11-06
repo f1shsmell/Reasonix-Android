@@ -753,6 +753,29 @@ describe("Home", () => {
       expect(onOpenSession).not.toHaveBeenCalled();
     });
 
+    it("closes the actions on a backdrop click without activating the row below", () => {
+      vi.useFakeTimers();
+      const onOpenSession = vi.fn();
+      render({ tree: tree({ projects: [pinnedProject()] }), onOpenSession });
+
+      const row = Array.from(container.querySelectorAll(".session")).find((candidate) =>
+        candidate.textContent?.includes("钉住的"),
+      ) as HTMLElement;
+      hold(row, 100, 100);
+      pointer(row, "pointerup", 100, 100);
+      const backdrop = container.querySelector(".sheet-backdrop") as HTMLElement;
+      expect(backdrop).toBeTruthy();
+
+      // Closing on pointerdown removed the backdrop before the finger came
+      // up; the click then landed on the row underneath.
+      act(() => backdrop.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+      expect(container.querySelector(".session-sheet")).toBeTruthy();
+
+      act(() => backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      expect(container.querySelector(".session-sheet")).toBeNull();
+      expect(onOpenSession).not.toHaveBeenCalled();
+    });
+
     it("posts the pin from the actions and re-reads the tree", async () => {
       const fetchMock = route(() => new Response(null, { status: 204 }));
       const onRefresh = vi.fn();

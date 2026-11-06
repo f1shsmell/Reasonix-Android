@@ -96,7 +96,7 @@ export function SessionSheet({
     mode === "rename" ? "重命名会话" : mode === "delete" ? "删除会话" : mode === "move" ? "移动到项目" : title;
 
   return (
-    <div className="sheet-backdrop" role="presentation" onPointerDown={onClose}>
+    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <section
         className="sheet session-sheet"
         role="dialog"
