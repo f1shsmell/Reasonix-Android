@@ -17,6 +17,7 @@ import type { TreeWrite } from "../net/pin";
 import { treeWriteMessage } from "../net/pin";
 import type { TreeProject } from "../wire/tree";
 import { useBackCloser } from "./backStack";
+import { swallowNextClick } from "./longPress";
 
 export interface SessionSheetProps {
   title: string;
@@ -74,7 +75,11 @@ export function SessionSheet({
   const [nextTitle, setNextTitle] = useState(title);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  useBackCloser(true, onClose);
+  const close = () => {
+    swallowNextClick();
+    onClose();
+  };
+  useBackCloser(true, close);
 
   const run = async (action: () => Promise<TreeWrite>) => {
     if (working) return;
@@ -86,7 +91,7 @@ export function SessionSheet({
       setError(treeWriteMessage(result.code));
       return;
     }
-    onClose();
+    close();
   };
 
   const rename = nextTitle.trim();
@@ -96,7 +101,7 @@ export function SessionSheet({
     mode === "rename" ? "重命名会话" : mode === "delete" ? "删除会话" : mode === "move" ? "移动到项目" : title;
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div className="sheet-backdrop" role="presentation" onClick={close}>
       <section
         className="sheet session-sheet"
         role="dialog"
@@ -107,7 +112,7 @@ export function SessionSheet({
       >
         <div className="sheet-head">
           <h2>{heading}</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={close} aria-label="关闭">
             ×
           </button>
         </div>

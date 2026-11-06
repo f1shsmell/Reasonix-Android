@@ -2,6 +2,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetClickSwallow } from "./longPress";
 import { Home, projectActivity, recentConversations } from "./Home";
 import { loadConnections, rememberConnection } from "../net/savedConnections";
 import type { LinkState } from "../net/link";
@@ -36,6 +37,7 @@ function route(
 }
 
 beforeEach(() => {
+  resetClickSwallow();
   container = document.createElement("div");
   document.body.appendChild(container);
   localStorage.clear();
@@ -773,6 +775,10 @@ describe("Home", () => {
 
       act(() => backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true })));
       expect(container.querySelector(".session-sheet")).toBeNull();
+      expect(onOpenSession).not.toHaveBeenCalled();
+
+      // A compatibility click from the same tap must not open the row.
+      act(() => row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
       expect(onOpenSession).not.toHaveBeenCalled();
     });
 
