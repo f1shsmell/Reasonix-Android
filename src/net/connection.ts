@@ -283,21 +283,36 @@ export class Connection {
    * Unlike `refresh`, a failure here is not a verdict: it does not increment
    * the tolerated-failure count or republish `reach`. The caller (a network
    * change) acts on it by starting a fresh attempt.
+   *
+   * It does share the refresh ordering token: a quickCheck races the watch's
+   * refresh for the same snapshot, and a probe that started before a newer
+   * read must not resolve after it and overwrite the newer answer with older
+   * data. Superseded is not failed, though: the boolean answers "is the route
+   * up", so a stale probe reports the reach already on screen and lets the
+   * newer read — the one that made this one stale — deliver the verdict.
+   * Reporting a bare `false` here would send the caller off to reconnect a
+   * link that a newer, still-landing read may well prove healthy.
    */
   async quickCheck(timeoutMs = 5_000): Promise<boolean> {
+    const seq = ++this.refreshSeq;
+    const stale = () => seq !== this.refreshSeq;
+    const superseded = (): boolean => this.snapshot.reach.kind === "ok";
     try {
       const response = await fetchWithTimeout(
         "/runtimes",
         { credentials: "same-origin" },
         timeoutMs,
       );
+      if (stale()) return superseded();
       if (response.status === 401 || response.status === 403) {
+        // The kernel answered. That is a connection, just an unauthorized one.
         this.failures = 0;
         this.publish({ reach: { kind: "unauthorized" }, runtimes: [] });
         return false;
       }
       if (!response.ok) return false;
       const body: unknown = await response.json();
+      if (stale()) return superseded();
       if (!Array.isArray(body)) return false;
       const runtimes = body.filter(isRuntimeView);
       if (body.length > 0 && runtimes.length === 0) return false;

@@ -78,6 +78,43 @@ describe("Fleet sweep", () => {
     expect(fleet.current.pending).toHaveLength(0);
   });
 
+  it("sweeps the rebuilt list when a rebuild lands mid-sweep", async () => {
+    // A sweep that was in flight when the watch list was rebuilt discards its
+    // own results (its indexes name computers that are no longer there); the
+    // skip it left behind is the new list's only read before the next tick.
+    serverMock.loadFleet.mockResolvedValue([lanPeer("alpha")]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sweeps = 0;
+    serverMock.fleetRead.mockImplementation(async (path: string) => {
+      if (path === "/__reasonix/fleet/0/runtimes") {
+        sweeps += 1;
+        if (sweeps === 1) await gate;
+        return { ok: true as const, body: [runtime("rt1")] };
+      }
+      if (path === "/__reasonix/fleet/0/rt/rt1/status") {
+        return status({ decisions: [{ id: "d1", kind: "ask", prompt: "继续吗?" }], running: false });
+      }
+      return { ok: false as const, code: "http.404" };
+    });
+
+    const fleet = new Fleet();
+    const first = fleet.refresh();
+    await vi.waitFor(() => expect(sweeps).toBe(1));
+    const second = fleet.refresh();
+    release();
+    await Promise.all([first, second]);
+
+    // The requeued sweep reads the rebuilt list; without it the peer would
+    // stay "unknown" and the ask undrawn until the next 20 s tick.
+    await vi.waitFor(() => {
+      expect(fleet.current.peers[0]?.state).toBe("online");
+      expect(fleet.current.pending).toHaveLength(1);
+    });
+  });
+
   it("reports an unreachable peer as offline", async () => {
     serverMock.loadFleet.mockResolvedValue([lanPeer("alpha")]);
     serverMock.fleetRead.mockResolvedValue({ ok: false, code: "client.offline" });

@@ -269,6 +269,38 @@ describe("Connection", () => {
     expect(connection.current.runtimes.map((runtime) => runtime.id)).toEqual(["newer"]);
   });
 
+  it("does not let a slow refresh overwrite a newer quickCheck", async () => {
+    // The handover probe and the watch's refresh race for one snapshot, so
+    // the probe takes the same ordering token: the read that started later
+    // wins, whichever kind it is.
+    const resolvers: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      ),
+    );
+    const connection = new Connection();
+    const older = connection.refresh();
+    const newer = connection.quickCheck(10);
+
+    const body = (id: string) =>
+      new Response(JSON.stringify([{ id, base: `/rt/${id}`, root: `/${id}`, name: id }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    resolvers[1]?.(body("newer"));
+    await expect(newer).resolves.toBe(true);
+    resolvers[0]?.(body("older"));
+    await expect(older).resolves.toBe(false);
+
+    expect(connection.current.runtimes.map((runtime) => runtime.id)).toEqual(["newer"]);
+  });
+
   it("drops the previous pane's last event when the screen detaches", async () => {
     class Source {
       static latest: Source | null = null;

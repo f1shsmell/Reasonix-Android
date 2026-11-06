@@ -165,6 +165,13 @@ export class Fleet {
   private tick: (() => void) | null = null;
   private sweeping = false;
   /**
+   * Set when a sweep call arrived while one was already running. The running
+   * sweep may still discard its results (the list was rebuilt mid-flight), in
+   * which case the skipped call is the only chance the new list has of being
+   * read before the next 20 s tick — so it requeues one run.
+   */
+  private requeued = false;
+  /**
    * Bumped whenever the mirrored list is rebuilt. A sweep that started
    * against an older list must not write its verdicts into the new one: the
    * indexes would name computers the sweep never read.
@@ -292,7 +299,16 @@ export class Fleet {
   }
 
   private async sweep(): Promise<void> {
-    if (this.sweeping) return;
+    if (this.sweeping) {
+      // A sweep is already running. If it survives to publish, this call would
+      // only be a duplicate read — but if the list was rebuilt mid-sweep, the
+      // running one discards everything and the peers this call was asked
+      // about would stay "unknown" until the next tick. Remembering the skip
+      // costs one re-run; only a skipped call sets the flag, so a quiet list
+      // cannot ping-pong.
+      this.requeued = true;
+      return;
+    }
     this.sweeping = true;
     const mine = this.generation;
     try {
@@ -321,6 +337,10 @@ export class Fleet {
       this.publish();
     } finally {
       this.sweeping = false;
+      if (this.requeued) {
+        this.requeued = false;
+        void this.sweep();
+      }
     }
   }
 
