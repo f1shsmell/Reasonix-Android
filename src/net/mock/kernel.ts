@@ -12,6 +12,9 @@ import { setKernelTransport } from "../transport";
 const ORIGIN = "http://mock.local";
 const BASE = "/rt/demo";
 const now = Date.now();
+/** `?tour=1` scripts the states the README renders: waiting, running, slow. */
+const tour = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("tour") === "1";
 
 const runtime = {
   id: "demo",
@@ -19,6 +22,23 @@ const runtime = {
   root: "/demo",
   name: "演示项目",
   sessionPath: "/demo/.reasonix/demo.jsonl",
+};
+
+/** A second pane, blocked on a plan decision, for the home "waiting" block. */
+const reviewRuntime = {
+  id: "api",
+  base: "/rt/api",
+  root: "/demo",
+  name: "接口设计草稿",
+};
+
+/** A third pane, still working, for the home "running" block. */
+const notesRuntime = {
+  id: "notes",
+  base: "/rt/notes",
+  root: "/demo",
+  name: "读书笔记",
+  sessionPath: "/demo/.reasonix/notes.jsonl",
 };
 
 const tree = [{
@@ -35,6 +55,15 @@ const tree = [{
   ],
 }];
 
+const tourTree = tour
+  ? tree.map((project) => ({
+      ...project,
+      sessions: project.sessions.map((session) =>
+        session.name === "notes" ? { ...session, runtimeId: "notes" } : session,
+      ),
+    }))
+  : tree;
+
 const messages = [
   { role: "user", content: "帮我整理一个周末去杭州的两天行程，轻松一点。", msgIndex: 0 },
   { role: "assistant", content: "可以。第一天西湖周边，第二天灵隐寺和龙井村，节奏放慢。", msgIndex: 1, modelRef: "demo/demo-flash" },
@@ -47,11 +76,28 @@ const status = {
   busy: false,
   plan: false,
   modelRef: "demo/demo-flash",
-  effort: "standard",
+  effort: "high",
   workspaceRoot: "/demo",
   sessionPath: "/demo/.reasonix/demo.jsonl",
   toolApprovalMode: "ask",
   decisions: [],
+};
+
+/** The waiting pane's status: a plan approval blocks it. */
+const reviewStatus = {
+  ...status,
+  busy: true,
+  plan: true,
+  sessionPath: "/demo/.reasonix/api.jsonl",
+  decisions: [{ id: "plan-1", kind: "plan_approval" }],
+};
+
+/** The working pane's status. */
+const notesStatus = {
+  ...status,
+  running: true,
+  busy: true,
+  sessionPath: "/demo/.reasonix/notes.jsonl",
 };
 
 const config = {
@@ -81,8 +127,16 @@ const models = {
     active: true,
     default: true,
     efforts: ["auto", "low", "high"],
-    effort: "standard",
+    effort: "high",
     contextWindow: 128000,
+  }, {
+    ref: "demo/demo-reasoner",
+    provider: "demo",
+    model: "demo-reasoner",
+    displayName: "Demo Reasoner",
+    efforts: ["auto", "low", "high", "max"],
+    effort: "auto",
+    contextWindow: 256000,
   }],
 };
 
@@ -198,7 +252,7 @@ function emitTurn(input: string): void {
   events.forEach((event, index) => {
     setTimeout(() => {
       for (const source of [...subscribers]) source.emit(event);
-    }, 180 * (index + 1));
+    }, (tour ? 900 : 180) * (index + 1));
   });
 }
 
@@ -215,10 +269,13 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
 
   if (path === "/models") return Promise.resolve(json({ models: models.models }));
   if (path === "/runtimes") {
-    return Promise.resolve(method === "POST" ? json(runtime) : json([runtime]));
+    if (method === "POST") return Promise.resolve(json(runtime));
+    return Promise.resolve(json(tour ? [runtime, reviewRuntime, notesRuntime] : [runtime]));
   }
-  if (path === "/tree") return Promise.resolve(json(tree));
+  if (path === "/tree") return Promise.resolve(json(tourTree));
   if (path === BASE + "/status") return Promise.resolve(json(status));
+  if (path === "/rt/api/status") return Promise.resolve(json(reviewStatus));
+  if (path === "/rt/notes/status") return Promise.resolve(json(notesStatus));
   if (path === BASE + "/history/page") {
     return Promise.resolve(json({
       messages,
