@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/tour.png" width="680" alt="Waiting and running turns, dispatch, queue or interrupt, and the in-app Studio">
+  <img src="docs/screenshots/tour.png?v=0.3.0" width="680" alt="Waiting and running turns, dispatch, queue or interrupt, and the in-app Studio">
 </p>
 
 > [!IMPORTANT]
@@ -57,7 +57,7 @@
 The default is warm paper — a cream page with a brown accent, easy to read for long stretches — and studio blue is one tap away. Both palettes support follow-system, light and dark; the choice is remembered.
 
 <p align="center">
-  <img src="docs/screenshots/themes.png" width="880" alt="Warm paper light and dark, studio blue light and dark">
+  <img src="docs/screenshots/themes.png?v=0.3.0" width="880" alt="Warm paper light and dark, studio blue light and dark">
 </p>
 
 ## Notifications
