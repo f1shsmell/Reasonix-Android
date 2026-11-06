@@ -28,6 +28,9 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # Every pattern must hold, so the negations actually exclude;
+          # the default "some" would let "**" match every file.
+          predicate-quantifier: "every"
           filters: |
             code:
               - "**"
