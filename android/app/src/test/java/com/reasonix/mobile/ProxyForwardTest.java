@@ -116,6 +116,12 @@ public class ProxyForwardTest {
     }
 
     @Test
+    public void servesTheAppBundleBeforeTheCookieButNotTheKernel() throws Exception {
+        assertEquals(200, rawStatus("/index.html", null, null));
+        assertEquals(403, rawStatus("/runtimes", null, null));
+    }
+
+    @Test
     public void refusesAForeignOrigin() throws Exception {
         // Raw socket: HttpURLConnection can drop a restricted Origin header,
         // which made this test pass locally and lie on CI.

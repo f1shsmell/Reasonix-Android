@@ -250,6 +250,18 @@ public final class LoopbackProxy {
             }
             String path = target.split("\\?", 2)[0];
             if (!ProxyAuth.authorized(headers, LOOPBACK_ORIGIN, secret)) {
+                // The app bundle is public code. Serving it before the loopback
+                // cookie lands avoids a first-launch raw 403; kernel routes,
+                // the control plane and the Studio page stay behind the cookie.
+                String origin = headers.get("origin");
+                boolean localOrigin =
+                        origin == null || origin.isEmpty() || LOOPBACK_ORIGIN.equals(origin);
+                if (localOrigin
+                        && ("GET".equals(method) || "HEAD".equals(method))
+                        && !ProxyPaths.isStudio(headers)
+                        && assets.serve(s, method, path)) {
+                    return;
+                }
                 Log.w(TAG, "rejected unauthenticated " + path);
                 ProxyWire.writeJson(s, 403, "{\"code\":\"proxy.unauthorized\"}");
                 return;
