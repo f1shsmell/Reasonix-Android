@@ -2162,8 +2162,8 @@ export function ChatScreen({
           base={runtime.base}
           current={approval}
           onClose={() => setApprovalSheet(false)}
-          onChanged={(mode) => {
-            setApproval(mode);
+          onChanged={(nextMode) => {
+            setApproval(nextMode);
             setApprovalSheet(false);
           }}
         />

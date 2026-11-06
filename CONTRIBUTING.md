@@ -69,5 +69,6 @@ cd android
 - PR 基于 `main`；评审反馈优先 amend，不要叠加一串修正提交。
 - 冲突用自己的分支 rebase 一次，不制造多轮 force-push。
 - 只改界面时可用 `npm run dev:mock`（脚本化内核，不启动 Studio）；
+- 改 `src/wire/` 或 fixtures 时，在 DeepSeek-Reasonix checkout 旁跑 `REASONIX_KERNEL=../DeepSeek-Reasonix npm run check:wire`；
 - 本地至少跑过：`npm run lint`、`npm run typecheck`、`npm run test:coverage`、`./gradlew testDebugUnitTest`；
   改动涉及原生时再跑 `lintDebug`、`assembleDebug` 或 `connectedDebugAndroidTest`。

@@ -178,9 +178,9 @@ export async function switchEffort(base: string, effort: string): Promise<ModelS
  * empty and the sheet hides the section rather than offering a control that
  * would be refused.
  */
-export function effortChoices(option: ModelOption | undefined): string[] {
-  if (!option || !option.efforts || option.efforts.length === 0) return [];
-  return ["auto", ...option.efforts.filter((entry) => entry !== "auto")];
+export function effortChoices(model: ModelOption | undefined): string[] {
+  if (!model || !model.efforts || model.efforts.length === 0) return [];
+  return ["auto", ...model.efforts.filter((entry) => entry !== "auto")];
 }
 
 /**
@@ -199,8 +199,8 @@ export function effortDisplayName(value: string): string {
 }
 
 /** The short name a chip shows: the model, not `provider/model`. */
-export function modelShortName(option: ModelOption): string {
-  return option.model || option.ref;
+export function modelShortName(model: ModelOption): string {
+  return model.model || model.ref;
 }
 
 /** The active option, or the ref alone when the catalog has no row for it. */

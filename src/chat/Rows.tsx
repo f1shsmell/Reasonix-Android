@@ -13,6 +13,7 @@ import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { SurfaceCard } from "./SurfaceCard";
 import { clockText } from "../app/format";
+import { kernelTransport } from "../net/transport";
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -41,7 +42,7 @@ function MessageImage({ base, path }: { base: string; path: string }) {
     let active = true;
     let objectUrl = "";
     const controller = new AbortController();
-    void fetch(`${base}/workspace/image?path=${encodeURIComponent(path)}`, {
+    void kernelTransport().fetch(`${base}/workspace/image?path=${encodeURIComponent(path)}`, {
       credentials: "same-origin",
       signal: controller.signal,
     })

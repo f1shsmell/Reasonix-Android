@@ -21,12 +21,12 @@ export interface OrderRow {
  * The root a drop of `root` should precede, or null when there is nothing to
  * write: the row is not movable, or it already sits there.
  */
-export function dropBefore(rows: OrderRow[], root: string, insertAt: number): string | null {
+export function dropBefore(rows: OrderRow[], root: string, slot: number): string | null {
   const from = rows.findIndex((row) => row.root === root);
   const moving = rows[from];
   if (!moving?.remembered) return null;
 
-  const at = Math.max(0, Math.min(insertAt, rows.length));
+  const at = Math.max(0, Math.min(slot, rows.length));
   let next = "";
   for (let index = at; index < rows.length; index += 1) {
     const row = rows[index];

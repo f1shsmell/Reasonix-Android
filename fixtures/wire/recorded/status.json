@@ -1,0 +1,54 @@
+{
+  "agentCompositionLocked": false,
+  "approvalDefault": {
+    "defaulted": false,
+    "writesConfined": false,
+    "trust": "",
+    "trustable": true
+  },
+  "autoApproveTools": false,
+  "busy": false,
+  "bypass": false,
+  "cacheHit": 0,
+  "cacheMiss": 0,
+  "cwd": "/demo/.reasonix/sessions",
+  "decisions": [],
+  "effort": "high",
+  "goal": "",
+  "goalStatus": "stopped",
+  "label": "zcode/GLM-5.3-Flash",
+  "modelRef": "magpie/zcode/GLM-5.3-Flash",
+  "plan": false,
+  "preset": "balanced",
+  "running": false,
+  "sessionCostQuote": {
+    "original": {
+      "amount": "0",
+      "currency": ""
+    },
+    "estimated": true,
+    "costComplete": false,
+    "coverage": "none",
+    "displayComplete": false,
+    "complete": false,
+    "displayStatus": "unavailable",
+    "aggregateMode": "single_currency",
+    "incompleteReason": "no_usage"
+  },
+  "sessionPath": "/demo/.reasonix/session.jsonl",
+  "sessionUsage": {
+    "requests": 0,
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "cacheHit": 0,
+    "cacheMiss": 0,
+    "workMs": 0,
+    "sources": []
+  },
+  "toolApprovalMode": "ask",
+  "used": 7638,
+  "vision": true,
+  "visionDeclared": true,
+  "window": 1000000,
+  "workspaceRoot": "/demo"
+}

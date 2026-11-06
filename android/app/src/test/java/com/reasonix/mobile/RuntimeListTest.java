@@ -53,6 +53,14 @@ public class RuntimeListTest {
     }
 
     @Test
+    public void readsTheRecordedKernelFixture() throws Exception {
+        List<RuntimeList.Row> rows = RuntimeList.parse(Fixtures.read("recorded/runtimes.json"));
+
+        assertFalse(rows.isEmpty());
+        assertEquals("/rt/r1", rows.get(0).base);
+    }
+
+    @Test
     public void readsTheSharedContractFixture() throws Exception {
         List<RuntimeList.Row> rows = RuntimeList.parse(Fixtures.read("runtimes.json"));
 

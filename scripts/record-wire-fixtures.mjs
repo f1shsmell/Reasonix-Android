@@ -20,7 +20,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const directory = resolve(root, "fixtures/wire");
+const directory = resolve(root, process.env.REASONIX_FIXTURES_DIR ?? "fixtures/wire");
 const serve = (process.env.REASONIX_SERVE ?? "").replace(/\/+$/, "");
 const token = process.env.REASONIX_TOKEN ?? "";
 let cookie = process.env.REASONIX_COOKIE ?? "";
@@ -39,7 +39,7 @@ async function read(url) {
 async function save(name, value) {
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, name), `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  console.log(`wrote fixtures/wire/${name}`);
+  console.log(`wrote ${resolve(directory, name)}`);
 }
 
 if (!cookie && token) {
@@ -59,7 +59,7 @@ const first = runtimes.find((row) => row && typeof row.base === "string" && row.
 if (first) {
   const base = new URL(first.base, `${serve}/`).toString().replace(/\/+$/, "");
   const status = await read(`${base}/status`);
-  await save("status-ask.json", status);
+  await save("status.json", status);
 } else {
-  console.log("no open pane; left status-ask.json unchanged");
+  console.log("no open pane; left status.json unchanged");
 }

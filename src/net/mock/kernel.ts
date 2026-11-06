@@ -65,6 +65,7 @@ const config = {
   vpn: false,
   lan: true,
   netPolicy: "auto",
+  ephemeral: true,
   account: { signedIn: false },
 };
 
@@ -207,22 +208,4 @@ export function installMockKernel(): void {
   if (installed) return;
   installed = true;
   setKernelTransport(transport);
-  widgetFetch();
-  widgetEventSource();
-}
-
-function widgetFetch(): void {
-  const original = window.fetch.bind(window);
-  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = pathOf(input);
-    if (path.startsWith("/__reasonix/") || path === "/runtimes" || path === "/tree"
-        || path.startsWith("/rt/")) {
-      return mockFetch(input, init);
-    }
-    return original(input, init);
-  };
-}
-
-function widgetEventSource(): void {
-  window.EventSource = MockEventSource as unknown as typeof EventSource;
 }

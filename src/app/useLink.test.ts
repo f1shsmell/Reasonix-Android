@@ -195,4 +195,18 @@ describe("orderedDoors", () => {
     expect(orderedDoors(config(), [])).toEqual([]);
     expect(orderedDoors(null, [])).toEqual([]);
   });
+
+  it("an ephemeral kernel ignores doors saved by another session", () => {
+    savedRows.current = [row("lan", "http://real:55716", 0)];
+    const ephemeral = config({
+      origin: "http://mock.local",
+      candidates: ["http://mock.local"],
+      ephemeral: true,
+    });
+
+    expect(lanDoorsOf(ephemeral)).toEqual(["http://mock.local"]);
+    expect(orderedDoors(ephemeral, savedRows.current)).toEqual([
+      { kind: "lan", target: "http://mock.local", name: "http://mock.local" },
+    ]);
+  });
 });

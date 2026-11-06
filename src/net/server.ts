@@ -10,6 +10,7 @@
  */
 
 import { fetchWithTimeout, RequestTimeout } from "./http";
+import { kernelTransport } from "./transport";
 
 export interface ProxyUser {
   handle?: string;
@@ -60,6 +61,11 @@ export interface ProxyConfig {
    * old native build or in a browser, where the proxy itself does not exist.
    */
   netPolicy?: "auto" | "bypass" | "system";
+  /**
+   * A dev-only kernel owns this browser profile; saved doors are from another
+   * session and must not win over the configured origin.
+   */
+  ephemeral?: boolean;
   account: ProxyAccount;
 }
 
@@ -359,7 +365,7 @@ export async function originAnswers(origin: string, timeoutMs = 2_500): Promise<
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    await fetch(`${target}/`, {
+    await kernelTransport().fetch(`${target}/`, {
       method: "GET",
       mode: "no-cors",
       cache: "no-store",

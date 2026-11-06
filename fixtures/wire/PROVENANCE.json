@@ -1,0 +1,18 @@
+{
+  "kernel": {
+    "repository": "https://github.com/esengine/DeepSeek-Reasonix",
+    "ref": "2948ec98ec0cc3b2c8f5619a19c98ff98cd17e74",
+    "version": "2.57.0"
+  },
+  "capturedAt": "2026-11-06T00:15:00Z",
+  "source": "local `reasonix serve --auth token` pane, recorded by scripts/record-wire-fixtures.mjs with REASONIX_FIXTURES_DIR=fixtures/wire/recorded",
+  "recorded": [
+    "recorded/runtimes.json",
+    "recorded/status.json"
+  ],
+  "curated": [
+    "runtimes.json",
+    "status-ask.json",
+    "fleet.json"
+  ]
+}

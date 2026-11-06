@@ -10,11 +10,12 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src --report-unused-disable-directives --max-warnings=44",
+    "lint": "oxlint src --report-unused-disable-directives --max-warnings=25",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "manifest": "node scripts/latest-json.mjs",
-    "fixtures": "node scripts/record-wire-fixtures.mjs"
+    "fixtures": "node scripts/record-wire-fixtures.mjs",
+    "check:wire": "node scripts/check-wire.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.0",
