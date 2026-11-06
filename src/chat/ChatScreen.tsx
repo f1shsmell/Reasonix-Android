@@ -472,13 +472,29 @@ function ghostedByHistory(current: Row[], history: Row[]): Set<string> {
  */
 function ghostedLocalUsers(current: Row[], history: Row[]): Set<string> {
   const remaining = new Map<string, number>();
+  const indices = new Map<number, number>();
   for (const row of history) {
     if (row.kind !== "user") continue;
     remaining.set(row.text, (remaining.get(row.text) ?? 0) + 1);
+    if (row.msgIndex !== undefined) {
+      indices.set(row.msgIndex, (indices.get(row.msgIndex) ?? 0) + 1);
+    }
   }
   const ghosts = new Set<string>();
   for (const row of current) {
-    if (row.kind !== "user" || row.local !== true) continue;
+    if (row.kind !== "user") continue;
+    // A confirmed optimistic row keeps its local id. Match it by the index
+    // the kernel assigned; text alone missed it once the row was no longer
+    // marked local, and the history copy then drew the same send twice.
+    if (row.msgIndex !== undefined && (indices.get(row.msgIndex) ?? 0) > 0) {
+      ghosts.add(row.id);
+      indices.set(row.msgIndex, (indices.get(row.msgIndex) ?? 1) - 1);
+      const text = remaining.get(row.text) ?? 0;
+      if (text > 0) remaining.set(row.text, text - 1);
+      continue;
+    }
+    const appMinted = row.local === true || row.id.startsWith("local-");
+    if (!appMinted) continue;
     const count = remaining.get(row.text) ?? 0;
     if (count === 0) continue;
     ghosts.add(row.id);
