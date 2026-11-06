@@ -5,6 +5,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { installCloudWatchBridge } from "../net/cloudWatch";
 import { applyTheme, loadTheme } from "./theme";
 import { applyChatFont, loadChatFont } from "../chat/chatFont";
+import { applyUiStyle, loadUiStyle } from "./uiStyle";
 import { migrateSettings } from "./settings";
 
 /**
@@ -34,6 +35,7 @@ async function start(): Promise<void> {
    * every cold start, which on a phone reads as a flash. The chat font scale
    * rides along: a wrong size is the same first-frame lie.
    */
+  applyUiStyle(loadUiStyle());
   applyTheme(loadTheme());
   applyChatFont(loadChatFont());
 

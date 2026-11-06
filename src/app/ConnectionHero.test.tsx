@@ -34,10 +34,11 @@ afterEach(() => {
 });
 
 describe("ConnectionHero", () => {
-  it("draws the three-stroke mark and the idle detail", () => {
+  it("draws the computer mark and the idle detail", () => {
     const hero = render({ name: "192.168.5.2:56789", detail: "局域网直连", link: idleLink });
 
-    expect(hero.querySelectorAll(".rmark path")).toHaveLength(3);
+    expect(hero.querySelector(".hero-monitor")).toBeTruthy();
+    expect(hero.querySelector(".hero-monitor rect")).toBeTruthy();
     expect(hero.querySelector(".link-hero-title")?.textContent).toBe("192.168.5.2:56789");
     expect(hero.querySelector(".link-hero-sub")?.textContent).toBe("局域网直连");
     expect(hero.querySelector(".link-hero")?.getAttribute("data-live")).toBeNull();
@@ -46,7 +47,7 @@ describe("ConnectionHero", () => {
     expect(hero.querySelector(".link-steps")).toBeNull();
   });
 
-  it("traces while connecting and names the stage", () => {
+  it("lights up while connecting and names the stage", () => {
     const hero = render({
       name: "工作站",
       detail: "",

@@ -182,7 +182,7 @@
   height: 40px;
 }
 
-.link-hero[data-compact] .rmark {
+.link-hero[data-compact] .hero-monitor {
   width: 26px;
   height: 26px;
 }
@@ -231,7 +231,7 @@
   animation: link-halo 2.2s ease-in-out infinite;
 }
 
-.link-hero .rmark {
+.link-hero .hero-monitor {
   position: relative;
   display: block;
   width: 40px;
@@ -239,30 +239,17 @@
   overflow: visible;
 }
 
-.link-hero .rmark path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 100;
-  stroke-dashoffset: 0;
+.link-hero[data-tone="idle"] .hero-monitor { opacity: 0.55; }
+
+.link-hero[data-live] .hero-monitor { animation: link-monitor 2.2s ease-in-out infinite; }
+
+@keyframes link-monitor {
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
 }
 
-/* One third of each stroke travels; the staggered delays make the three read
-   as one drawing hand rather than three blinking lines. */
-.link-hero[data-live] .rmark path {
-  stroke-dasharray: 24 76;
-  animation: link-trace 2.2s linear infinite;
-}
-
-.link-hero[data-live] .rmark path:nth-child(2) { animation-delay: -0.72s; }
-.link-hero[data-live] .rmark path:nth-child(3) { animation-delay: -1.44s; }
-
-.link-hero[data-tone="idle"] .rmark { opacity: 0.55; }
-
-@keyframes link-trace {
-  to { stroke-dashoffset: -100; }
+@media (prefers-reduced-motion: reduce) {
+  .link-hero[data-live] .hero-monitor { animation: none; }
 }
 
 @keyframes link-halo {
@@ -343,11 +330,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .link-hero[data-live] .rmark path {
-    animation: none;
-    stroke-dasharray: 100;
-    stroke-dashoffset: 0;
-  }
   .link-hero[data-live] .link-hero-mark::before {
     animation: none;
     opacity: 0.6;
@@ -898,4 +880,11 @@ label.setting .setting-title {
   font: inherit;
   font-weight: 600;
   text-align: left;
+}
+
+[data-style="paper"] .settings-title h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }

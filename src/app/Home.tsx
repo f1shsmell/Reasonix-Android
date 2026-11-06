@@ -14,7 +14,6 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
@@ -34,16 +33,14 @@ import { connectionKey, loadConnections, moveConnection } from "../net/savedConn
 import type { SavedConnection } from "../net/savedConnections";
 import { originKey, peerTone } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
-import { insideHorizontalScroller, swipeTo } from "./swipe";
-import type { HomeTab } from "./swipe";
+import type { HomeTab } from "./homeTab";
 import { dropBefore } from "./projectOrder";
 import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
 import type { RowDragHandlers } from "./useRowDrag";
 import { useLongPress } from "./longPress";
 import { useBackCloser } from "./backStack";
 import { SessionSheet } from "./SessionSheet";
-import { Segmented } from "./Segmented";
-import { RMark } from "./RMark";
+import { BrandMark } from "./BrandMark";
 import { StudioIcon } from "./StudioIcon";
 import { ReachBanner } from "./ReachBanner";
 import { relativeTime } from "./format";
@@ -51,13 +48,11 @@ import { deleteWarning, runtimeOpenMessage, sessionTitle } from "./SessionList";
 import type { NeedsYouState } from "./useNeedsYou";
 import type { TreeState } from "./useTree";
 import { openRuntime } from "../net/workspaces";
+import { DispatchPage } from "./DispatchPage";
+import type { DispatchOptions, DispatchResult } from "./DispatchPage";
+import { loadDispatchAfter } from "./dispatchPref";
 
 type Tab = HomeTab;
-
-const HOME_TABS = [
-  { value: "recent", label: "最近" },
-  { value: "projects", label: "项目" },
-] as const;
 
 export interface HomeProps {
   snapshot: ConnectionSnapshot;
@@ -81,10 +76,12 @@ export interface HomeProps {
   onOpenSession: (runtimeId: string, root: string, title: string) => void;
   /** Open a pane that is already running, without opening a second one. */
   onOpenRuntime: (runtimeId: string, root: string, title: string) => void;
-  /** Start a fresh conversation in a project the kernel already knows. */
-  onNewSession: (root: string) => void;
   /** Send a task and leave it running; the app answers whether it started. */
-  onDispatch?: (root: string, prompt: string) => Promise<{ ok: boolean; message?: string }>;
+  onDispatch?: (
+    root: string,
+    prompt: string,
+    options?: DispatchOptions,
+  ) => Promise<DispatchResult>;
   onRefresh: () => void;
   /** Open the connection/account screen (sign-in, LAN switch, cloud devices). */
   onSettings?: () => void;
@@ -193,6 +190,20 @@ function runningFor(since: number): string {
   return age === "刚刚" ? "刚刚开始" : `运行 ${age}`;
 }
 
+function decisionAction(kind: string): string {
+  switch (kind) {
+    case "ask":
+      return "去回答";
+    case "plan_approval":
+    case "tool_approval":
+      return "去批准";
+    case "recovery_approval":
+      return "去恢复";
+    default:
+      return "去处理";
+  }
+}
+
 function NeedsYou({
   pending,
   computerName,
@@ -245,6 +256,7 @@ function NeedsYou({
                     </span>
                     <span className="need-age">{waited(item.firstSeenAt)}</span>
                   </span>
+                  <span className="need-cta">{decisionAction(item.decision.kind)} ›</span>
                 </button>
               </li>
             ))}
@@ -279,6 +291,7 @@ function NeedsYou({
                     </span>
                     <span className="need-age">{runningFor(item.firstSeenAt)}</span>
                   </span>
+                  <span className="need-cta">查看 ›</span>
                 </button>
               </li>
             ))}
@@ -326,6 +339,7 @@ function RecentItem({
         }}
         {...press}
       >
+        <span className="session-mark" aria-hidden="true" />
         <span className="row-main">
           <span className="session-name">
             {pinned ? (
@@ -333,7 +347,7 @@ function RecentItem({
                 📌
               </span>
             ) : null}
-            {sessionTitle(session)}
+            <span className="row-title">{sessionTitle(session)}</span>
             {session.unread ? (
               <span className="dot accent" role="img" aria-label="有新回答" title="有新回答" />
             ) : null}
@@ -356,8 +370,8 @@ function RecentItem({
  * computer and whether it is reachable decide what every list below means, and
  * a link that has been reconnecting for a minute should not be invisible.
  */
-function LinkBar({ link, onOpen }: { link: LinkState; onOpen: () => void }) {
-  const name = link.name ?? (link.phase === "connected" ? "电脑" : "没有连接电脑");
+function LinkBar({ link, name: preferred, onOpen }: { link: LinkState; name?: string | undefined; onOpen: () => void }) {
+  const name = preferred ?? link.name ?? (link.phase === "connected" ? "电脑" : "没有连接电脑");
   return (
     <button
       type="button"
@@ -391,7 +405,6 @@ function SwitchSheet({
   onRetry,
   onManage,
   onReorder,
-  onDragRef,
 }: {
   link: LinkState;
   saved: SavedConnection[];
@@ -403,11 +416,6 @@ function SwitchSheet({
   onManage: () => void;
   /** A drop that changed the order, already written to storage. */
   onReorder: (rows: SavedConnection[]) => void;
-  /**
-   * The shell's swipe-suppression flag, shared so a drag in this sheet does
-   * not also change the view behind it.
-   */
-  onDragRef: RefObject<boolean>;
 }) {
   const busy = link.phase === "connecting" || link.phase === "reconnecting";
   useBackCloser(true, onClose);
@@ -420,10 +428,6 @@ function SwitchSheet({
     })),
     enabled: !busy,
     scrollerSelector: ".sheet",
-    // The sheet is rendered inside Home's shell, whose own swipe handler
-    // decides tab changes. Sharing the parent's flag is what keeps a reorder
-    // drag from also flipping the view behind the sheet.
-    swallowSwipe: onDragRef,
     place: (key, index) => onReorder(moveConnection(key, index)),
   });
   return (
@@ -524,7 +528,7 @@ function SwitchSheet({
             </button>
           ) : null}
           <button type="button" className="chip accent" onClick={onManage}>
-            管理连接
+            连接新电脑
           </button>
         </div>
       </section>
@@ -622,9 +626,10 @@ function ProjectItem({
       {...drag}
     >
       <button type="button" className="project" onClick={onOpen}>
+        <span className="project-mark" aria-hidden="true">{project.name.slice(0, 1)}</span>
         <span className="row-main">
           <span className="project-name">
-            {project.name}
+            <span className="row-title">{project.name}</span>
             {project.open ? (
               <span className="dot ok" role="img" aria-label="桌面端已打开" title="桌面端已打开" />
             ) : null}
@@ -642,166 +647,11 @@ function ProjectItem({
   );
 }
 
-function NewSessionSheet({
-  projects,
-  onClose,
-  onPick,
-}: {
-  projects: TreeProject[];
-  onClose: () => void;
-  onPick: (root: string) => void;
-}) {
-  useBackCloser(true, onClose);
-  return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
-      <section
-        className="sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="新建会话"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="sheet-head">
-          <h2>在哪个项目新建</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
-        </div>
-        <ul className="list">
-          {projects.map((project) => (
-            <li key={project.root}>
-              <button
-                type="button"
-                className="project"
-                onClick={() => onPick(project.root)}
-                disabled={project.missing === true}
-              >
-                <span className="row-main">
-                  <span className="project-name">{project.name}</span>
-                  <span className="project-path">{project.root}</span>
-                </span>
-                <Chevron />
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
 /**
- * Send a task and walk away: the project is chosen, the prompt is one field,
- * and the app starts a fresh pane without opening the chat. The native turn
- * service keeps watching that pane so a question or completion still reaches
- * the phone.
+ * Dispatch as a page rather than a sheet: the tab is one of the three home
+ * destinations, so the form has room to breathe and the bottom nav stays put.
+ * The fields and the failure text are the ones the sheet used.
  */
-function DispatchSheet({
-  projects,
-  computerName,
-  notify,
-  onClose,
-  onDispatch,
-}: {
-  projects: TreeProject[];
-  computerName?: string | undefined;
-  /** The native watcher only reaches a LAN proxy; cloud has no background read. */
-  notify: boolean;
-  onClose: () => void;
-  onDispatch: (root: string, prompt: string) => Promise<{ ok: boolean; message?: string }>;
-}) {
-  useBackCloser(true, onClose);
-  const usable = projects.filter((project) => project.missing !== true);
-  const [root, setRoot] = useState(usable[0]?.root ?? "");
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const send = async () => {
-    const prompt = text.trim();
-    if (!root || !prompt || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await onDispatch(root, prompt);
-      if (result.ok) {
-        onClose();
-        return;
-      }
-      setError(result.message ?? "没派出去，稍后再试。");
-    } catch {
-      setError("没派出去，稍后再试。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
-      <section
-        className="sheet dispatch-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="派任务"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="sheet-head">
-          <h2>派任务</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
-        </div>
-        <p className="group-note">
-          在 {computerName ?? "这台电脑"} 后台运行；
-          {notify
-            ? "需要你处理或完成时会通知。"
-            : "云端连接暂不支持后台通知，完成后回来查看。"}
-        </p>
-
-        <p className="group-label">项目</p>
-        <div className="dispatch-projects" role="listbox" aria-label="项目">
-          {usable.map((project) => (
-            <button
-              key={project.root}
-              type="button"
-              role="option"
-              aria-selected={project.root === root}
-              className={`dispatch-project${project.root === root ? " on" : ""}`}
-              onClick={() => setRoot(project.root)}
-            >
-              {project.name}
-            </button>
-          ))}
-        </div>
-
-        <textarea
-          className="dispatch-prompt"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="要它做什么？例如：修复登录后白屏，跑完测试"
-          rows={4}
-          autoFocus
-        />
-        {error ? <div className="notice error">{error}</div> : null}
-
-        <div className="dispatch-actions">
-          <button type="button" className="linkbtn" onClick={onClose} disabled={busy}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="dispatch-send"
-            onClick={() => void send()}
-            disabled={busy || !root || text.trim() === ""}
-          >
-            {busy ? "正在派发…" : "派发"}
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 export function Home({
   snapshot,
   tree,
@@ -814,17 +664,17 @@ export function Home({
   onOpenProject,
   onOpenSession,
   onOpenRuntime,
-  onNewSession,
   onDispatch,
   onRefresh,
   onSettings,
   fleet,
   onOpenFleet,
 }: HomeProps) {
-  const [query, setQuery] = useState("");
-  const [sheet, setSheet] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
   const [switchSheet, setSwitchSheet] = useState(false);
-  const [dispatchSheet, setDispatchSheet] = useState(false);
+  /** The dispatch page is a third view, not a sheet: it has a tab of its own. */
+  const [dispatchOpen, setDispatchOpen] = useState(false);
   /** Read when the sheet opens, so a settings change is reflected next time. */
   const [saved, setSaved] = useState<SavedConnection[]>([]);
   const [busy, setBusy] = useState("");
@@ -833,20 +683,15 @@ export function Home({
   /** The project whose order is being written. */
   const [moveBusy, setMoveBusy] = useState("");
   const [error, setError] = useState("");
-  /**
-   * Where a touch began, for the sideways swipe between the two views. Held in
-   * a ref rather than state: it changes on every finger move and must not
-   * re-render the list.
-   */
-  const touch = useRef<{ x: number; y: number; owned: boolean } | null>(null);
-  /**
-   * Set while the switch sheet is reordering its rows.
-   *
-   * The sheet renders inside this shell, so its drag and this screen's
-   * sideways swipe end on the same `touchend`. The ref is handed to the sheet
-   * rather than copied out of it, so both read the same flag.
-   */
-  const switchDrag = useRef(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  /** Finger travel for pull-to-refresh; a ref so release reads the latest. */
+  const pullStart = useRef<number | null>(null);
+  const pullAmount = useRef(0);
+  const pulled = useRef(false);
+  const [pull, setPull] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshStart = useRef(0);
+  const refreshTimer = useRef<number | null>(null);
   /** The view that was showing before this one, for the slide direction. */
   const previousTab = useRef(tab);
   const direction = tab === previousTab.current ? "none" : tab === "projects" ? "forward" : "back";
@@ -855,8 +700,19 @@ export function Home({
     previousTab.current = tab;
   }, [tab]);
 
+  // The dispatch page is a destination, so the system back returns to the
+  // list instead of leaving the app.
+  useBackCloser(dispatchOpen, () => setDispatchOpen(false));
+
   const recent = useMemo(() => recentConversations(tree.projects), [tree.projects]);
-  const needle = query.trim().toLowerCase();
+  const linkName = useMemo(() => {
+    if (!link.target) return link.name;
+    const rows = loadConnections();
+    const mode = link.mode ?? "lan";
+    const row = rows.find((entry) => entry.kind === mode && entry.target === link.target);
+    return row?.machine ?? row?.name ?? link.name;
+  }, [link.mode, link.name, link.target]);
+  const needle = (tab === "recent" ? sessionQuery : projectQuery).trim().toLowerCase();
   const shownRecent = needle ? recent.filter((row) => sessionMatches(row, needle)) : recent;
   const shownProjects = needle
     ? tree.projects.filter((project) => projectMatches(project, needle))
@@ -960,208 +816,307 @@ export function Home({
       ? recent.length === 0
       : tree.projects.length === 0;
 
-  /**
-   * A sideways swipe moves between the two views.
-   *
-   * The rule itself lives in `swipe.ts` so it can be tested; this only records
-   * where the finger started and asks it on release. A touch that began inside
-   * the sideways card strip is left alone, and so is one inside a text field —
-   * selecting text by dragging is not a request to change views.
-   */
-  const onTouchStart = (event: React.TouchEvent) => {
-    drag.swallowSwipe.current = false;
-    switchDrag.current = false;
-    const start = event.touches[0];
-    if (!start) return;
-    const target = event.target as Element | null;
-    const inField =
-      target !== null && typeof target.closest === "function"
-        ? target.closest("input, textarea") !== null
-        : false;
-    touch.current = {
-      x: start.clientX,
-      y: start.clientY,
-      owned: insideHorizontalScroller(target) || inField,
-    };
+  const pullReset = () => {
+    pullStart.current = null;
+    pullAmount.current = 0;
+    setPull(0);
   };
 
-  const onTouchEnd = (event: React.TouchEvent) => {
-    const start = touch.current;
-    touch.current = null;
-    // A drag that reordered either list ends with the same `touchend` a
-    // sideways swipe would. The switch sheet lives inside this shell and runs
-    // its own `useRowDrag`, so its flag has to be consulted here too; the
-    // sheet clears it itself when it eats the gesture.
-    if (drag.swallowSwipe.current || switchDrag.current) {
-      drag.swallowSwipe.current = false;
-      switchDrag.current = false;
+  const onTouchStart = (event: React.TouchEvent) => {
+    if (dispatchOpen || refreshing || drag.state) return;
+    const body = bodyRef.current;
+    if (!body || body.scrollTop > 0) return;
+    const target = event.target as Element | null;
+    if (
+      target !== null &&
+      typeof target.closest === "function" &&
+      target.closest("input, textarea")
+    ) {
       return;
     }
-    if (!start || start.owned) return;
-    const end = event.changedTouches[0];
-    if (!end) return;
-    const next = swipeTo({
-      startX: start.x,
-      startY: start.y,
-      endX: end.clientX,
-      endY: end.clientY,
-      tab,
-    });
-    if (next !== null) onTabChange(next);
+    const start = event.touches[0];
+    if (!start) return;
+    pullStart.current = start.clientY;
+    pullAmount.current = 0;
+    pulled.current = false;
+  };
+
+  const onTouchMove = (event: React.TouchEvent) => {
+    const start = pullStart.current;
+    if (start === null || dispatchOpen || drag.state) return;
+    const point = event.touches[0];
+    if (!point) return;
+    const dy = point.clientY - start;
+    if (dy <= 0) {
+      pullReset();
+      return;
+    }
+    if (dy > 8) pulled.current = true;
+    const amount = Math.min(72, dy * 0.6);
+    pullAmount.current = amount;
+    setPull(amount);
+  };
+
+  const onTouchEnd = () => {
+    if (pullStart.current === null) return;
+    const armed = pullAmount.current >= 48;
+    pullReset();
+    if (!armed || refreshing) return;
+    refreshStart.current = tree.revision;
+    setRefreshing(true);
+    onRefresh();
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      setRefreshing(false);
+    }, 8_000);
+  };
+
+  useEffect(() => {
+    if (!refreshing) return;
+    if (tree.revision === refreshStart.current) return;
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    }
+    setRefreshing(false);
+  }, [refreshing, tree.revision]);
+
+  useEffect(() => () => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+  }, []);
+
+  const onBodyClick = (event: React.MouseEvent) => {
+    if (!pulled.current) return;
+    pulled.current = false;
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   return (
-    <div className="shell" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <div className="bar">
+    <div className="shell">
+      <div className="topline">
+        <span className="top-brand" aria-hidden="true"><BrandMark /></span>
+        <LinkBar
+          link={link}
+          name={linkName}
+          onOpen={() => {
+            setSaved(loadConnections());
+            setSwitchSheet(true);
+          }}
+        />
         {onSettings ? (
-          <button type="button" className="iconbtn" onClick={onSettings} aria-label="连接与账号">
+          <button type="button" className="iconbtn top-gear" onClick={onSettings} aria-label="设置">
             <StudioIcon name="settings" />
           </button>
-        ) : (
-          <span className="bar-spacer" />
-        )}
-        <h1>
-          <span className="brand-mark" aria-hidden="true">
-            <RMark />
-          </span>
-          Reasonix
-        </h1>
-        {onDispatch ? (
-          <button
-            type="button"
-            className="iconbtn"
-            onClick={() => setDispatchSheet(true)}
-            aria-label="派任务"
-            disabled={link.phase !== "connected" || tree.projects.length === 0}
-          >
-            <StudioIcon name="send" />
-          </button>
         ) : null}
-        <button
-          type="button"
-          className="iconbtn"
-          onClick={() => setSheet(true)}
-          aria-label="新建会话"
-          disabled={tree.projects.length === 0}
-        >
-          <StudioIcon name="compose" />
-        </button>
-        <button type="button" className="iconbtn" onClick={onRefresh} aria-label="刷新">
-          <StudioIcon name="refresh" />
-        </button>
       </div>
-
-      <LinkBar
-        link={link}
-        onOpen={() => {
-          setSaved(loadConnections());
-          setSwitchSheet(true);
-        }}
-      />
 
       {fleet && onOpenFleet ? <FleetBar fleet={fleet} onOpen={onOpenFleet} /> : null}
 
-      <div className="body">
-        <ReachBanner snapshot={snapshot} />
-
-        <input
-          className="search"
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索会话或项目"
-          aria-label="搜索会话或项目"
-        />
-
-        <Segmented
-          tablist
-          ariaLabel="列表"
-          value={tab}
-          options={HOME_TABS}
-          onChange={onTabChange}
-        />
-
-        <div className="home-view" data-dir={direction} key={tab}>
-        {/* Only the recent view carries it: "what needs me" is about
-            conversations, not about folders. */}
-        {tab === "recent" && !needle ? (
-          <NeedsYou
-            pending={pending}
-            computerName={link.name}
-            onOpen={(item) => onOpenRuntime(item.runtimeId, item.projectRoot, item.title)}
-          />
-        ) : null}
-
-        {tree.status === "failed" ? (
-          <div className="notice error">
-            <div>读不到项目列表</div>
-            <div className="meta">{tree.code}</div>
-          </div>
-        ) : null}
-
-        {error ? <div className="notice error">{error}</div> : null}
-
-        {tree.status === "loading" && tree.projects.length === 0 ? (
-          <div className="centered">
-            <div>正在读取项目…</div>
-          </div>
-        ) : null}
-
-        {empty ? (
-          <div className="centered">
-            <div>
-              <strong>{tab === "recent" ? "还没有会话" : "还没有项目"}</strong>
-              {tab === "recent"
-                ? "在桌面端开始一个会话，这里就会出来。"
-                : "在桌面端打开一个项目，这里就会出来。"}
-            </div>
-          </div>
-        ) : null}
-
-        {tab === "recent" && shownRecent.length > 0 ? (
-          <ul className="list grouped">
-            {shownRecent.map((row) => (
-              <RecentItem
-                key={`${row.project.root}\u0000${row.session.path}`}
-                row={row}
-                busy={busy === row.session.path}
-                onOpen={() => void open(row.project, row.session)}
-                onMenu={() => setMenu(row)}
-              />
-            ))}
-          </ul>
-        ) : null}
-
-        {tab === "projects" && shownProjects.length > 0 ? (
-          <ul
-            className="list grouped"
-            ref={drag.listRef}
-            data-dragging={drag.state ? "true" : undefined}
+      <div
+        ref={bodyRef}
+        className={dispatchOpen ? "body dispatch-body" : "body"}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        onClickCapture={onBodyClick}
+      >
+        {pull > 0 || refreshing ? (
+          <div
+            className={`pull-hint${refreshing ? " loading" : ""}`}
+            style={{ height: refreshing ? 36 : Math.round(pull) }}
           >
-            {shownProjects.map((project, index) => (
-              <ProjectItem
-                key={project.root}
-                project={project}
-                drop={dropEdge(drag.state, index, shownProjects.length)}
-                dragging={drag.state?.key === project.root}
-                shift={dragShift(drag.state, index)}
-                drag={drag.row(project.root)}
-                onOpen={() => onOpenProject(project.root)}
-              />
-            ))}
-          </ul>
-        ) : null}
-
-        {needle && shownRecent.length === 0 && (tab === "recent" || shownProjects.length === 0) ? (
-          <div className="centered">
-            <div>
-              <strong>没有匹配</strong>
-              换个词试试。
-            </div>
+            {refreshing ? "正在刷新…" : pullAmount.current >= 48 ? "松开刷新" : "下拉刷新"}
           </div>
         ) : null}
-        </div>
+        {dispatchOpen ? null : <ReachBanner snapshot={snapshot} />}
+
+        {dispatchOpen ? (
+          onDispatch ? (
+            <DispatchPage
+              projects={tree.projects}
+              computerName={linkName}
+              notify={link.mode !== "cloud"}
+              onDispatch={onDispatch}
+              onSent={(result) => {
+                const after = loadDispatchAfter();
+                if (after === "recent") {
+                  setDispatchOpen(false);
+                  onTabChange("recent");
+                  return;
+                }
+                if (after === "session" && result.runtimeId) {
+                  setDispatchOpen(false);
+                  onOpenRuntime(
+                    result.runtimeId,
+                    result.root ?? "",
+                    result.title ?? "派发的任务",
+                  );
+                }
+              }}
+            />
+          ) : (
+            <div className="centered">
+              <div>这个版本还没有派发能力。</div>
+            </div>
+          )
+        ) : (
+          <>
+            {tab === "recent" ? (
+              <input
+                className="search"
+                type="search"
+                value={sessionQuery}
+                onChange={(event) => setSessionQuery(event.target.value)}
+                placeholder="搜索会话"
+                aria-label="搜索会话"
+              />
+            ) : null}
+
+            {tab === "projects" ? (
+              <>
+                <div className="section-head home-head">
+                  <h2>项目</h2>
+                  <span className="meta">{shownProjects.length}</span>
+                </div>
+                <input
+                  className="search"
+                  type="search"
+                  value={projectQuery}
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                  placeholder="搜索项目"
+                  aria-label="搜索项目"
+                />
+              </>
+            ) : null}
+
+            <div className="home-view" data-dir={direction} key={tab}>
+              {/* Only the recent view carries it: "what needs me" is about
+                  conversations, not about folders. */}
+              {tab === "recent" && !needle ? (
+                <NeedsYou
+                  pending={pending}
+                  computerName={link.name}
+                  onOpen={(item) => onOpenRuntime(item.runtimeId, item.projectRoot, item.title)}
+                />
+              ) : null}
+
+              {tree.status === "failed" ? (
+                <div className="notice error">
+                  <div>读不到项目列表</div>
+                  <div className="meta">{tree.code}</div>
+                </div>
+              ) : null}
+
+              {error ? <div className="notice error">{error}</div> : null}
+
+              {tree.status === "loading" && tree.projects.length === 0 ? (
+                <div className="centered">
+                  <div>正在读取项目…</div>
+                </div>
+              ) : null}
+
+              {empty ? (
+                <div className="centered">
+                  <div>
+                    <strong>{tab === "recent" ? "还没有会话" : "还没有项目"}</strong>
+                    {tab === "recent"
+                      ? "在桌面端开始一个会话，这里就会出来。"
+                      : "在桌面端打开一个项目，这里就会出来。"}
+                  </div>
+                </div>
+              ) : null}
+
+              {tab === "recent" && shownRecent.length > 0 ? (
+                <>
+                  <div className="section-head home-head">
+                    <h2>最近</h2>
+                    <span className="meta">{shownRecent.length}</span>
+                  </div>
+                  <ul className="list grouped">
+                    {shownRecent.map((row) => (
+                      <RecentItem
+                        key={`${row.project.root}\u0000${row.session.path}`}
+                        row={row}
+                        busy={busy === row.session.path}
+                        onOpen={() => void open(row.project, row.session)}
+                        onMenu={() => setMenu(row)}
+                      />
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+
+              {tab === "projects" && shownProjects.length > 0 ? (
+                <ul
+                  className="list grouped"
+                  ref={drag.listRef}
+                  data-dragging={drag.state ? "true" : undefined}
+                >
+                  {shownProjects.map((project, index) => (
+                    <ProjectItem
+                      key={project.root}
+                      project={project}
+                      drop={dropEdge(drag.state, index, shownProjects.length)}
+                      dragging={drag.state?.key === project.root}
+                      shift={dragShift(drag.state, index)}
+                      drag={drag.row(project.root)}
+                      onOpen={() => onOpenProject(project.root)}
+                    />
+                  ))}
+                </ul>
+              ) : null}
+
+              {needle && shownRecent.length === 0 && (tab === "recent" || shownProjects.length === 0) ? (
+                <div className="centered">
+                  <div>
+                    <strong>没有匹配</strong>
+                    换个词试试。
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </>
+        )}
       </div>
+
+      <nav className="tabbar" aria-label="主导航">
+        <button
+          type="button"
+          className={!dispatchOpen && tab === "recent" ? "on" : undefined}
+          aria-current={!dispatchOpen && tab === "recent" ? "page" : undefined}
+          onClick={() => {
+            setDispatchOpen(false);
+            onTabChange("recent");
+          }}
+        >
+          <StudioIcon name="list" />
+          <span>最近</span>
+        </button>
+        <button
+          type="button"
+          className={!dispatchOpen && tab === "projects" ? "on" : undefined}
+          aria-current={!dispatchOpen && tab === "projects" ? "page" : undefined}
+          onClick={() => {
+            setDispatchOpen(false);
+            onTabChange("projects");
+          }}
+        >
+          <StudioIcon name="grid" />
+          <span>项目</span>
+        </button>
+        <button
+          type="button"
+          className={dispatchOpen ? "on" : undefined}
+          aria-current={dispatchOpen ? "page" : undefined}
+          onClick={() => setDispatchOpen(true)}
+        >
+          <StudioIcon name="send" />
+          <span>派发</span>
+        </button>
+      </nav>
 
       {menu ? (
         <SessionSheet
@@ -1187,27 +1142,6 @@ export function Home({
         />
       ) : null}
 
-      {sheet ? (
-        <NewSessionSheet
-          projects={tree.projects}
-          onClose={() => setSheet(false)}
-          onPick={(root) => {
-            setSheet(false);
-            onNewSession(root);
-          }}
-        />
-      ) : null}
-
-      {dispatchSheet && onDispatch ? (
-        <DispatchSheet
-          projects={tree.projects}
-          computerName={link.name}
-          notify={link.mode !== "cloud"}
-          onClose={() => setDispatchSheet(false)}
-          onDispatch={onDispatch}
-        />
-      ) : null}
-
       {switchSheet ? (
         <SwitchSheet
           link={link}
@@ -1220,7 +1154,6 @@ export function Home({
           }}
           onRetry={onRetryLink}
           onReorder={setSaved}
-          onDragRef={switchDrag}
           onManage={() => {
             setSwitchSheet(false);
             onSettings?.();

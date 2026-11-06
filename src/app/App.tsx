@@ -11,6 +11,7 @@ import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/f
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import { submit } from "../net/submit";
+import { switchEffort, switchModel } from "../net/models";
 import type { SubmitResult } from "../net/submit";
 import {
   applyNotificationPrefs,
@@ -24,7 +25,7 @@ import { clearRelayRouting, connectRelay } from "../net/relay";
 import { loadRelayDevice, saveRelayDevice, loadStandDown } from "../net/relayStore";
 import { loadConnections } from "../net/savedConnections";
 import { Home } from "./Home";
-import type { HomeTab } from "./swipe";
+import type { HomeTab } from "./homeTab";
 import { parseChatLink } from "./chatLink";
 import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
@@ -43,7 +44,7 @@ import {
 } from "./notifyPref";
 import type { NotificationPrefs } from "./notifyPref";
 import { buildDiagnostics } from "./diagnostics";
-import { openRuntime as openRuntimeOn } from "../net/workspaces";
+import { closeRuntime as closeRuntimeOn, openRuntime as openRuntimeOn } from "../net/workspaces";
 import "../ui/tokens.css";
 import "../ui/shell.css";
 import "../ui/chat.css";
@@ -413,12 +414,26 @@ export function App() {
    * answer or completion still reaches the phone.
    */
   const dispatchTask = useCallback(
-    async (root: string, prompt: string) => {
+    async (root: string, prompt: string, options?: { model?: string; effort?: string }) => {
       if (link.state.phase !== "connected") {
         return { ok: false, message: "先连接电脑再派任务。" };
       }
       const opened = await openRuntimeOn(root);
       if (!opened.ok) return { ok: false, message: runtimeOpenMessage(opened.code) };
+      if (options?.model) {
+        const switched = await switchModel(opened.runtime.base, options.model);
+        if (!switched.ok) {
+          void closeRuntimeOn(opened.runtime.id);
+          return { ok: false, message: `没派出去：换模型失败（${switched.code}）。` };
+        }
+      }
+      if (options?.effort) {
+        const switched = await switchEffort(opened.runtime.base, options.effort);
+        if (!switched.ok) {
+          void closeRuntimeOn(opened.runtime.id);
+          return { ok: false, message: `没派出去：换思考等级失败（${switched.code}）。` };
+        }
+      }
       const sent = await submit(opened.runtime.base, prompt);
       if (!sent.ok) return { ok: false, message: dispatchFailure(sent) };
       const firstLine = prompt.split(/\r?\n/, 1)[0]?.trim() ?? "";
@@ -440,7 +455,12 @@ export function App() {
       // succeeded, and the row arrives through the subscription.
       void connection.refresh();
       reloadTree();
-      return { ok: true };
+      return {
+        ok: true,
+        runtimeId: opened.runtime.id,
+        root,
+        title: firstLine || "派发的任务",
+      };
     },
     [link.state.mode, link.state.phase, reloadTree],
   );
@@ -911,7 +931,6 @@ export function App() {
         // The pane is already running, so opening it is navigation only: the
         // same call the list uses, minus the POST that opened it.
         onOpenRuntime={(id, root, title) => void openedRuntime(id, root, title)}
-        onNewSession={(root) => void newSessionInProject(root)}
         onDispatch={dispatchTask}
         onRefresh={refresh}
         onSettings={() => setShowConnect(true)}

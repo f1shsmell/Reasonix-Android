@@ -100,6 +100,56 @@ class MockEventSource implements KernelEventSource {
       if (this.closed) return;
       this.readyState = 1;
       this.onopen?.(new Event("open"));
+      if (new URLSearchParams(window.location.search).get("ask") === "1") {
+        setTimeout(() => {
+          this.emit({
+            kind: "ask_request",
+            ask: {
+              id: "ask-demo",
+              questions: [
+                {
+                  id: "q1",
+                  header: "下午安排",
+                  prompt: "第一天下午想去哪里？",
+                  options: [
+                    { label: "浙江省博物馆", description: "室内为主，雨天也不受影响" },
+                    { label: "龙井村", description: "茶园散步，路上时间更长" },
+                    { label: "西湖边随便走", description: "不赶点，看当天状态" },
+                  ],
+                },
+                {
+                  id: "q2",
+                  header: "住哪一带",
+                  prompt: "住哪一带更方便？",
+                  options: [
+                    { label: "西湖边", description: "离景点近，晚上热闹" },
+                    { label: "龙井村", description: "安静，早上空气好" },
+                    { label: "武林广场", description: "交通方便，吃的多" },
+                  ],
+                },
+                {
+                  id: "q3",
+                  header: "交通方式",
+                  prompt: "在杭州怎么出行？",
+                  options: [
+                    { label: "地铁为主", description: "不堵车，换乘多一点" },
+                    { label: "打车为主", description: "省心，雨天更贵" },
+                  ],
+                },
+                {
+                  id: "q4",
+                  header: "行程名字",
+                  prompt: "给这次行程起个名字",
+                  options: [
+                    { label: "杭州慢行" },
+                    { label: "两天西湖" },
+                  ],
+                },
+              ],
+            },
+          });
+        }, 600);
+      }
     }, 0);
   }
 
@@ -163,6 +213,7 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
   if (path === "/__reasonix/account/devices") return Promise.resolve(json({ devices: [] }));
   if (path.startsWith("/__reasonix/")) return Promise.resolve(json({ code: "mock.unknown" }, 404));
 
+  if (path === "/models") return Promise.resolve(json({ models: models.models }));
   if (path === "/runtimes") {
     return Promise.resolve(method === "POST" ? json(runtime) : json([runtime]));
   }

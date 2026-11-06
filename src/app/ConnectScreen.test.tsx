@@ -203,9 +203,12 @@ async function renderScreen(
 }
 
 function button(text: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll("button")).find(
+  const matches = Array.from(container.querySelectorAll("button")).filter(
     (candidate) => candidate.textContent?.trim() === text,
   );
+  // The settings tabs also carry one-word labels; an action with the same
+  // name is never the tab.
+  const found = matches.find((candidate) => !candidate.closest(".settings-tabs")) ?? matches[0];
   if (!found) throw new Error(`no button labelled ${text}`);
   return found;
 }
@@ -248,16 +251,9 @@ function typeInto(selector: string, value: string): Promise<void> {
 }
 
 /** Drive a touch drag through the DOM, the way a finger would. */
-function swipeOn(node: Element, from: [number, number], to: [number, number]): void {
-  act(() => {
-    const start = new Event("touchstart", { bubbles: true });
-    Object.assign(start, { touches: [{ clientX: from[0], clientY: from[1] }] });
-    node.dispatchEvent(start);
-    const end = new Event("touchend", { bubbles: true });
-    Object.assign(end, { changedTouches: [{ clientX: to[0], clientY: to[1] }] });
-    node.dispatchEvent(end);
-  });
-}
+
+
+
 
 /** jsdom has no PointerEvent; React only reads the fields the row uses. */
 function pointer(node: Element, type: string, x: number, y: number): void {
@@ -276,55 +272,7 @@ function hold(node: Element, x: number, y: number): void {
   });
 }
 
-/** The pane named by the selected settings tab. */
-function activePane(): string {
-  return container.querySelector(".settings-tabs button.on")?.textContent?.trim() ?? "";
-}
-
 describe("ConnectScreen", () => {
-  describe("settings panes", () => {
-    it("moves to the next pane on a left swipe and back on a right swipe", async () => {
-      await renderScreen();
-      const shell = container.querySelector(".connect") as Element;
-      expect(activePane()).toBe("电脑");
-
-      swipeOn(shell, [300, 300], [120, 310]);
-      expect(activePane()).toBe("账号");
-
-      swipeOn(shell, [120, 300], [300, 310]);
-      expect(activePane()).toBe("电脑");
-    });
-
-    it("does not change pane on a vertical drag", async () => {
-      await renderScreen();
-      const shell = container.querySelector(".connect") as Element;
-
-      swipeOn(shell, [300, 300], [120, 520]);
-
-      expect(activePane()).toBe("电脑");
-    });
-
-    it("leaves a drag that began in a text field to the field", async () => {
-      await renderScreen();
-      const field = container.querySelector(".manual-group input") as Element;
-
-      swipeOn(field, [300, 300], [120, 310]);
-
-      expect(activePane()).toBe("电脑");
-    });
-
-    it("stops at the first and last pane instead of wrapping", async () => {
-      await renderScreen();
-      const shell = container.querySelector(".connect") as Element;
-
-      swipeOn(shell, [120, 300], [300, 310]);
-      expect(activePane()).toBe("电脑");
-
-      await press("偏好");
-      swipeOn(shell, [300, 300], [120, 310]);
-      expect(activePane()).toBe("偏好");
-    });
-  });
 
   it("fills the remembered origin and connects without a code", async () => {
     await renderScreen();
@@ -332,7 +280,7 @@ describe("ConnectScreen", () => {
     const origin = container.querySelector("input") as HTMLInputElement;
     expect(origin.value).toMatch(/^http:\/\/192\.168\.5\.2:\d+$/);
 
-    await press("连接");
+    await press("连接这台电脑");
 
     expect(configureProxy).toHaveBeenCalledWith("http://192.168.5.2:56789", undefined);
     expect(onConnected).toHaveBeenCalledTimes(1);
@@ -353,7 +301,7 @@ describe("ConnectScreen", () => {
     vi.mocked(configureProxy).mockRejectedValue(new Error("device.pairing_invalid"));
     await renderScreen();
 
-    await press("连接");
+    await press("连接这台电脑");
 
     expect(container.textContent).toContain("配对码已失效");
     expect(container.textContent).toContain("http://192.168.5.2:56789");
@@ -455,6 +403,7 @@ describe("ConnectScreen", () => {
 
     afterEach(() => {
       document.documentElement.removeAttribute("data-theme");
+      document.documentElement.removeAttribute("data-style");
     });
 
     async function renderPrefs(): Promise<void> {
@@ -474,6 +423,26 @@ describe("ConnectScreen", () => {
       expect(localStorage.getItem("reasonix.theme")).toBe("dark");
     });
 
+    it("switches the visual language and remembers it", async () => {
+      await renderPrefs();
+
+      await act(async () => {
+        button("深蓝").click();
+        await Promise.resolve();
+      });
+
+      expect(document.documentElement.getAttribute("data-style")).toBe("studio");
+      expect(localStorage.getItem("reasonix.ui-style")).toBe("studio");
+
+      await act(async () => {
+        button("暖纸").click();
+        await Promise.resolve();
+      });
+
+      expect(document.documentElement.getAttribute("data-style")).toBe("paper");
+      expect(localStorage.getItem("reasonix.ui-style")).toBeNull();
+    });
+
     it("goes back to following the system, which is the absent attribute", async () => {
       await renderPrefs();
       await act(async () => {
@@ -487,6 +456,28 @@ describe("ConnectScreen", () => {
 
       expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
       expect(localStorage.getItem("reasonix.theme")).toBeNull();
+    });
+
+    it("remembers where a dispatch lands", async () => {
+      await renderPrefs();
+
+      await act(async () => {
+        button("不跳转").click();
+        await Promise.resolve();
+      });
+      expect(localStorage.getItem("reasonix.dispatch-after")).toBe("stay");
+
+      await act(async () => {
+        button("派发的会话").click();
+        await Promise.resolve();
+      });
+      expect(localStorage.getItem("reasonix.dispatch-after")).toBe("session");
+
+      await act(async () => {
+        button("最近").click();
+        await Promise.resolve();
+      });
+      expect(localStorage.getItem("reasonix.dispatch-after")).toBeNull();
     });
 
     it("pins the transcript fold and remembers it", async () => {
@@ -668,6 +659,30 @@ describe("ConnectScreen saved connections", () => {
     expect(rows.filter((saved) => saved.machine === "studio-pc")).toHaveLength(2);
   });
 
+  it("asks before removing a saved computer", async () => {
+    rememberConnection("lan", "http://192.168.9.9:51234");
+    await renderScreen();
+
+    act(() => {
+      (
+        container.querySelector('[aria-label="移除 192.168.9.9:51234"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(container.textContent).toContain("移除这台电脑？");
+    expect(loadConnections().some((entry) => entry.target === "http://192.168.9.9:51234")).toBe(
+      true,
+    );
+
+    await press("取消");
+
+    expect(container.textContent).not.toContain("移除这台电脑？");
+    expect(loadConnections().some((entry) => entry.target === "http://192.168.9.9:51234")).toBe(
+      true,
+    );
+    expect(forgetFleetPeer).not.toHaveBeenCalled();
+  });
+
   it("forgets a saved computer without touching the rest", async () => {
     rememberConnection("lan", "http://192.168.9.9:51234");
     await renderScreen();
@@ -677,6 +692,7 @@ describe("ConnectScreen saved connections", () => {
         container.querySelector('[aria-label="移除 192.168.9.9:51234"]') as HTMLButtonElement
       ).click();
     });
+    await press("移除");
 
     expect(container.textContent).not.toContain("192.168.9.9:51234");
     expect(container.textContent).toContain("192.168.5.2:56789");
@@ -696,10 +712,11 @@ describe("ConnectScreen saved connections", () => {
         container.querySelector('[aria-label="移除 192.168.5.2:56789"]') as HTMLButtonElement
       ).click();
     });
+    await press("移除");
 
     expect(disconnectProxy).toHaveBeenCalledTimes(1);
     // The row is gone from the list even though the link teardown is still in
-    // flight; the saved list is written synchronously by the click.
+    // flight; the saved list is written synchronously by the confirm.
     expect(container.textContent).not.toContain("移除 192.168.5.2:56789");
   });
 
@@ -714,6 +731,7 @@ describe("ConnectScreen saved connections", () => {
         container.querySelector('[aria-label="移除 192.168.9.9:51234"]') as HTMLButtonElement
       ).click();
     });
+    await press("移除");
 
     expect(disconnectProxy).not.toHaveBeenCalled();
   });
@@ -751,6 +769,8 @@ describe("ConnectScreen saved connections", () => {
         ) as HTMLButtonElement
       ).click();
     });
+    expect(container.textContent).toContain("移除这个地址？");
+    await press("移除");
 
     // The cloud door survives, and it is still the same computer.
     expect(container.textContent).toContain("云端 · Reasonix 账号");
@@ -768,6 +788,7 @@ describe("ConnectScreen saved connections", () => {
     act(() => {
       (container.querySelector('[aria-label="移除 工作室的电脑"]') as HTMLButtonElement).click();
     });
+    await press("移除");
 
     expect(trustedDevice("dev1")).toBeNull();
     expect(container.textContent).not.toContain("工作室的电脑");
@@ -1068,7 +1089,7 @@ describe("ConnectScreen verification", () => {
     vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "client.offline" });
     await renderScreen();
 
-    await press("连接");
+    await press("连接这台电脑");
     await settle();
 
     expect(onConnected).not.toHaveBeenCalled();
@@ -1095,7 +1116,7 @@ describe("ConnectScreen verification", () => {
     vi.mocked(probeUpstream).mockResolvedValue({ ok: false, code: "client.offline" });
     await renderScreen(undefined, { onFailed });
 
-    await press("连接");
+    await press("连接这台电脑");
     await settle();
 
     expect(onFailed).toHaveBeenCalledWith(
@@ -1105,7 +1126,7 @@ describe("ConnectScreen verification", () => {
 
   it("connects when the kernel answers after the switch", async () => {
     await renderScreen();
-    await press("连接");
+    await press("连接这台电脑");
     await settle();
     expect(onConnected).toHaveBeenCalledTimes(1);
   });

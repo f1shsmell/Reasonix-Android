@@ -65,20 +65,20 @@ function option(value: unknown, current: string): ModelOption | null {
   return out;
 }
 
+async function failureCode(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { code?: unknown };
+    if (body && typeof body === "object" && typeof body.code === "string") return body.code;
+  } catch {
+    // A refusal that is not JSON still has an HTTP status.
+  }
+  return `http.${response.status}`;
+}
+
 export async function loadModels(base: string): Promise<ModelsRead> {
   try {
     const response = await fetchWithTimeout(`${base}/models`, { credentials: "same-origin" }, 15_000);
-    if (!response.ok) {
-      try {
-        const body = (await response.json()) as { code?: unknown };
-        if (body && typeof body === "object" && typeof body.code === "string") {
-          return { ok: false, code: body.code };
-        }
-      } catch {
-        // A refusal that is not JSON still has an HTTP status.
-      }
-      return { ok: false, code: `http.${response.status}` };
-    }
+    if (!response.ok) return { ok: false, code: await failureCode(response) };
     const body = (await response.json()) as Record<string, unknown>;
     if (body === null || typeof body !== "object") return { ok: false, code: "models.shape" };
     const current = typeof body.current === "string" ? body.current : "";
@@ -93,6 +93,50 @@ export async function loadModels(base: string): Promise<ModelsRead> {
         current,
         label: typeof body.label === "string" ? body.label : "",
         default: typeof body.default === "string" ? body.default : "",
+        models,
+      },
+    };
+  } catch {
+    return { ok: false, code: "client.offline" };
+  }
+}
+
+/**
+ * The machine's whole chat catalog, before a pane exists.
+ *
+ * Dispatch creates its runtime only on send, so there is no `/rt/{id}/models`
+ * to read while the composer is being filled. The machine endpoint answers
+ * the same entries at `/models?answers=chat`; the active/default flags pick
+ * the row a fresh pane would start on.
+ */
+export async function loadGlobalModels(): Promise<ModelsRead> {
+  try {
+    const response = await fetchWithTimeout(
+      "/models?answers=chat",
+      { credentials: "same-origin" },
+      15_000,
+    );
+    if (!response.ok) return { ok: false, code: await failureCode(response) };
+    const body = (await response.json()) as unknown;
+    const rows = Array.isArray(body)
+      ? body
+      : body !== null && typeof body === "object" && Array.isArray((body as { models?: unknown }).models)
+        ? ((body as { models: unknown[] }).models)
+        : [];
+    const models = rows
+      .map((entry) => option(entry, ""))
+      .filter((entry): entry is ModelOption => entry !== null);
+    const current = models.find((entry) => entry.active)?.ref
+      ?? models.find((entry) => entry.default)?.ref
+      ?? models[0]?.ref
+      ?? "";
+    const active = models.find((entry) => entry.ref === current);
+    return {
+      ok: true,
+      catalog: {
+        current,
+        label: active?.displayName ?? active?.model ?? "",
+        default: models.find((entry) => entry.default)?.ref ?? "",
         models,
       },
     };
@@ -121,15 +165,7 @@ export async function switchModel(base: string, ref: string): Promise<ModelSwitc
       30_000,
     );
     if (response.ok) return { ok: true };
-    try {
-      const body = (await response.json()) as { code?: unknown };
-      if (body && typeof body === "object" && typeof body.code === "string") {
-        return { ok: false, code: body.code };
-      }
-    } catch {
-      // A refusal that is not JSON still has an HTTP status.
-    }
-    return { ok: false, code: `http.${response.status}` };
+    return { ok: false, code: await failureCode(response) };
   } catch {
     return { ok: false, code: "client.offline" };
   }
@@ -157,15 +193,7 @@ export async function switchEffort(base: string, effort: string): Promise<ModelS
       20_000,
     );
     if (response.ok) return { ok: true };
-    try {
-      const body = (await response.json()) as { code?: unknown };
-      if (body && typeof body === "object" && typeof body.code === "string") {
-        return { ok: false, code: body.code };
-      }
-    } catch {
-      // A refusal that is not JSON still has an HTTP status.
-    }
-    return { ok: false, code: `http.${response.status}` };
+    return { ok: false, code: await failureCode(response) };
   } catch {
     return { ok: false, code: "client.offline" };
   }

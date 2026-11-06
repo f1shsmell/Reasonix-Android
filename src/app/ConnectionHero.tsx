@@ -3,18 +3,15 @@
  *
  * A settings card can say "未连接" in a line of grey, but connecting is the one
  * moment this app is doing something the person should be able to watch. The
- * mark traces while the link works, the step list names the stage, and the
- * resting states borrow the same three tones the home chip uses.
+ * monitor and its halo breathe while the link works, the step list names the
+ * stage, and the resting states borrow the tone the home chip uses.
  *
- * The animation is the desktop Studio's: three strokes, one dash cycle, each
- * path offset by a third. It is decoration for a state, never the state
- * itself — the words below it carry the meaning and the screen reader reads
- * them.
+ * The animation is decoration for a state, never the state itself: the words
+ * below carry the meaning and the screen reader reads them.
  */
 
 import { isStalePairing, LINK_STEPS, linkSummary, linkTone, stepLabel } from "../net/link";
 import type { LinkState } from "../net/link";
-import { RMark } from "./RMark";
 
 export interface ConnectionHeroProps {
   name: string;
@@ -55,7 +52,18 @@ export function ConnectionHero({ name, detail, link, busy = "", onRepair }: Conn
       aria-label="连接状态"
     >
       <span className="link-hero-mark" aria-hidden="true">
-        <RMark />
+        <svg
+          className="hero-monitor"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="3" y="4" width="18" height="12" rx="2" />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
       </span>
       <p className="link-hero-title">{name}</p>
       <p className="link-hero-sub" role="status">

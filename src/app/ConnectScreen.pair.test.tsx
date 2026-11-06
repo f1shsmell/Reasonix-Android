@@ -151,12 +151,12 @@ async function pairAt(origin: string, code: string): Promise<void> {
   const inputs = container.querySelectorAll("details.manual-group input");
   await typeInto(inputs[0] as HTMLInputElement, origin);
   await typeInto(inputs[1] as HTMLInputElement, code);
-  const button = Array.from(container.querySelectorAll("button")).find(
-    (candidate) => candidate.textContent?.trim() === "连接",
+  const button = Array.from(container.querySelectorAll("details.manual-group button")).find(
+    (candidate) => candidate.textContent?.trim() === "连接这台电脑",
   );
   if (!button) throw new Error("no connect button");
   await act(async () => {
-    button.click();
+    (button as HTMLButtonElement).click();
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
