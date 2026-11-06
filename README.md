@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/tour.png" width="680" alt="待决策与运行中、派发、排队与插话、应用内 Studio">
+  <img src="docs/screenshots/tour.png?v=0.3.0" width="680" alt="待决策与运行中、派发、排队与插话、应用内 Studio">
 </p>
 
 > [!IMPORTANT]
@@ -57,7 +57,7 @@
 默认暖纸：米色纸面、棕色强调，适合长时间阅读；也可以切到深蓝。两套主题各自支持跟随系统、浅色和深色，选择会记住。
 
 <p align="center">
-  <img src="docs/screenshots/themes.png" width="880" alt="暖纸浅色、暖纸深色、深蓝浅色、深蓝深色四种主题">
+  <img src="docs/screenshots/themes.png?v=0.3.0" width="880" alt="暖纸浅色、暖纸深色、深蓝浅色、深蓝深色四种主题">
 </p>
 
 ## 通知
