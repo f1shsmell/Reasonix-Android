@@ -32,6 +32,23 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
 
+  wire:
+    name: Wire · kernel parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: esengine/DeepSeek-Reasonix
+          ref: 2948ec98e
+          path: kernel
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: REASONIX_KERNEL=kernel node scripts/check-wire.mjs
+
   android:
     name: Android · unit tests, debug APK
     runs-on: ubuntu-latest

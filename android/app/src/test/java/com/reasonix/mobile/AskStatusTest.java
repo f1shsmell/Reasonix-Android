@@ -128,6 +128,14 @@ public class AskStatusTest {
     }
 
     @Test
+    public void readsTheRecordedStatusFixture() throws Exception {
+        AskStatus status = AskStatus.parse(Fixtures.read("recorded/status.json"));
+
+        assertTrue(status.empty());
+        assertFalse(status.running);
+    }
+
+    @Test
     public void readsTheSharedContractFixture() throws Exception {
         AskStatus status = AskStatus.parse(Fixtures.read("status-ask.json"));
 
