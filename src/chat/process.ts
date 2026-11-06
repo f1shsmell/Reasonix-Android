@@ -178,6 +178,11 @@ function buildCompact(rows: Row[], running: boolean): DisplayRow[] {
         break;
       }
     }
+    // A running turn whose last row is an empty assistant is still waiting
+    // for its answer; promoting an earlier narration would draw a bubble that
+    // disappears as soon as the first delta lands.
+    const tail = segment[segment.length - 1];
+    if (trailing && tail?.kind === "assistant" && !tail.text.trim()) final = -1;
     if (final < 0) {
       pushSteps(stepsOf(segment), trailing);
     } else {
