@@ -145,6 +145,19 @@ describe("buildDisplay", () => {
     expect(last?.kind === "steps" && last.running).toBe(true);
   });
 
+  it("does not promote narration while the trailing answer is still empty", () => {
+    const display = buildDisplay(
+      [tool("t1"), assistant("a1", "我先看看"), assistant("a2", "")],
+      true,
+      "compact",
+    );
+    expect(display.map((entry) => entry.kind)).toEqual(["steps"]);
+    const steps = display[0];
+    if (steps?.kind !== "steps") throw new Error("expected steps");
+    expect(steps.running).toBe(true);
+    expect(steps.steps.map((step) => step.kind)).toEqual(["tool", "text"]);
+  });
+
   it("folds intermediate assistant text even without a tool", () => {
     const display = buildDisplay(
       [assistant("a1", "先说一下"), assistant("a2", "这才是回答")],
