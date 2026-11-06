@@ -15,6 +15,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import java.io.BufferedReader;
+import java.net.Socket;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -116,7 +117,28 @@ public class ProxyForwardTest {
 
     @Test
     public void refusesAForeignOrigin() throws Exception {
-        assertEquals("status:403", get("/runtimes", cookie, "http://evil.example"));
+        // Raw socket: HttpURLConnection can drop a restricted Origin header,
+        // which made this test pass locally and lie on CI.
+        assertEquals(403, rawStatus("/runtimes", cookie, "http://evil.example"));
+    }
+
+    private static int rawStatus(String path, String withCookie, String origin) throws Exception {
+        try (Socket socket = new Socket("127.0.0.1", LoopbackProxy.PORT)) {
+            StringBuilder request = new StringBuilder()
+                    .append("GET ").append(path).append(" HTTP/1.1\r\n")
+                    .append("Host: 127.0.0.1\r\n")
+                    .append("Connection: close\r\n");
+            if (withCookie != null) request.append("Cookie: ").append(withCookie).append("\r\n");
+            if (origin != null) request.append("Origin: ").append(origin).append("\r\n");
+            request.append("\r\n");
+            OutputStream out = socket.getOutputStream();
+            out.write(request.toString().getBytes(StandardCharsets.ISO_8859_1));
+            out.flush();
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
+            String status = reader.readLine();
+            return status == null ? 0 : Integer.parseInt(status.split(" ")[1]);
+        }
     }
 
     @Test
