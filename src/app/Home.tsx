@@ -468,6 +468,7 @@ function SwitchSheet({
                   originKey(candidate.kind, candidate.target) === originKey(entry.kind, entry.target),
               );
               const tone = peer ? peerTone(peer.state) : null;
+              const title = entry.machine?.trim() || entry.name || entry.target;
               const sub = entry.kind === "lan"
                 ? `局域网 · ${entry.target}`
                 : "云端 · Reasonix 账号";
@@ -494,7 +495,7 @@ function SwitchSheet({
                     {tone ? <span className={`dot ${tone}`} aria-hidden="true" /> : null}
                     <span className="switch-main">
                       <span className="switch-name">
-                        {entry.name}
+                        {title}
                         {here ? <span className="current-tag">当前</span> : null}
                         {opening ? <span className="current-tag">连接中</span> : null}
                       </span>

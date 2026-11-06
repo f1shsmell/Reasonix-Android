@@ -746,7 +746,7 @@ describe("ConnectScreen saved connections", () => {
 
     // Both doors are listed with their own control, so one can go alone.
     const lan = container.querySelector('[aria-label="移除 局域网 · http://192.168.5.3:57074"]');
-    const cloud = container.querySelector('[aria-label="移除 云端 · Reasonix 账号"]');
+    const cloud = container.querySelector('[aria-label="移除 云端 · 工作台"]');
     expect(lan).toBeTruthy();
     expect(cloud).toBeTruthy();
     // The computer's own row carries no ×: there is nothing to forget there

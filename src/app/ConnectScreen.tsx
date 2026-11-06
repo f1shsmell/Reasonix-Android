@@ -1073,8 +1073,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const doorDetail = (door: SavedConnection): string => {
     if (door.kind === "cloud") return "云端 · Reasonix 账号";
     const near = direct.some((candidate) => normalizeTarget("lan", candidate) === door.target);
-    return `局域网 · ${door.target}${near ? " · 可直连" : ""}`;
+    // The door's title is already its address; repeating the URL here wrapped
+    // "可直连" in half on a phone.
+    return near ? "局域网 · 可直连" : "局域网";
   };
+  /** The × label keeps the address even when the visible line does not. */
+  const doorAria = (door: SavedConnection): string =>
+    door.kind === "lan" ? `局域网 · ${door.target}` : `云端 · ${doorLabel(door)}`;
   /** A door's own name, for the row under a computer. */
   const doorLabel = (door: SavedConnection): string => labelOf(door);
   const groupDetail = (group: ConnectionGroup, door: SavedConnection): string => {
@@ -1388,7 +1393,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                               <button
                                 type="button"
                                 className="saved-forget"
-                                aria-label={`移除 ${doorDetail(row)}`}
+                                aria-label={`移除 ${doorAria(row)}`}
                                 onClick={() =>
                                   setForgetAsk({
                                     row,
