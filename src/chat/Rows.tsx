@@ -6,7 +6,7 @@
  * collapsed, and only the detail it exists to hide is inside.
  */
 
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
 import { Markdown } from "./Markdown";
@@ -226,6 +226,8 @@ function AskQuestionBlock({
   otherOn,
   other,
   note,
+  titleFromPrompt = false,
+  alwaysOther = false,
   onToggle,
   onToggleOther,
   onOther,
@@ -237,6 +239,10 @@ function AskQuestionBlock({
   otherOn: boolean;
   other: string;
   note: string;
+  /** The tab already names the question, so the prompt itself is the title. */
+  titleFromPrompt?: boolean;
+  /** Keep the free-answer field visible instead of waiting for "其他". */
+  alwaysOther?: boolean;
   onToggle: (label: string) => void;
   onToggleOther: () => void;
   onOther: (text: string) => void;
@@ -248,17 +254,31 @@ function AskQuestionBlock({
   const offered = Array.isArray(question.options) ? question.options : [];
   const custom = offered.find((option) => isOtherOption(option.label));
   const options = offered.filter((option) => !isOtherOption(option.label));
+  const freeOnly = options.length === 0 && custom === undefined;
   const noting = !multi && !otherOn && chosen.length > 0;
   return (
     <div className="question">
-      <div className="q">{question.header ?? question.prompt}</div>
-      {question.header && question.header !== question.prompt ? (
+      <div className="q">{titleFromPrompt ? question.prompt : question.header ?? question.prompt}</div>
+      {!titleFromPrompt && question.header && question.header !== question.prompt ? (
         <div className="why">{question.prompt}</div>
       ) : null}
       {question.reason === "missing_value" ? (
         <div className="why">需要你补一个值，agent 自己找不到。</div>
       ) : null}
+      {pending && offered.length > 0 ? (
+        <div className="ask-hint">{multi ? "可以选择多项" : "请选择一项"}</div>
+      ) : null}
       {pending ? (
+        freeOnly ? (
+          <input
+            className="ask-extra"
+            value={other}
+            onChange={(event) => onOther(event.target.value)}
+            placeholder="输入你的回答"
+            aria-label="你的回答"
+            autoFocus={alwaysOther}
+          />
+        ) : (
         <>
           <div className="choices">
             {options.map((option) => {
@@ -271,8 +291,14 @@ function AskQuestionBlock({
                   aria-pressed={multi ? active : undefined}
                   onClick={() => onToggle(option.label)}
                 >
-                  {option.label}
-                  {option.description ? <small>{option.description}</small> : null}
+                  <span
+                    className={`pick${active ? " on" : ""}${multi ? " box" : ""}`}
+                    aria-hidden="true"
+                  />
+                  <span className="pick-copy">
+                    {option.label}
+                    {option.description ? <small>{option.description}</small> : null}
+                  </span>
                 </button>
               );
             })}
@@ -282,18 +308,21 @@ function AskQuestionBlock({
               aria-pressed={otherOn}
               onClick={onToggleOther}
             >
-              {custom?.label ?? "其他 —— 自行填写"}
-              {custom?.description ? <small>{custom.description}</small> : null}
+              <span className={`pick${otherOn ? " on" : ""}${multi ? " box" : ""}`} aria-hidden="true" />
+              <span className="pick-copy">
+                {custom?.label ?? "其他 —— 自行填写"}
+                {custom?.description ? <small>{custom.description}</small> : null}
+              </span>
             </button>
           </div>
-          {otherOn ? (
+          {otherOn || alwaysOther ? (
             <input
               className="ask-extra"
               value={other}
               onChange={(event) => onOther(event.target.value)}
               placeholder="或直接输入你的回答"
               aria-label="其他回答"
-              autoFocus
+              autoFocus={otherOn}
             />
           ) : noting ? (
             <input
@@ -305,6 +334,7 @@ function AskQuestionBlock({
             />
           ) : null}
         </>
+        )
       ) : null}
     </div>
   );
@@ -319,6 +349,8 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
   const [otherOn, setOtherOn] = useState<Record<string, boolean>>({});
   const [other, setOther] = useState<Record<string, string>>({});
   const [note, setNote] = useState<Record<string, string>>({});
+  const [step, setStep] = useState(0);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const questions = row.ask.questions;
 
   const picksOf = (question: WireAskQuestion): string[] =>
@@ -380,6 +412,17 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
     setNote((current) => ({ ...current, [question.id]: text }));
   };
 
+  const answered = (question: WireAskQuestion): boolean => valueOf(question).length > 0;
+  const answeredCount = questions.filter(answered).length;
+  const activeIndex = Math.min(step, Math.max(0, questions.length - 1));
+  const activeQuestion = questions[activeIndex];
+
+  useEffect(() => {
+    const id = activeQuestion?.id;
+    if (!id) return;
+    tabRefs.current[id]?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeQuestion?.id]);
+
   const ready = questions.every((question) => valueOf(question).length > 0);
   const submit = () => {
     const answers: Record<string, string[]> = {};
@@ -395,6 +438,113 @@ export function AskCard({ row, handlers }: { row: AskRow; handlers: PromptHandle
   // declares a surface but cannot be parsed is drawn as unanswerable rather
   // than as an option question with nothing to pick.
   const surfaces = questions.filter((question) => question.surface !== undefined);
+
+  // The kernel does not produce a surface inside a multi-question ask, and
+  // refuses such an answer. Say so instead of silently dropping the choices.
+  if (row.pending && surfaces.length > 0 && questions.length > 1) {
+    return (
+      <div className="row prompt">
+        <div className="prompt-head">无法提交</div>
+        <div className="answered">
+          这个提问把表单和其他问题混在一起，当前协议不接受这种组合；请让发起方拆成单独的提问。
+        </div>
+      </div>
+    );
+  }
+
+  // Several questions arrive in one ask. The phone shows one at a time with
+  // the question headers as tabs, so a four-part decision does not become a
+  // long wall of controls; every answer still goes back in one call.
+  if (row.pending && surfaces.length === 0 && questions.length > 1) {
+    const active = Math.min(step, questions.length - 1);
+    const question = questions[active];
+    if (question) {
+      return (
+        <div className="row prompt wizard">
+          <div className="wizard-head">
+            <span className="prompt-head">需要你决定</span>
+            <span className="wizard-count">{answeredCount}/{questions.length} 已答</span>
+          </div>
+          <div className="wizard-tabs" role="tablist" aria-label="问题">
+            {questions.map((entry, index) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={index === active}
+                className={index === active ? "on" : undefined}
+                ref={(element) => {
+                  tabRefs.current[entry.id] = element;
+                }}
+                onClick={() => setStep(index)}
+              >
+                {entry.header ?? `问题 ${index + 1}`}
+                {answered(entry) ? <span className="wizard-done" aria-hidden="true">✓</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="wizard-step">
+            <AskQuestionBlock
+              question={question}
+              pending
+              titleFromPrompt
+              alwaysOther
+              chosen={picksOf(question)}
+              otherOn={otherOn[question.id] === true}
+              other={other[question.id] ?? ""}
+              note={note[question.id] ?? ""}
+              onToggle={(label) => toggle(question, label)}
+              onToggleOther={() => toggleOther(question)}
+              onOther={(text) => typeOther(question, text)}
+              onNote={(text) => typeNote(question, text)}
+            />
+          </div>
+          <div className="wizard-actions">
+            <button
+              type="button"
+              className="wizard-prev"
+              onClick={() => setStep(Math.max(0, active - 1))}
+              disabled={active === 0}
+            >
+              上一题
+            </button>
+            <span className="wizard-gap" />
+            {active < questions.length - 1 ? (
+              <button
+                type="button"
+                className="primary wizard-next"
+                onClick={() => setStep(Math.min(questions.length - 1, active + 1))}
+              >
+                下一题 ({active + 1}/{questions.length})
+              </button>
+            ) : ready ? (
+              <button type="button" className="primary confirm" onClick={submit}>
+                提交 {questions.length} 个回答
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary confirm"
+                disabled={questions.findIndex((entry) => !answered(entry)) === active}
+                onClick={() => {
+                  const missing = questions.findIndex((entry) => !answered(entry));
+                  if (missing >= 0) setStep(missing);
+                }}
+              >
+                {questions.findIndex((entry) => !answered(entry)) === active
+                  ? `还有 ${questions.length - answeredCount} 题未答`
+                  : `去补 ${questions.length - answeredCount} 题`}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+  }
+
+  // A surface is never one of several questions: the kernel's answer
+  // validation accepts it only as the sole question, and render_surface asks
+  // exactly one. A batch therefore mixes choices with free text, not surfaces.
   if (surfaces.length > 0) {
     return (
       <div className="row prompt">

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Home, projectActivity, recentConversations } from "./Home";
 import { loadConnections, rememberConnection } from "../net/savedConnections";
 import type { LinkState } from "../net/link";
-import type { HomeTab } from "./swipe";
+import type { HomeTab } from "./homeTab";
 import type { NeedsYouState } from "./useNeedsYou";
 import type { TreeState } from "./useTree";
 import type { ConnectionSnapshot } from "../net/connection";
@@ -98,7 +98,6 @@ function Harness(props: Partial<React.ComponentProps<typeof Home>>): React.React
       onOpenProject={() => {}}
       onOpenSession={() => {}}
       onOpenRuntime={() => {}}
-      onNewSession={() => {}}
       onRefresh={() => {}}
       {...props}
     />
@@ -118,6 +117,16 @@ function button(text: string): HTMLButtonElement {
   if (!found) throw new Error(`no button containing ${text}`);
   return found;
 }
+
+function nav(text: string): HTMLButtonElement {
+  const found = Array.from(container.querySelectorAll(".tabbar button")).find((candidate) =>
+    candidate.textContent?.includes(text),
+  );
+  if (!found) throw new Error(`no nav item ${text}`);
+  return found as HTMLButtonElement;
+}
+
+
 
 async function settle(): Promise<void> {
   for (let index = 0; index < 3; index += 1) {
@@ -209,7 +218,7 @@ describe("Home", () => {
     render();
     expect(container.querySelectorAll(".project")).toHaveLength(0);
 
-    act(() => button("项目").click());
+    act(() => nav("项目").click());
     expect(container.querySelectorAll(".project")).toHaveLength(1);
     expect(container.textContent).toContain("/work/app");
 
@@ -217,24 +226,88 @@ describe("Home", () => {
     expect(container.querySelectorAll(".session")).toHaveLength(2);
   });
 
-  it("filters conversations by title, project name or path", () => {
+  it("refreshes after a full downward pull at the top", () => {
+    const onRefresh = vi.fn();
+    render({ onRefresh });
+    const body = container.querySelector(".body") as Element;
+    const touch = (type: string, y: number) => {
+      act(() => {
+        body.dispatchEvent(
+          Object.assign(new Event(type, { bubbles: true }), {
+            touches: [{ clientX: 200, clientY: y }],
+            changedTouches: [{ clientX: 200, clientY: y }],
+          }),
+        );
+      });
+    };
+
+    touch("touchstart", 200);
+    touch("touchmove", 220);
+    expect(body.textContent).toContain("下拉刷新");
+    touch("touchmove", 320);
+    expect(body.textContent).toContain("松开刷新");
+    touch("touchend", 320);
+
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh after a short pull", () => {
+    const onRefresh = vi.fn();
+    render({ onRefresh });
+    const body = container.querySelector(".body") as Element;
+    act(() => {
+      body.dispatchEvent(
+        Object.assign(new Event("touchstart", { bubbles: true }), {
+          touches: [{ clientX: 200, clientY: 200 }],
+        }),
+      );
+      body.dispatchEvent(
+        Object.assign(new Event("touchmove", { bubbles: true }), {
+          touches: [{ clientX: 200, clientY: 230 }],
+        }),
+      );
+      body.dispatchEvent(
+        Object.assign(new Event("touchend", { bubbles: true }), {
+          changedTouches: [{ clientX: 200, clientY: 230 }],
+        }),
+      );
+    });
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("searches conversations from the top of the recent view", () => {
     render();
     const search = container.querySelector(".search") as HTMLInputElement;
+    expect(search.getAttribute("aria-label")).toBe("搜索会话");
 
-    act(() => {
-      typeInto(search, "登录");
-    });
+    act(() => typeInto(search, "登录"));
     expect(container.querySelectorAll(".session")).toHaveLength(1);
 
-    act(() => {
-      typeInto(search, "/work/app");
-    });
+    act(() => typeInto(search, "/work/app"));
     expect(container.querySelectorAll(".session")).toHaveLength(2);
 
-    act(() => {
-      typeInto(search, "没有这个");
-    });
+    act(() => typeInto(search, "没有这个"));
     expect(container.textContent).toContain("没有匹配");
+  });
+
+  it("keeps the recent and project searches independent", () => {
+    render({
+      tree: tree({
+        projects: [
+          project(),
+          project({ root: "/work/docs", name: "docs", sessions: [], total: 0 }),
+        ],
+      }),
+    });
+    const recent = container.querySelector(".search") as HTMLInputElement;
+    act(() => typeInto(recent, "登录"));
+    expect(container.querySelectorAll(".session")).toHaveLength(1);
+
+    act(() => nav("项目").click());
+    const projects = container.querySelector(".search") as HTMLInputElement;
+    expect(projects.getAttribute("aria-label")).toBe("搜索项目");
+    expect(projects.value).toBe("");
+    expect(container.querySelectorAll(".project")).toHaveLength(2);
   });
 
   it("filters projects in the project view", () => {
@@ -246,7 +319,7 @@ describe("Home", () => {
         ],
       }),
     });
-    act(() => button("项目").click());
+    act(() => nav("项目").click());
     expect(container.querySelectorAll(".project")).toHaveLength(2);
 
     const search = container.querySelector(".search") as HTMLInputElement;
@@ -280,41 +353,9 @@ describe("Home", () => {
   it("opens a project without opening a conversation", () => {
     const onOpenProject = vi.fn();
     render({ onOpenProject });
-    act(() => button("项目").click());
+    act(() => nav("项目").click());
     act(() => button("app/work/app").click());
     expect(onOpenProject).toHaveBeenCalledWith("/work/app");
-  });
-
-  it("starts a new conversation after choosing a project", () => {
-    const onNewSession = vi.fn();
-    render({
-      onNewSession,
-      tree: tree({
-        projects: [
-          project(),
-          project({ root: "/work/docs", name: "docs", sessions: [], total: 0 }),
-        ],
-      }),
-    });
-
-    act(() => (container.querySelector('[aria-label="新建会话"]') as HTMLButtonElement).click());
-    const sheet = container.querySelector(".sheet");
-    expect(sheet?.textContent).toContain("在哪个项目新建");
-
-    act(() =>
-      (Array.from(sheet?.querySelectorAll(".project") ?? []).find((candidate) =>
-        candidate.textContent?.includes("docs"),
-      ) as HTMLButtonElement).click(),
-    );
-
-    expect(onNewSession).toHaveBeenCalledWith("/work/docs");
-    expect(container.querySelector(".sheet")).toBeNull();
-  });
-
-  it("cannot start a session when no project is known", () => {
-    render({ tree: tree({ projects: [] }) });
-    expect(container.textContent).toContain("还没有会话");
-    expect((container.querySelector('[aria-label="新建会话"]') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows a failed read with its code", () => {
@@ -353,31 +394,128 @@ describe("Home", () => {
   });
 
   describe("Dispatch", () => {
+    function openDispatch(): Element {
+      act(() => nav("派发").click());
+      const page = container.querySelector(".dispatch-page");
+      if (!page) throw new Error("dispatch page did not open");
+      return page;
+    }
+
     it("sends a task without opening the chat", async () => {
       const onDispatch = vi.fn(async () => ({ ok: true as const }));
       render({ onDispatch });
 
-      act(() => {
-        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
-      });
-      const sheet = container.querySelector(".dispatch-sheet");
-      expect(sheet?.textContent).toContain("派任务");
-      expect(sheet?.textContent).toContain("app");
+      const page = openDispatch();
+      expect(page.textContent).toContain("派发任务");
+      expect(page.textContent).toContain("app");
 
-      const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+      const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
       act(() => typeIntoArea(prompt, "修复登录白屏"));
       act(() => {
-        (Array.from(sheet?.querySelectorAll("button") ?? []).find(
+        (Array.from(page.querySelectorAll("button")).find(
           (candidate) => candidate.textContent?.trim() === "派发",
         ) as HTMLButtonElement).click();
       });
       await settle();
 
       expect(onDispatch).toHaveBeenCalledWith("/work/app", "修复登录白屏");
-      expect(container.querySelector(".dispatch-sheet")).toBeNull();
+      expect(container.querySelector(".dispatch-page")).toBeNull();
     });
 
-    it("says a cloud connection has no background notification", async () => {
+    it("sends the chosen model and reasoning level with the task", async () => {
+      const onDispatch = vi.fn(async () => ({ ok: true as const }));
+      route((url) => {
+        if (String(url).includes("/models")) {
+          return json({
+            models: [
+              {
+                ref: "demo/demo-flash",
+                provider: "demo",
+                model: "demo-flash",
+                displayName: "Demo Flash",
+                active: true,
+                default: true,
+                efforts: ["auto", "low", "high"],
+                effort: "auto",
+                contextWindow: 128000,
+              },
+            ],
+          });
+        }
+        return json({});
+      });
+      render({ onDispatch });
+
+      const page = openDispatch();
+      act(() => {
+        (page.querySelector('[aria-label="切换模型与思考等级"]') as HTMLButtonElement).click();
+      });
+      await settle();
+      act(() => button("高").click());
+      act(() => button("完成").click());
+
+      const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
+      act(() => typeIntoArea(prompt, "跑一下测试"));
+      act(() => {
+        (Array.from(page.querySelectorAll("button")).find(
+          (candidate) => candidate.textContent?.trim() === "派发",
+        ) as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(onDispatch).toHaveBeenCalledWith("/work/app", "跑一下测试", {
+        model: "demo/demo-flash",
+        effort: "high",
+      });
+    });
+
+    it("opens the dispatched session when that destination is chosen", async () => {
+      localStorage.setItem("reasonix.dispatch-after", "session");
+      const onDispatch = vi.fn(async () => ({
+        ok: true as const,
+        runtimeId: "r9",
+        root: "/work/app",
+        title: "跑一下测试",
+      }));
+      const onOpenRuntime = vi.fn();
+      render({ onDispatch, onOpenRuntime });
+
+      const page = openDispatch();
+      const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
+      act(() => typeIntoArea(prompt, "跑一下测试"));
+      act(() => {
+        (Array.from(page.querySelectorAll("button")).find(
+          (candidate) => candidate.textContent?.trim() === "派发",
+        ) as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(onOpenRuntime).toHaveBeenCalledWith("r9", "/work/app", "跑一下测试");
+      expect(container.querySelector(".dispatch-page")).toBeNull();
+    });
+
+    it("stays on the form when the destination is 不跳转", async () => {
+      localStorage.setItem("reasonix.dispatch-after", "stay");
+      const onDispatch = vi.fn(async () => ({ ok: true as const, runtimeId: "r9" }));
+      const onOpenRuntime = vi.fn();
+      render({ onDispatch, onOpenRuntime });
+
+      const page = openDispatch();
+      const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
+      act(() => typeIntoArea(prompt, "跑一下测试"));
+      act(() => {
+        (Array.from(page.querySelectorAll("button")).find(
+          (candidate) => candidate.textContent?.trim() === "派发",
+        ) as HTMLButtonElement).click();
+      });
+      await settle();
+
+      expect(container.querySelector(".dispatch-page")).toBeTruthy();
+      expect(container.textContent).toContain("已派发");
+      expect(onOpenRuntime).not.toHaveBeenCalled();
+    });
+
+    it("says a cloud connection has no background notification", () => {
       render({
         onDispatch: vi.fn(async () => ({ ok: true as const })),
         link: {
@@ -390,34 +528,25 @@ describe("Home", () => {
         },
       });
 
-      act(() => {
-        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
-      });
-
-      expect(container.querySelector(".dispatch-sheet")?.textContent).toContain(
-        "云端连接暂不支持后台通知",
-      );
+      expect(openDispatch().textContent).toContain("云端连接暂不支持后台通知");
     });
 
-    it("keeps the sheet and the reason when the task cannot start", async () => {
+    it("keeps the page and the reason when the task cannot start", async () => {
       const onDispatch = vi.fn(async () => ({ ok: false, message: "连不上电脑。" }));
       render({ onDispatch });
 
-      act(() => {
-        (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
-      });
-      const sheet = container.querySelector(".dispatch-sheet");
-      const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+      const page = openDispatch();
+      const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
       act(() => typeIntoArea(prompt, "跑一下测试"));
       act(() => {
-        (Array.from(sheet?.querySelectorAll("button") ?? []).find(
+        (Array.from(page.querySelectorAll("button")).find(
           (candidate) => candidate.textContent?.trim() === "派发",
         ) as HTMLButtonElement).click();
       });
       await settle();
 
-      expect(container.querySelector(".dispatch-sheet")).toBeTruthy();
-      expect(container.querySelector(".dispatch-sheet")?.textContent).toContain("连不上电脑。");
+      expect(container.querySelector(".dispatch-page")).toBeTruthy();
+      expect(container.querySelector(".dispatch-page")?.textContent).toContain("连不上电脑。");
     });
   });
 
@@ -458,6 +587,7 @@ describe("Home", () => {
       expect(block?.textContent).toContain("待回答");
       expect(block?.textContent).toContain("用哪个方案");
       expect(block?.textContent).toContain("app");
+      expect(block?.textContent).toContain("去回答");
     });
 
     it("marks a new decision with its computer and how long it has waited", () => {
@@ -562,18 +692,11 @@ describe("Home", () => {
       render({ pending: pending({ items: [waiting()] }) });
       expect(container.querySelector(".needs-you")).toBeTruthy();
 
-      act(() => button("项目").click());
+      act(() => nav("项目").click());
       expect(container.querySelector(".needs-you")).toBeNull();
     });
 
-    it("is hidden while searching, so a filtered list stays filtered", () => {
-      render({ pending: pending({ items: [waiting()] }) });
-      const search = container.querySelector(".search") as HTMLInputElement;
-      act(() => {
-        typeInto(search, "登录");
-      });
-      expect(container.querySelector(".needs-you")).toBeNull();
-    });
+
   });
 
   describe("pinning", () => {
@@ -727,7 +850,7 @@ describe("Home", () => {
     /** The projects view with rows that have real heights for a drop to land in. */
     function drawProjects(props: Partial<React.ComponentProps<typeof Home>> = {}): HTMLElement[] {
       render({ tree: tree({ projects: twoProjects() }), ...props });
-      act(() => button("项目").click());
+      act(() => nav("项目").click());
       return stubRows();
     }
 
@@ -862,40 +985,6 @@ describe("Home", () => {
       expect(rowAt(rows, 0).style.touchAction).toBe("");
     });
 
-    it("does not read the release of a finished drag as a sideways swipe", async () => {
-      vi.useFakeTimers();
-      route(() => new Response(null, { status: 204 }));
-      const rows = drawProjects();
-      const shell = container.querySelector(".shell") as Element;
-
-      // A touch drag begins with `touchstart`, so the swipe tracker is armed
-      // before the hold succeeds.
-      act(() => {
-        shell.dispatchEvent(
-          Object.assign(new Event("touchstart", { bubbles: true }), {
-            touches: [{ clientX: 120, clientY: 400 }],
-          }),
-        );
-      });
-      hold(rowAt(rows, 0), 160, 10);
-      pointer(rowAt(rows, 0), "pointermove", 160, 110);
-      pointer(rowAt(rows, 0), "pointerup", 160, 110);
-      // The finger leaves the screen well to the right: a swipe between views
-      // if the gesture had been a page one, the end of a drop if it was a drag.
-      act(() => {
-        shell.dispatchEvent(
-          Object.assign(new Event("touchend", { bubbles: true }), {
-            changedTouches: [{ clientX: 300, clientY: 410 }],
-          }),
-        );
-      });
-      await settle();
-
-      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-        "项目",
-      );
-    });
-
     it("does not pick up a folder the kernel does not remember", () => {
       vi.useFakeTimers();
       const rows = drawProjects({
@@ -913,67 +1002,7 @@ describe("Home", () => {
     });
   });
 
-  describe("swiping between the views", () => {
-    /** jsdom has no Touch; the handler only reads the coordinates. */
-    function swipeOn(node: Element, from: [number, number], to: [number, number]): void {
-      act(() => {
-        node.dispatchEvent(
-          Object.assign(new Event("touchstart", { bubbles: true }), {
-            touches: [{ clientX: from[0], clientY: from[1] }],
-          }),
-        );
-        node.dispatchEvent(
-          Object.assign(new Event("touchend", { bubbles: true }), {
-            changedTouches: [{ clientX: to[0], clientY: to[1] }],
-          }),
-        );
-      });
-    }
 
-    it("switches to the project view on a leftward drag", () => {
-      render();
-      expect(container.querySelectorAll(".session").length).toBeGreaterThan(0);
-
-      swipeOn(container.querySelector(".shell") as Element, [300, 400], [120, 410]);
-
-      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-        "项目",
-      );
-    });
-
-    it("switches back on a rightward drag", () => {
-      render();
-      act(() => button("项目").click());
-
-      swipeOn(container.querySelector(".shell") as Element, [120, 400], [300, 410]);
-
-      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-        "最近",
-      );
-    });
-
-    it("leaves a vertical scroll alone", () => {
-      render();
-      // A list that scrolls must never change views because a scroll drifted
-      // sideways a little.
-      swipeOn(container.querySelector(".shell") as Element, [200, 500], [170, 200]);
-
-      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-        "最近",
-      );
-    });
-
-    it("leaves text selection alone", () => {
-      render();
-      const search = container.querySelector(".search") as Element;
-
-      swipeOn(search, [300, 400], [120, 400]);
-
-      expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-        "最近",
-      );
-    });
-  });
 });
 
 describe("Home connection bar", () => {
@@ -1017,6 +1046,7 @@ describe("Home connection bar", () => {
     const sheet = container.querySelector(".switch-sheet");
     expect(sheet?.textContent).toContain("切换连接");
     expect(sheet?.textContent).toContain("192.168.9.9:51234");
+    expect(sheet?.textContent).toContain("192.168.5.2:56789");
     expect(sheet?.textContent).toContain("当前");
   });
 
@@ -1055,11 +1085,11 @@ describe("Home connection bar", () => {
     expect(onRetryLink).toHaveBeenCalledTimes(1);
   });
 
-  it("sends 管理连接 to settings", () => {
+  it("offers connecting another computer from the switch sheet", () => {
     const onSettings = vi.fn();
     render({ onSettings });
     act(() => (container.querySelector(".linkbar") as HTMLButtonElement).click());
-    act(() => button("管理连接").click());
+    act(() => button("连接新电脑").click());
     expect(onSettings).toHaveBeenCalledTimes(1);
   });
 

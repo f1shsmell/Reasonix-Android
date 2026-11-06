@@ -18,7 +18,7 @@ import {
   saveFleet,
 } from "../net/server";
 import { connectRelay, ensureRelay } from "../net/relay";
-import { openRuntime } from "../net/workspaces";
+import { closeRuntime, openRuntime } from "../net/workspaces";
 import { submit } from "../net/submit";
 import { startTurnNotification } from "../native/turn";
 import { loadTree } from "../net/tree";
@@ -34,6 +34,16 @@ import type { NetworkStatus } from "../net/network";
  * exercised through the real components: a project row opens a conversation
  * list, and a conversation row opens a chat. The chat itself is a stub.
  */
+
+const modelMocks = vi.hoisted(() => ({
+  switchModel: vi.fn<() => Promise<{ ok: true } | { ok: false; code: string }>>(async () => ({ ok: true })),
+  switchEffort: vi.fn<() => Promise<{ ok: true } | { ok: false; code: string }>>(async () => ({ ok: true })),
+}));
+
+vi.mock("../net/models", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../net/models")>();
+  return { ...actual, ...modelMocks };
+});
 
 const connectionMock = vi.hoisted(() => {
   const state = {
@@ -105,6 +115,13 @@ vi.mock("../net/connection", async (importOriginal) => ({
   },
 }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: vi.fn(() => true) } }));
+vi.mock("../native/speech", () => ({
+  speechSupported: () => false,
+  beginSpeechHold: vi.fn(),
+  WAVE_BARS: 14,
+  CANCEL_DISTANCE: 64,
+  FINISH_WAIT_MS: 15_000,
+}));
 const appMock = vi.hoisted(() => ({
   back: null as (() => void) | null,
   state: null as ((state: { isActive: boolean }) => void) | null,
@@ -182,7 +199,7 @@ vi.mock("../net/server", () => ({
   },
 }));
 vi.mock("../net/tree", () => ({ loadTree: vi.fn(), DEFAULT_TREE_LIMIT: 60 }));
-vi.mock("../net/workspaces", () => ({ openRuntime: vi.fn() }));
+vi.mock("../net/workspaces", () => ({ openRuntime: vi.fn(), closeRuntime: vi.fn(async () => ({ ok: true })) }));
 vi.mock("../net/submit", () => ({ submit: vi.fn() }));
 vi.mock("../native/turn", () => ({
   startTurnNotification: vi.fn(),
@@ -324,6 +341,7 @@ afterEach(() => {
   root = null;
   container.remove();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function settle(): Promise<void> {
@@ -462,7 +480,7 @@ describe("App", () => {
     // The settings screen mounts and unmounts around a live link. Neither the
     // visit nor the return may change the connection on its own.
     await renderApp();
-    click("连接与账号");
+    click("设置");
     await settle();
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
 
@@ -875,9 +893,7 @@ describe("App", () => {
     click("←");
     expect(container.querySelectorAll(".project")).toHaveLength(2);
     expect(container.querySelectorAll(".session")).toHaveLength(0);
-    expect(container.querySelector('button[role="tab"][aria-selected="true"]')?.textContent).toBe(
-      "项目",
-    );
+    expect(container.querySelector(".tabbar button.on")?.textContent?.trim()).toBe("项目");
   });
 
   it("opens a fresh conversation in the project from its list", async () => {
@@ -897,12 +913,10 @@ describe("App", () => {
   it("dispatches a task from home and watches it in the background", async () => {
     await renderApp();
 
-    act(() => {
-      (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
-    });
-    const sheet = container.querySelector(".dispatch-sheet");
-    expect(sheet).toBeTruthy();
-    const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+    act(() => click("派发"));
+    const page = container.querySelector(".dispatch-page");
+    expect(page).toBeTruthy();
+    const prompt = page?.querySelector(".dispatch-input") as HTMLTextAreaElement;
     act(() => typeIntoArea(prompt, "修复登录白屏\n顺便跑测试"));
     act(() => click("派发"));
     await settle();
@@ -915,8 +929,100 @@ describe("App", () => {
       root: "/work/app",
       runtimeId: "r9",
     });
-    expect(container.querySelector(".dispatch-sheet")).toBeNull();
+    expect(container.querySelector(".dispatch-page")).toBeNull();
     expect(container.querySelector('[data-testid="chat"]')).toBeNull();
+  });
+
+  it("applies the dispatch's model and effort before submitting", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/models")) {
+          return new Response(
+            JSON.stringify({
+              models: [
+                {
+                  ref: "demo/demo-flash",
+                  provider: "demo",
+                  model: "demo-flash",
+                  displayName: "Demo Flash",
+                  active: true,
+                  default: true,
+                  efforts: ["auto", "low", "high"],
+                  effort: "auto",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    await renderApp();
+    click("派发");
+    const page = container.querySelector(".dispatch-page") as Element;
+    act(() => {
+      (page.querySelector('[aria-label="切换模型与思考等级"]') as HTMLButtonElement).click();
+    });
+    await settle();
+    click("高");
+    click("完成");
+    const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
+    act(() => typeIntoArea(prompt, "跑一下测试"));
+    act(() => click("派发"));
+    await settle();
+
+    expect(modelMocks.switchModel).toHaveBeenCalledWith("/rt/r9", "demo/demo-flash");
+    expect(modelMocks.switchEffort).toHaveBeenCalledWith("/rt/r9", "high");
+    expect(submit).toHaveBeenCalledWith("/rt/r9", "跑一下测试");
+  });
+
+  it("closes the pane it just opened when the model switch fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/models")) {
+          return new Response(
+            JSON.stringify({
+              models: [
+                {
+                  ref: "demo/demo-flash",
+                  provider: "demo",
+                  model: "demo-flash",
+                  displayName: "Demo Flash",
+                  active: true,
+                  default: true,
+                  efforts: ["auto", "low", "high"],
+                  effort: "auto",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    modelMocks.switchModel.mockResolvedValueOnce({ ok: false, code: "model.busy" });
+    await renderApp();
+    click("派发");
+    const page = container.querySelector(".dispatch-page") as Element;
+    act(() => {
+      (page.querySelector('[aria-label="切换模型与思考等级"]') as HTMLButtonElement).click();
+    });
+    await settle();
+    click("完成");
+    const prompt = page.querySelector(".dispatch-input") as HTMLTextAreaElement;
+    act(() => typeIntoArea(prompt, "跑一下测试"));
+    act(() => click("派发"));
+    await settle();
+
+    expect(closeRuntime).toHaveBeenCalledWith("r9");
+    expect(submit).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("换模型失败");
   });
 
   it("refreshes the pane snapshot after a dispatch, so home can show it", async () => {
@@ -930,11 +1036,9 @@ describe("App", () => {
     // the dispatch adds.
     connectionMock.refresh.mockClear();
 
-    act(() => {
-      (container.querySelector('[aria-label="派任务"]') as HTMLButtonElement).click();
-    });
-    const sheet = container.querySelector(".dispatch-sheet");
-    const prompt = sheet?.querySelector(".dispatch-prompt") as HTMLTextAreaElement;
+    act(() => click("派发"));
+    const page = container.querySelector(".dispatch-page");
+    const prompt = page?.querySelector(".dispatch-input") as HTMLTextAreaElement;
     act(() => typeIntoArea(prompt, "跑一下测试"));
     act(() => click("派发"));
     await settle();
@@ -944,25 +1048,6 @@ describe("App", () => {
     // submit cannot carry the pane the submit created.
     const read = connectionMock.refresh.mock.invocationCallOrder[0] ?? Infinity;
     expect(read).toBeGreaterThan(vi.mocked(submit).mock.invocationCallOrder[0] ?? -1);
-  });
-
-  it("starts a new conversation from the home plus after choosing a project", async () => {
-    await renderApp();
-    click("新建会话");
-    const sheet = container.querySelector(".sheet");
-    expect(sheet).toBeTruthy();
-    expect(sheet?.textContent).toContain("在哪个项目新建");
-
-    await act(async () => {
-      const pick = Array.from(sheet?.querySelectorAll(".project") ?? []).find((candidate) =>
-        candidate.textContent?.includes("app"),
-      );
-      (pick as HTMLButtonElement).click();
-    });
-    await settle();
-
-    expect(openRuntime).toHaveBeenCalledWith("/work/app");
-    expect(container.querySelector('[data-testid="chat"]')?.textContent).toContain("r9");
   });
 
   it("starts a new conversation in the chat's own project", async () => {
@@ -985,7 +1070,7 @@ describe("App", () => {
 
   it("opens settings over the list and closes them without losing the list", async () => {
     await renderApp();
-    click("连接与账号");
+    click("设置");
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
 
     click("close");
@@ -995,7 +1080,7 @@ describe("App", () => {
   it("uses Android back to close settings, then a chat, then a project, then exits", async () => {
     await renderApp();
 
-    click("连接与账号");
+    click("设置");
     await settle();
     expect(container.querySelector('[data-testid="connect"]')).toBeTruthy();
     act(() => appMock.back?.());

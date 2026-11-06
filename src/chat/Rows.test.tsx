@@ -97,20 +97,6 @@ describe("AskCard", () => {
     expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["葡萄"] });
   });
 
-  it("makes a question with no options answerable through the same box", () => {
-    const onAnswer = vi.fn();
-    const row = askRow();
-    row.ask.questions[0]!.options = [];
-    render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
-
-    act(() => byText("其他").click());
-    const input = container.querySelector('input[aria-label="其他回答"]') as HTMLInputElement;
-    act(() => typeInto(input, "都可以"));
-    act(() => byText("确认").click());
-
-    expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["都可以"] });
-  });
-
   it("lets a single-choice pick carry an optional note", () => {
     const onAnswer = vi.fn();
     render(<AskCard row={askRow()} handlers={{ ...noop, onAnswer }} />);
@@ -198,12 +184,99 @@ describe("AskCard", () => {
     render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
 
     act(() => byText("a").click());
-    expect(byText("确认").disabled).toBe(true);
+    act(() => byText("下一题 (1/2)").click());
+    expect(byText("还有 1 题未答").disabled).toBe(true);
+    expect(container.textContent).toContain("1/2 已答");
 
     act(() => byText("b").click());
-    act(() => byText("确认").click());
+    act(() => byText("提交 2 个回答").click());
 
     expect(onAnswer).toHaveBeenCalledWith("ask-1", { q1: ["a"], q2: ["b"] });
+  });
+
+  it("answers a mixed MCP form of free text and choices", () => {
+    const onAnswer = vi.fn();
+    const row = askRow();
+    row.ask.questions = [
+      {
+        id: "name",
+        header: "姓名",
+        prompt: "怎么称呼？",
+        reason: "missing_value",
+        options: [],
+      },
+      {
+        id: "env",
+        header: "环境",
+        prompt: "部署到哪？",
+        options: [{ label: "prod" }, { label: "dev" }],
+      },
+    ];
+    render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
+
+    const free = container.querySelector(".prompt.wizard .ask-extra") as HTMLInputElement;
+    expect(free).toBeTruthy();
+    expect(container.textContent).not.toContain("其他 —— 自行填写");
+    act(() => typeInto(free, "Alice"));
+    act(() => byText("下一题 (1/2)").click());
+    act(() => byText("prod").click());
+    act(() => byText("提交 2 个回答").click());
+
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { name: ["Alice"], env: ["prod"] });
+  });
+
+  it("draws a free-text-only MCP field as an input, not as an other option", () => {
+    const onAnswer = vi.fn();
+    const row = askRow();
+    row.ask.questions = [
+      { id: "name", header: "姓名", prompt: "怎么称呼？", options: [] },
+    ];
+    render(<AskCard row={row} handlers={{ ...noop, onAnswer }} />);
+
+    expect(container.querySelector(".choices")).toBeNull();
+    expect(container.textContent).not.toContain("其他 —— 自行填写");
+    const field = container.querySelector(".question .ask-extra") as HTMLInputElement;
+    expect(field).toBeTruthy();
+    act(() => typeInto(field, "Alice"));
+    act(() => byText("确认").click());
+
+    expect(onAnswer).toHaveBeenCalledWith("ask-1", { name: ["Alice"] });
+  });
+
+  it("refuses a mixed surface and option ask instead of dropping the choices", () => {
+    const row = askRow();
+    row.ask.questions = [
+      {
+        id: "form",
+        header: "表单",
+        prompt: "表单",
+        options: [],
+        surface: { spec_version: 1, body: [{ kind: "text", value: "body" }] },
+      },
+      { id: "choice", header: "选项", prompt: "选项", options: [{ label: "a" }] },
+    ];
+    render(<AskCard row={row} handlers={noop} />);
+
+    expect(container.textContent).toContain("无法提交");
+    expect(container.textContent).not.toContain("body");
+    expect(container.querySelector(".choices")).toBeNull();
+  });
+
+  it("jumps to the first missing question when the last one is answered", () => {
+    const row = askRow();
+    row.ask.questions = [
+      { id: "q1", header: "one", prompt: "one", options: [{ label: "a" }] },
+      { id: "q2", header: "two", prompt: "two", options: [{ label: "b" }] },
+    ];
+    render(<AskCard row={row} handlers={noop} />);
+
+    act(() => byText("下一题 (1/2)").click());
+    act(() => byText("b").click());
+    const jump = byText("去补 1 题");
+    expect(jump.disabled).toBe(false);
+    act(() => jump.click());
+    expect(container.textContent).toContain("one");
+    expect(byText("下一题 (1/2)")).toBeTruthy();
   });
 
   it("offers no buttons once it is settled, and says what was picked", () => {

@@ -9,7 +9,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TouchEvent as ReactTouchEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
 import { onNetworkChange } from "../native/networkWatch";
@@ -76,6 +75,14 @@ import {
 } from "../native/turn";
 import type { BackgroundStatus } from "../native/turn";
 import { THEME_CHOICES, applyTheme, loadTheme, saveTheme } from "./theme";
+import { UI_STYLE_CHOICES, applyUiStyle, loadUiStyle, saveUiStyle } from "./uiStyle";
+import {
+  DISPATCH_AFTER_CHOICES,
+  loadDispatchAfter,
+  saveDispatchAfter,
+} from "./dispatchPref";
+import type { DispatchAfter } from "./dispatchPref";
+import type { UiStyle } from "./uiStyle";
 import type { ThemeChoice } from "./theme";
 import { hapticSample, loadSurfaceChoice, loadHaptics, saveHapticSurface, saveHaptics } from "./haptics";
 import { Switch } from "./Switch";
@@ -89,7 +96,6 @@ import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
 import type { NotificationPrefs } from "./notifyPref";
-import { swipeDirection } from "./swipe";
 import { useUpdater } from "./useUpdater";
 import { UpdateRow } from "./UpdateRow";
 import { STUDIO_MIN_CHROME, chromeMajor, needsStudioUpgrade } from "./webviewCompat";
@@ -140,7 +146,7 @@ function signInFailureText(failure: unknown): string {
 
 /** The three settings panes, in swipe order. */
 const PANE_OPTIONS = [
-  { value: "connect", label: "电脑" },
+  { value: "connect", label: "连接" },
   { value: "account", label: "账号" },
   { value: "prefs", label: "偏好" },
 ] as const;
@@ -208,6 +214,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   /** The device code is approved; the poll behind this screen is finishing. */
   const [approved, setApproved] = useState(false);
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
+  const [uiStyle, setUiStyleState] = useState<UiStyle>(() => loadUiStyle());
+  const [dispatchAfter, setDispatchAfterState] = useState<DispatchAfter>(() => loadDispatchAfter());
   const [fold, setFold] = useState<FoldMode>(() => loadFoldMode());
   /** The transcript's reading text size; applied to the root like the theme. */
   const [chatFont, setChatFont] = useState<ChatFont>(() => loadChatFont());
@@ -235,6 +243,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [background, setBackground] = useState<BackgroundStatus | null>(null);
   /** The first cloud connection to a device waits here for the person. */
   const [trustAsk, setTrustAsk] = useState<TrustPrompt | null>(null);
+  /** The saved door whose × was tapped; removal waits for this sheet. */
+  const [forgetAsk, setForgetAsk] = useState<{
+    row: SavedConnection;
+    name: string;
+    detail: string;
+    door: boolean;
+  } | null>(null);
   /** The device whose pin no longer matches; the error offers to start over. */
   const [retrust, setRetrust] = useState<string | null>(null);
   /** What a manual attempt is aiming at, before the proxy has switched. */
@@ -242,8 +257,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const trustResolve = useRef<((accepted: boolean) => void) | null>(null);
   /** The scroll container; switching panes starts at the top, not mid-page. */
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  /** Where a touch began, for the sideways swipe between panes. */
-  const paneTouch = useRef<{ x: number; y: number; owned: boolean } | null>(null);
 
   const choosePane = useCallback(
     (next: Pane) => {
@@ -257,52 +270,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     },
     [pane],
   );
-
-  /**
-   * A sideways drag between settings panes.
-   *
-   * The drag is judged on release, after the vertical scroll has had its
-   * chance, so a list flick never changes pane. A touch that began in a text
-   * field or on a sheet belongs to that control, not to the page.
-   */
-  const onPaneTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
-    // A fresh gesture is never the tail of a drag, so the flag a finished drag
-    // leaves behind is cleared here rather than inside the hook.
-    savedDrag.swallowSwipe.current = false;
-    const start = event.touches[0];
-    if (!start) return;
-    const target = event.target as Element | null;
-    const owned =
-      target !== null && typeof target.closest === "function"
-        ? target.closest("input, textarea, select, .sheet-backdrop") !== null
-        : false;
-    paneTouch.current = { x: start.clientX, y: start.clientY, owned };
-  };
-
-  const onPaneTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
-    const start = paneTouch.current;
-    paneTouch.current = null;
-    // A drag that reordered the saved list ends with the same `touchend` a
-    // sideways pane swipe would: letting it through would switch panes while
-    // the person was arranging their computers.
-    if (savedDrag.swallowSwipe.current) {
-      savedDrag.swallowSwipe.current = false;
-      return;
-    }
-    if (!start || start.owned) return;
-    const end = event.changedTouches[0];
-    if (!end) return;
-    const direction = swipeDirection({
-      startX: start.x,
-      startY: start.y,
-      endX: end.clientX,
-      endY: end.clientY,
-    });
-    if (direction === 0) return;
-    const index = PANE_OPTIONS.findIndex((option) => option.value === pane);
-    const next = PANE_OPTIONS[index + direction];
-    if (next) choosePane(next.value);
-  };
 
   const confirmTrust = useCallback(
     (prompt: TrustPrompt) =>
@@ -436,6 +403,17 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     applyTheme(choice);
   }, []);
 
+  const pickUiStyle = useCallback((style: UiStyle) => {
+    setUiStyleState(style);
+    saveUiStyle(style);
+    applyUiStyle(style);
+  }, []);
+
+  const pickDispatchAfter = useCallback((after: DispatchAfter) => {
+    setDispatchAfterState(after);
+    saveDispatchAfter(after);
+  }, []);
+
   const pickFold = useCallback((mode: FoldMode) => {
     setFold(mode);
     saveFoldMode(mode);
@@ -530,7 +508,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           if (!(await restore(next))) onFailed?.(failure);
           setError(
             `连上了地址，但读不到会话：${failure.message}` +
-              (previous?.vpn ? " 检测到 VPN/代理，可在「电脑」页改代理策略。" : ""),
+              (previous?.vpn ? " 检测到 VPN/代理，可在「连接」页改代理策略。" : ""),
           );
           return false;
         }
@@ -617,8 +595,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         } else if (failureCode === "device.pair_unreachable" || failureCode === "proxy.upstream_unreachable") {
           // A network failure does not spend the code; keep it for the retry.
           setError(
-            "到不了这台电脑：确认在同一 Wi-Fi，且用二维码里的地址。" +
-              (previous?.vpn ? " 检测到 VPN/代理，可在「电脑」页改代理策略。" : ""),
+            "到不了这台电脑：确认在同一 Wi-Fi、电脑上的 Studio 正在运行，并允许它通过防火墙。" +
+              (previous?.vpn ? " 检测到 VPN/代理，可在「连接」页改代理策略。" : ""),
           );
         } else {
           setError(`没连上：${failureCode}`);
@@ -1033,6 +1011,24 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     [config],
   );
 
+  /**
+   * Remove the door the sheet names, and only then.
+   *
+   * The × is a destructive control sitting next to a row whose main tap
+   * switches computers, so a mis-touch must not unrecord a working route.
+   */
+  const settleForget = useCallback(
+    (confirmed: boolean) => {
+      const ask = forgetAsk;
+      setForgetAsk(null);
+      if (!ask || !confirmed) return;
+      const wasHere = current(ask.row);
+      forgetDoor(ask.row);
+      if (wasHere) void disconnect();
+    },
+    [current, disconnect, forgetAsk, forgetDoor],
+  );
+
   const known = config?.origin ?? "";
   /**
    * The addresses this phone can reach without going through a tunnel.
@@ -1117,10 +1113,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       ? devices.find((device) => device.id === config.relayDevice)?.name
       : undefined;
   const spare = config ? config.candidates.length - 1 : 0;
+  const connectedGroup = groups.find(groupHere);
   const connectedName =
     config?.mode === "relay"
       ? (relayName ?? currentEntry?.name ?? "云端电脑")
-      : known || currentEntry?.name || "连接你的电脑";
+      : connectedGroup?.machine
+        ?? currentEntry?.machine
+        ?? currentEntry?.name
+        ?? (known ? "电脑" : "连接你的电脑");
   const connectedDetail =
     config?.mode === "relay"
       ? "云端 · Reasonix 账号"
@@ -1169,12 +1169,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   };
 
   return (
-    <div
-      className="connect"
-      ref={scrollRef}
-      onTouchStart={onPaneTouchStart}
-      onTouchEnd={onPaneTouchEnd}
-    >
+    <div className="connect" ref={scrollRef}>
       <div className="settings-bar">
         <header className="settings-head">
           {onClose ? (
@@ -1365,11 +1360,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                           type="button"
                           className="saved-forget"
                           aria-label={`移除 ${label}`}
-                          onClick={() => {
-                            const wasHere = groupHere(group);
-                            forgetDoor(door);
-                            if (wasHere) void disconnect();
-                          }}
+                          onClick={() =>
+                            setForgetAsk({
+                              row: door,
+                              name: label,
+                              detail: groupDetail(group, door),
+                              door: false,
+                            })
+                          }
                         >
                           ×
                         </button>
@@ -1391,10 +1389,14 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                                 type="button"
                                 className="saved-forget"
                                 aria-label={`移除 ${doorDetail(row)}`}
-                                onClick={() => {
-                                  forgetDoor(row);
-                                  if (rowHere) void disconnect();
-                                }}
+                                onClick={() =>
+                                  setForgetAsk({
+                                    row,
+                                    name: doorLabel(row),
+                                    detail: doorDetail(row),
+                                    door: true,
+                                  })
+                                }
                               >
                                 ×
                               </button>
@@ -1476,7 +1478,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             onClick={() => void connect(origin, pairCode)}
             disabled={busy !== "" || !origin.trim()}
           >
-            {busy === "正在连接" ? "正在连接…" : "连接"}
+            {busy === "正在连接" ? "正在连接…" : "连接这台电脑"}
           </button>
         </details>
 
@@ -1513,7 +1515,16 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           <div className="setting">
             <span className="setting-title">主题</span>
             <Segmented
-              ariaLabel="主题"
+              ariaLabel="主题风格"
+              value={uiStyle}
+              options={UI_STYLE_CHOICES}
+              onChange={pickUiStyle}
+            />
+          </div>
+          <div className="setting">
+            <span className="setting-title">明暗</span>
+            <Segmented
+              ariaLabel="明暗"
               value={theme}
               options={THEME_CHOICES}
               onChange={pickTheme}
@@ -1591,6 +1602,19 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               />
             </div>
           ) : null}
+        </section>
+
+        <p className="group-label">派发</p>
+        <section className="group">
+          <div className="setting">
+            <span className="setting-title">派发后</span>
+            <Segmented
+              ariaLabel="派发后跳转"
+              value={dispatchAfter}
+              options={DISPATCH_AFTER_CHOICES}
+              onChange={pickDispatchAfter}
+            />
+          </div>
         </section>
 
         {Capacitor.isNativePlatform() && onNotifyPrefChange ? (
@@ -1864,6 +1888,39 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           </>
         ) : null}
       </div>
+
+      {forgetAsk ? (
+        <div className="sheet-backdrop" role="presentation" onClick={() => settleForget(false)}>
+          <div
+            className="sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forget-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sheet-head">
+              <h2 id="forget-title">{forgetAsk.door ? "移除这个地址？" : "移除这台电脑？"}</h2>
+            </div>
+            <p className="trust-device">{forgetAsk.name}</p>
+            <p className="group-note">{forgetAsk.detail}</p>
+            <p className="group-note">
+              只删除手机上的连接记录；电脑上的 Studio、会话和账号都不受影响。以后再连需要重新配对。
+            </p>
+            <ul className="sheet-actions">
+              <li>
+                <button type="button" className="danger" onClick={() => settleForget(true)}>
+                  移除
+                </button>
+              </li>
+              <li>
+                <button type="button" onClick={() => settleForget(false)}>
+                  取消
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      ) : null}
 
       {trustAsk ? (
         <div className="sheet-backdrop" role="presentation" onClick={() => settleTrust(false)}>

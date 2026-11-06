@@ -57,3 +57,22 @@ export async function openRuntime(root: string, sessionPath?: string): Promise<R
     return { ok: false, code: "client.offline" };
   }
 }
+
+export type RuntimeClose = { ok: true } | { ok: false; code: string };
+
+/** Close a pane this phone opened; used when a dispatch cannot be sent. */
+export async function closeRuntime(id: string): Promise<RuntimeClose> {
+  const target = id.trim();
+  if (!target) return { ok: false, code: "client.empty_id" };
+  try {
+    const response = await fetchWithTimeout(
+      `/runtimes/${encodeURIComponent(target)}/close`,
+      { method: "POST", credentials: "same-origin" },
+      10_000,
+    );
+    if (!response.ok) return { ok: false, code: await failureCode(response) };
+    return { ok: true };
+  } catch {
+    return { ok: false, code: "client.offline" };
+  }
+}

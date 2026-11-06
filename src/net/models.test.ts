@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { currentModel, effortChoices, effortDisplayName, loadModels, modelShortName, switchEffort, switchModel } from "./models";
+import { currentModel, effortChoices, effortDisplayName, loadGlobalModels, loadModels, modelShortName, switchEffort, switchModel } from "./models";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -240,5 +240,61 @@ describe("effortDisplayName", () => {
     expect(effortDisplayName("medium")).toBe("中");
     expect(effortDisplayName("max")).toBe("最高");
     expect(effortDisplayName("turbo")).toBe("turbo");
+  });
+});
+
+describe("loadGlobalModels", () => {
+  it("reads the machine catalog before a pane exists", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      json({
+        models: [
+          {
+            ref: "demo/demo-flash",
+            provider: "demo",
+            model: "demo-flash",
+            displayName: "Demo Flash",
+            active: true,
+            default: true,
+            efforts: ["auto", "low", "high"],
+            effort: "auto",
+            contextWindow: 128000,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await loadGlobalModels();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/models?answers=chat",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      catalog: {
+        current: "demo/demo-flash",
+        label: "Demo Flash",
+        default: "demo/demo-flash",
+        models: [
+          {
+            ref: "demo/demo-flash",
+            provider: "demo",
+            model: "demo-flash",
+            displayName: "Demo Flash",
+            active: true,
+            default: true,
+            efforts: ["auto", "low", "high"],
+            effort: "auto",
+            contextWindow: 128000,
+          },
+        ],
+      },
+    });
+  });
+
+  it("reports a refusal as its code", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ code: "client.offline" }, 502)));
+    expect(await loadGlobalModels()).toEqual({ ok: false, code: "client.offline" });
   });
 });

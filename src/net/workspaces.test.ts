@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openRuntime } from "./workspaces";
+import { closeRuntime, openRuntime } from "./workspaces";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -61,5 +61,27 @@ describe("openRuntime", () => {
   it("reports a runtime it cannot draw instead of opening a blank chat", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ id: "r9" })));
     await expect(openRuntime("/work/app")).resolves.toEqual({ ok: false, code: "runtime.shape" });
+  });
+});
+
+describe("closeRuntime", () => {
+  it("posts the pane's close route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(closeRuntime(" r9 ")).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/runtimes/r9/close",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    );
+  });
+
+  it("keeps a refusal code and refuses an empty id", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ code: "runtime.gone" }, 404)));
+    await expect(closeRuntime("r9")).resolves.toEqual({ ok: false, code: "runtime.gone" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(closeRuntime("  ")).resolves.toEqual({ ok: false, code: "client.empty_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

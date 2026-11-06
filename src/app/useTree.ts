@@ -8,8 +8,8 @@
  *
  * The read is not a subscription. The kernel's `GET /tree/events` stream exists
  * for the desktop sidebar; a phone that sat on it would spend the battery on a
- * list nobody is watching. Pull-to-refresh and the refresh button are the
- * contract here.
+ * list nobody is watching. Pull-to-refresh is the manual contract here;
+ * returning to the foreground and writes that change the tree re-read it.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

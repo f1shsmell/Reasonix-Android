@@ -11,6 +11,8 @@ const VERSION_KEY = "reasonix.settings.version";
 const VERSION = 1;
 
 export type ThemeChoice = "auto" | "light" | "dark";
+export type UiStyle = "paper" | "studio";
+export type DispatchAfter = "stay" | "recent" | "session";
 export type EnterPref = "send" | "newline";
 export type NetPolicy = "auto" | "bypass" | "system";
 export type ChatFont = "sm" | "standard" | "lg" | "xl";
@@ -26,6 +28,8 @@ export interface NotificationPrefs {
 
 export const SETTINGS_DEFAULTS = {
   theme: "auto",
+  uiStyle: "paper",
+  dispatchAfter: "recent",
   enter: "newline",
   netPolicy: "auto",
   chatFont: "standard",
@@ -38,6 +42,8 @@ export const SETTINGS_DEFAULTS = {
 
 export const SETTINGS_KEYS = {
   theme: "reasonix.theme",
+  uiStyle: "reasonix.ui-style",
+  dispatchAfter: "reasonix.dispatch-after",
   enter: "reasonix.enter",
   netPolicy: "reasonix.net-policy",
   chatFont: "reasonix.chat-font.v1",
