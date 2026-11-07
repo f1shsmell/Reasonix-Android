@@ -522,6 +522,36 @@ describe("transcript", () => {
     const tool = result.rows[1];
     expect(tool?.kind === "tool" ? tool.reasoning : undefined).toBeUndefined();
   });
+
+  it("names a proxied call by the target the kernel resolved", () => {
+    const result = feed([
+      {
+        kind: "tool_dispatch",
+        tool: {
+          id: "c1",
+          name: "use_capability",
+          resolvedName: "browser_open",
+          args: '{"action":"call","id":"tool:browser"}',
+        },
+      },
+    ]);
+
+    const tool = result.rows[0];
+    expect(tool?.kind === "tool" ? tool.name : "").toBe("browser_open");
+  });
+
+  it("takes the target name from the result when the dispatch did not carry it", () => {
+    const result = feed([
+      { kind: "tool_dispatch", tool: { id: "c1", name: "use_capability" } },
+      {
+        kind: "tool_result",
+        tool: { id: "c1", name: "use_capability", resolvedName: "setting", output: "ok" },
+      },
+    ]);
+
+    const tool = result.rows[0];
+    expect(tool?.kind === "tool" ? tool.name : "").toBe("setting");
+  });
 });
 
 

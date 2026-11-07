@@ -38,6 +38,45 @@ const TOOL_LABELS: Record<string, string> = {
   // prose back by page. Both belong to the 子任务 family.
   spawn_agents: "派发子任务",
   read_subagent_result: "读取子任务结果",
+  // Background shells: one call starts a job, these read it, wait on it or end it.
+  bash_output: "读取后台输出",
+  kill_shell: "结束后台任务",
+  wait: "等待后台任务",
+  view_image: "查看图片",
+  read_video: "查看视频",
+  multi_edit: "修改文件",
+  move_file: "移动文件",
+  notebook_edit: "修改笔记本",
+  delete_range: "删除代码",
+  delete_symbol: "删除代码",
+  browser_open: "打开网页",
+  browser_read: "读取网页",
+  browser_act: "操作网页",
+  computer_read: "查看屏幕",
+  computer_act: "操作电脑",
+  present_files: "交付文件",
+  render_chart: "生成图表",
+  render_surface: "生成界面",
+  submit_plan: "提交计划",
+  update_goal: "更新目标",
+  compress: "压缩上下文",
+  context_budget: "查看上下文余量",
+  ask: "提问",
+  await_user: "等待你",
+  conclude_no_changes: "收尾",
+  read_session: "读取会话",
+  list_sessions: "列出会话",
+  dispatch_to_project: "派发到项目",
+  send_peer_message: "发送会话消息",
+  list_peers: "查看会话",
+  open_projects: "打开项目",
+  setting: "修改设置",
+  recall: "检索记忆",
+  code_index: "建立代码索引",
+  import_web_image: "保存网页图片",
+  read_mcp_resource: "读取 MCP 资源",
+  // Stable proxy name: the target is drawn from `resolvedName` when present.
+  use_capability: "按需调用工具",
 };
 
 export type ToolCategory =
@@ -59,6 +98,8 @@ export function toolCategory(name: string): ToolCategory {
     case "read_file":
     case "view_file":
     case "read_image":
+    case "view_image":
+    case "read_video":
       return "read";
     case "grep":
     case "content_search":
@@ -73,22 +114,40 @@ export function toolCategory(name: string): ToolCategory {
     case "run_command":
     case "pwsh":
     case "write_stdin":
+    case "bash_output":
+    case "kill_shell":
+    case "wait":
       return "command";
     case "write_file":
     case "edit_file":
     case "apply_patch":
     case "str_replace_editor":
+    case "multi_edit":
+    case "move_file":
+    case "notebook_edit":
+    case "delete_range":
+    case "delete_symbol":
       return "edit";
     case "web_search":
       return "web";
     case "fetch":
     case "web_fetch":
+    case "browser_open":
+    case "browser_read":
+    case "import_web_image":
       return "fetch";
     case "todo_write":
     case "complete_step":
+    case "submit_plan":
+    case "update_goal":
+    case "compress":
+    case "context_budget":
+    case "conclude_no_changes":
       return "task";
     case "ask_user_question":
     case "request_user_input":
+    case "ask":
+    case "await_user":
       return "ask";
     case "spawn_agents":
     case "read_subagent_result":
@@ -155,6 +214,17 @@ export function toolSummary(row: ToolRow): string {
           if (typeof task.title === "string" && task.title.trim()) return oneLine(task.title);
           if (typeof task.task === "string" && task.task.trim()) return oneLine(task.task);
         }
+      }
+      // A proxied call's own arguments are nested under `arguments`; read those
+      // rather than draw the envelope's `action` ("call") as the summary.
+      const capability = object.capability_id;
+      if (typeof capability === "string" && capability.trim()) {
+        const nested = object.arguments;
+        if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+          const inner = toolSummary({ ...row, args: JSON.stringify(nested) });
+          if (inner) return inner;
+        }
+        return oneLine(capability);
       }
       const first = Object.values(object).find(
         (value): value is string => typeof value === "string" && value.trim() !== "",

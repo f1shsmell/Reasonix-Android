@@ -359,6 +359,46 @@ describe("ApprovalCard", () => {
     expect(container.textContent).toContain("这一轮已结束");
     expect(buttons()).toHaveLength(0);
   });
+
+  it("shows the steps a plan approval would start", () => {
+    const row = approvalRow();
+    row.approval.kind = "plan";
+    row.approval.subject = "";
+    row.approval.input = {
+      todos: [
+        { content: "读取内核差异", status: "in_progress" },
+        { content: "补充测试", status: "pending", level: 1 },
+      ],
+    };
+    render(<ApprovalCard row={row} handlers={noop} />);
+
+    expect(container.textContent).toContain("批准这份计划？");
+    expect(container.textContent).toContain("将执行 2 个步骤");
+    expect(container.textContent).toContain("读取内核差异");
+    expect(container.textContent).toContain("补充测试");
+    expect(container.querySelector('.plan-steps li[data-level="1"]')?.textContent).toContain(
+      "补充测试",
+    );
+  });
+
+  it("does not draw a tool call's arguments as plan steps", () => {
+    const row = approvalRow();
+    row.approval.input = { todos: [{ content: "不是计划", status: "pending" }] };
+    render(<ApprovalCard row={row} handlers={noop} />);
+
+    expect(container.textContent).not.toContain("将执行");
+    expect(container.textContent).not.toContain("不是计划");
+  });
+
+  it("leaves a malformed plan payload to the rest of the card", () => {
+    const row = approvalRow();
+    row.approval.kind = "plan";
+    row.approval.input = { todos: "not a list" };
+    render(<ApprovalCard row={row} handlers={noop} />);
+
+    expect(container.textContent).not.toContain("将执行");
+    expect(buttons().length).toBeGreaterThan(0);
+  });
 });
 
 function toolRow(overrides: Partial<ToolRow> = {}): ToolRow {

@@ -410,12 +410,18 @@ export function markAnsweredSurface(transcript: Transcript, askId: string): Tran
   return changed ? { ...transcript, rows } : transcript;
 }
 
+/** The name a row shows: a proxy's real target when the kernel names it. */
+function displayToolName(tool: WireTool): string {
+  const resolved = tool.resolvedName?.trim();
+  return resolved ? resolved : tool.name;
+}
+
 function toolRow(tool: WireTool, fallbackId: string, running: boolean): ToolRow {
   const base: ToolRow = {
     kind: "tool",
     // The kernel's own id when it has one: a result pairs against it.
     id: tool.id !== undefined && tool.id !== "" ? tool.id : fallbackId,
-    name: tool.name,
+    name: displayToolName(tool),
     outputDiff: tool.outputDiff === true,
     readOnly: tool.readOnly === true,
     running,
@@ -596,6 +602,8 @@ export function reduce(
         if (existing !== undefined && existing.kind === "tool") {
           const done: ToolRow = {
             ...existing,
+            // A result may be the first frame that names a proxy's target.
+            name: tool.resolvedName?.trim() ? displayToolName(tool) : existing.name,
             running: false,
             outputDiff: tool.outputDiff === true,
             readOnly: tool.readOnly === true,

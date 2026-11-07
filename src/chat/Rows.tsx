@@ -12,6 +12,7 @@ import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } f
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { SurfaceCard } from "./SurfaceCard";
+import { approvalPlanSteps } from "./planApproval";
 import { clockText } from "../app/format";
 import { kernelTransport } from "../net/transport";
 
@@ -609,13 +610,35 @@ export function ApprovalCard({
   handlers: PromptHandlers;
 }) {
   const approval = row.approval;
+  const steps = approvalPlanSteps(approval);
+  const title =
+    approval.kind === "plan" ? approval.subject || "批准这份计划？" : approval.subject;
   return (
     <div className="row prompt">
-      <div className="q">{approval.subject}</div>
+      <div className="q">{title}</div>
       {approval.reason ? <div className="why">{approval.reason}</div> : null}
       {approval.reasonCode ? (
         <div className="why">
           <code>{approval.reasonCode}</code>
+        </div>
+      ) : null}
+      {steps.length > 0 ? (
+        <div className="plan-steps">
+          <div className="plan-steps-label">将执行 {steps.length} 个步骤</div>
+          <ol>
+            {steps.map((step, index) => (
+              <li
+                key={`${step.level ?? 0}:${step.content}#${index}`}
+                data-level={step.level ?? 0}
+                className={`plan-step ${step.status}`}
+              >
+                <span className="mark" aria-hidden="true">
+                  {step.status === "completed" ? "✓" : step.status === "in_progress" ? "●" : "○"}
+                </span>
+                <span>{step.content}</span>
+              </li>
+            ))}
+          </ol>
         </div>
       ) : null}
       {row.pending ? (
