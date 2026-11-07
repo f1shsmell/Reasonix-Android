@@ -1,11 +1,11 @@
 {
-  "tag": "v0.3.2",
-  "version": "0.3.2",
-  "versionCode": 22,
-  "apk": "reasonix-for-android-0.3.2.apk",
-  "notes": "# 0.3.2\n\n这一版收掉 0.3.1 遗留的两个操作问题。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 修复\n\n- **选中文字一拖动就变黑**：旧版 Android WebView 不解析 `::selection` 里的 CSS 变量，半透明背景失效，系统就用默认墨色重绘选中的字。现在改用各主题固定的文字色和背景色（暖纸为棕底米白字，深蓝为蓝底白字），拖动选择柄时保持可读。\n- **长按会话后点空白，会打开下面的会话**：关闭操作面板时补了一次性点击拦截。面板关闭后，同一次手势可能补发一个兼容性点击；这个点击会被吞掉，不会落到下面那行。新的按下手势会立即解除拦截，不影响随后正常点按。\n\n## 说明\n\n- 已知限制统一记在\n  [docs/KNOWN_LIMITATIONS.md](https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md)，不写进发布说明。",
+  "tag": "v0.3.3",
+  "version": "0.3.3",
+  "versionCode": 23,
+  "apk": "reasonix-for-android-0.3.3.apk",
+  "notes": "# 0.3.3\n\n这一版把会话的「精简」模式改成了 Qoder 手机版那种只看最终回答的形态，并收掉了一轮连接、缓存和原生层的稳定性问题。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 变更\n\n- **精简模式只留最终回答**：每一段工作先收成一行「已处理 N 个操作」，下面只显示这一轮最终的消息；工具调用、中间说明和思考都折叠在这行里，点开仍能按时间线查看过程。标准、详尽两种模式保持不变。\n- **另一台电脑的决策通知能落到正确的会话**：同一台电脑上同名的 pane、以及多台电脑上的同 id 会话，不会再串到别人的窗口；进程被系统回收后点通知，也会回到对应的会话，而不是没有反应。\n- **连接判定更稳定**：网络检查与后台刷新共用顺序，晚到的旧结果不会覆盖新结果；中继地址格式损坏会立即报错，而不是重试半分钟；被切到后台的电脑列表，在下一次扫描时不会一直停在「未知」。\n\n## 修复\n\n- **冷启动的会话缓存真正生效**：之前磁盘缓存的命中判断在同一个任务里就开始、又立刻结束，缓存始终为空；现在会等所有键返回后再决定，冷启动能先画出上次的内容。\n- **内核拒收的排队/插话不再吞掉输入**：收到 `rejected_*` 回执时保留草稿并说明原因，不再当作已发送而清空。\n- **同一个提问/审批连点两下只提交一次**；被拒绝后按钮仍可重试。\n- **图片预览与语音释放**：离开会话会回收未发送图片的预览 URL；语音还在启动时离开页面，也会放弃这次录音，不会让麦克风一直占用。\n- **重命名时按输入法的回车确认候选词，不再提前提交半个标题**。\n- **拖动排序后的第一次点按生效**，不需要点两下。\n- **长按会话后返回键取消操作面板**，不会连带退出整个设置页。\n- **「最新」按钮不再中断自己的滚动动画**。\n- **计数格式**：999,500 以上显示为 1.0M，不再出现 1000k。\n- **原生资源与安全**：代理响应限制在 16 MB（更大的文件请在系统浏览器打开），响应头会过滤换行注入；账号令牌和代理密钥改用系统 keystore 封装；WebView、FileProvider 和更新检查的资源范围收窄；云决策的 JS 传递会转义 U+2028/U+2029，老 WebView 不再整段失效。\n\n## 说明\n\n- 已知限制统一记在\n  [docs/KNOWN_LIMITATIONS.md](https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md)，不写进发布说明。",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.2/reasonix-for-android-0.3.2.apk",
-    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.2/reasonix-for-android-0.3.2.apk"
+    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.3/reasonix-for-android-0.3.3.apk",
+    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.3/reasonix-for-android-0.3.3.apk"
   ]
 }
