@@ -55,6 +55,17 @@ export type EventKind =
 export interface WireTool {
   id?: string;
   name: string;
+  /**
+   * The real tool behind a stable proxy name, when it differs.
+   *
+   * The kernel keeps `name` as the call the model wrote (`use_capability`) and
+   * names the target here. A reader that shows only `name` draws the proxy
+   * live and the target after a reload, because history already prefers this
+   * field.
+   */
+  resolvedName?: string;
+  /** The capability catalogue id a proxied call acted on. */
+  capabilityId?: string;
   /** The call's arguments, as the model wrote them: a JSON string, not an object. */
   args?: string;
   output?: string;
@@ -143,6 +154,15 @@ export interface WireApproval {
   allowsPersist?: boolean;
   /** `tool` | `plan` | `recovery` */
   kind?: string;
+  /** What approving authorizes beyond this one call, when the host declares it. */
+  scope?: string;
+  /**
+   * The call's arguments when the host attaches them.
+   *
+   * A plan card carries `{"todos":[...]}` — the steps approving starts. A plain
+   * tool call carries none until it declares a scope.
+   */
+  input?: unknown;
 }
 
 export interface WireUsage {

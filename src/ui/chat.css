@@ -867,6 +867,60 @@ html[data-chat-font="xl"] {
   color: var(--fg-dim);
 }
 
+/* A plan card carries the steps approving starts. The list scrolls on its own
+   so a long plan cannot push the allow/refuse buttons off the screen. */
+.plan-steps {
+  max-height: 34vh;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.plan-steps-label {
+  margin-bottom: 4px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-steps ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-steps li {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.plan-steps li[data-level="1"] {
+  padding-left: 16px;
+}
+
+.plan-steps li .mark {
+  flex: none;
+  width: 14px;
+  color: var(--fg-dim);
+}
+
+.plan-steps li.in_progress .mark {
+  color: var(--accent);
+}
+
+.plan-steps li.completed {
+  color: var(--fg-dim);
+}
+
+.plan-steps li.completed .mark {
+  color: var(--ok);
+}
+
 .prompt .choices {
   display: flex;
   flex-direction: column;
@@ -1955,6 +2009,12 @@ html[data-chat-font="xl"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* From 80% the reading is a warning, not a report: the same colour the desktop
+   uses, with no dialog to dismiss. */
+.context-percent.warn {
+  color: var(--warn);
+}
+
 .context-bar {
   display: block;
   height: 6px;
@@ -1969,6 +2029,10 @@ html[data-chat-font="xl"] {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-fill), var(--ok));
   transition: width var(--dur-3) var(--ease-out);
+}
+
+.context-bar.warn i {
+  background: var(--warn);
 }
 
 /* One row per class, the label left and its cost right: a table without the

@@ -34,7 +34,7 @@ function percent(used: number, window: number): number {
  *
  * Kept apart from the fold's wording below: the same 500 means two different
  * things on the two routes, and a read that timed out has nothing to do with
- * summarising anything.
+ * archiving anything.
  */
 function readFailure(code: string): string {
   switch (code) {
@@ -55,7 +55,7 @@ function foldFailure(code: string): string {
     case "client.offline":
       return "连不上电脑，检查连接后重试。";
     case "client.timeout":
-      return "等电脑回应超时。压缩要模型先做一次总结，慢的时候会久一些。";
+      return "等电脑回应超时。归档要写这台电脑的磁盘，稍后重试一次。";
     case "http.409":
       // The kernel answers 409 when the fold was declined — there is nothing
       // worth folding in this transcript. It is not a busy signal: that one
@@ -127,11 +127,12 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
     }
     onCompacted();
     // Re-read rather than guess the new size: the fold's saving depends on what
-    // the summary cost, and only the kernel knows that.
+    // it archived, and only the kernel knows that.
     reload();
   }, [base, busy, onCompacted, reload]);
 
   const used = context ? percent(context.used, context.window) : 0;
+  const warn = context !== null && used >= 80;
   const rows = context
     ? CLASSES.map((entry) => ({
         label: entry.label,
@@ -167,16 +168,17 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
               <span className="context-total">
                 {compactCount(context.used)} / {compactCount(context.window)}
               </span>
-              <span className="context-percent">{used}%</span>
+              <span className={`context-percent${warn ? " warn" : ""}`}>{used}%</span>
             </div>
-            <span className="context-bar" aria-hidden="true">
+            <span className={`context-bar${warn ? " warn" : ""}`} aria-hidden="true">
               <i style={{ width: `${used}%` }} />
             </span>
             <p className="meta sheet-note">
               {context.compactAt > 0
-                ? `到 ${compactCount(context.compactAt)} 自动压缩${
-                    context.boundary === "capacity" ? "（窗口上限）" : "（成本上限）"
-                  }`
+                ? `到 ${compactCount(context.compactAt)} 自动压缩（窗口的 ${percent(
+                    context.compactAt,
+                    context.window,
+                  )}%）`
                 : "这个会话不自动压缩"}
             </p>
 
@@ -200,11 +202,11 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
               onClick={() => void fold()}
               disabled={busy}
             >
-              {busy ? "正在压缩…" : "压缩现在"}
+              {busy ? "正在归档…" : "压缩现在"}
             </button>
             <p className="meta sheet-note">
-              压缩会让模型把上面的内容总结成一段，之后的回答基于总结。
-              只影响这个会话，原文仍保留在这台电脑上。
+              压缩会把这一轮之前的内容归档到这台电脑，对话里只留一条简短的指针；
+              原文不会删除。只影响这个会话。
             </p>
           </>
         ) : null}

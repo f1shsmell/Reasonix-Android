@@ -58,12 +58,16 @@ const serveHub = read("internal/frontend/serve/hub_contract.go");
 const serveTodos = read("internal/frontend/serve/todos.go");
 const serveHistory = read("internal/frontend/serve/history.go");
 const kinds = read("internal/contract/eventwire/kinds.go");
+const approval = read("internal/contract/eventwire/approval.go");
+const eventWire = read("internal/contract/eventwire/wire.go");
 
 const checks = [
   ["RuntimeView", structTags(serveHub, "RuntimeView"), tsFields("src/wire/runtime.ts", "RuntimeView")],
   ["WireTodo", structTags(serveTodos, "todoItem"), tsFields("src/wire/todos.ts", "WireTodo")],
   ["HistoryMessage", structTags(serveHistory, "historyMessage"), tsFields("src/wire/history.ts", "HistoryMessage")],
   ["HistoryToolCall", structTags(serveHistory, "historyToolCall"), tsFields("src/wire/history.ts", "HistoryToolCall")],
+  ["Approval", structTags(approval, "Approval"), tsFields("src/wire/events.ts", "WireApproval")],
+  ["Tool", structTags(eventWire, "Tool"), tsFields("src/wire/events.ts", "WireTool")],
 ];
 
 let ok = true;

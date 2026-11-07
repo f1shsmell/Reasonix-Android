@@ -11,6 +11,7 @@ import {
 } from "./Activity";
 import type { ProcessStep } from "./process";
 import type { ToolRow } from "./transcript";
+import { toolCategory } from "./toolMeta";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -63,6 +64,25 @@ describe("tool labels and summaries", () => {
     expect(toolLabel("something_new")).toBe("something_new");
   });
 
+  it("names background jobs and on-demand tools instead of their wire ids", () => {
+    expect(toolLabel("bash_output")).toBe("读取后台输出");
+    expect(toolLabel("kill_shell")).toBe("结束后台任务");
+    expect(toolLabel("wait")).toBe("等待后台任务");
+    expect(toolLabel("use_capability")).toBe("按需调用工具");
+    expect(toolLabel("submit_plan")).toBe("提交计划");
+    expect(toolLabel("view_image")).toBe("查看图片");
+    expect(toolLabel("present_files")).toBe("交付文件");
+  });
+
+  it("keeps background jobs with commands and plan work with tasks", () => {
+    expect(toolCategory("bash_output")).toBe("command");
+    expect(toolCategory("kill_shell")).toBe("command");
+    expect(toolCategory("wait")).toBe("command");
+    expect(toolCategory("submit_plan")).toBe("task");
+    expect(toolCategory("view_image")).toBe("read");
+    expect(toolCategory("browser_read")).toBe("fetch");
+  });
+
   it("shows the command rather than the JSON envelope", () => {
     expect(toolSummary(toolRow({ args: '{"command":"cd c:/dev","timeout":10}' }))).toBe(
       "cd c:/dev",
@@ -83,6 +103,25 @@ describe("tool labels and summaries", () => {
     expect(
       toolSummary(toolRow({ name: "spawn_agents", args: '{"tasks":[{"task":"只有正文"}]}' })),
     ).toBe("只有正文");
+  });
+
+  it("reads a proxied call's own arguments, not the envelope's action", () => {
+    expect(
+      toolSummary(
+        toolRow({
+          name: "use_capability",
+          args: '{"action":"call","capability_id":"tool:browser","arguments":{"url":"https://example.com"}}',
+        }),
+      ),
+    ).toBe("https://example.com");
+    expect(
+      toolSummary(
+        toolRow({
+          name: "use_capability",
+          args: '{"action":"inspect","capability_id":"mcp-tool:db/read"}',
+        }),
+      ),
+    ).toBe("mcp-tool:db/read");
   });
 
   it("answers an empty summary for a call with no arguments", () => {
