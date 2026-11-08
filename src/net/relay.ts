@@ -803,6 +803,12 @@ const KERNEL_PATHS = [
   "/compact",
   "/rewind",
   "/branch",
+  // The workbench's git surface: repositories, recorded commits and the
+  // commit the person confirms. Pane-scoped calls already ride the "/rt/"
+  // prefix; these name the machine-level spellings so a caller without a
+  // pane prefix still reaches the kernel through the relay.
+  "/git",
+  "/commit",
   "/summarize",
   "/goal",
   "/tools",

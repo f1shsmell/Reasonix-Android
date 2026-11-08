@@ -289,6 +289,72 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
   if (path === BASE + "/history") return Promise.resolve(json(messages));
   if (path === BASE + "/todos") return Promise.resolve(json([]));
   if (path === BASE + "/models") return Promise.resolve(json(models));
+  // The workbench: a two-file change set (one binary, so the counts answer is
+  // exercised too), a small diff, and the git identity the header draws.
+  if (path === BASE + "/changes") {
+    return Promise.resolve(json({
+      repo: true,
+      changes: [
+        { path: "src/app/main.tsx", status: "M", staged: true, insertions: 18, deletions: 4 },
+        { path: "src/app/main.tsx", status: "M", unstaged: true, insertions: 2 },
+        { path: "src/net/changes.ts", status: "A", staged: true, insertions: 146 },
+        { path: "assets/logo.psd", status: "??" },
+      ],
+    }));
+  }
+  if (path === BASE + "/changes/diff") {
+    return Promise.resolve(json({
+      path: "src/app/main.tsx",
+      diff: [
+        "@@ -12,7 +12,9 @@",
+        " import { boot } from './boot';",
+        "-const version = 1;",
+        "+const version = 2;",
+        "+const flag = true;",
+        " export { version };",
+      ].join("\n"),
+      truncated: false,
+    }));
+  }
+  if (path === BASE + "/workspace/git") {
+    return Promise.resolve(json({
+      repo: true, name: "demo", branch: "main", detached: false,
+      added: 2, removed: 0, untracked: 1,
+    }));
+  }
+  if (path === BASE + "/workspace/git/log") {
+    return Promise.resolve(json({
+      repo: true,
+      commits: [
+        { id: "9f2c1ab4d5e6", parents: [], author: "demo", at: Math.floor(Date.now() / 1000) - 3600, refs: ["refs/heads/main"], subject: "移植工作台的第一步" },
+      ],
+      truncated: false,
+    }));
+  }
+  if (path === BASE + "/workspace/files") {
+    return Promise.resolve(json({
+      files: ["main.tsx", "README.md"],
+      directories: ["src"],
+    }));
+  }
+  if (path === BASE + "/workspace/file") {
+    return Promise.resolve(json({
+      path: "README.md", content: "# 演示\n\nmock 内核的只读文件。\n",
+      revision: "mock",
+    }));
+  }
+  if (path === BASE + "/commit/propose" && method === "POST") {
+    return Promise.resolve(json({
+      message: "移植工作台：变更列表与 diff",
+      fingerprint: "mock-fingerprint",
+      files: [{ path: "src/app/main.tsx", status: "M", insertions: 20, deletions: 4 }],
+      truncated: false,
+      contentSecrets: false,
+    }));
+  }
+  if (path === BASE + "/commit" && method === "POST") {
+    return Promise.resolve(json({ hash: "b7e3f00d9c1a", subject: "移植工作台：变更列表与 diff" }));
+  }
   if (path === BASE + "/submit" && method === "POST") {
     let body = "";
     if (typeof init.body === "string") body = init.body;

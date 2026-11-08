@@ -43,6 +43,7 @@ import type { PromptHandlers } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
 import { buildDisplay } from "./process";
 import { loadFoldMode } from "./folding";
+import { Workbench } from "./workbench/Workbench";
 import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
@@ -243,6 +244,7 @@ function HeadMenu({
   onCheckpoints,
   onQueue,
   onContext,
+  onWorkbench,
 }: {
   model: string;
   approval: string;
@@ -253,6 +255,7 @@ function HeadMenu({
   onCheckpoints: () => void;
   onQueue: () => void;
   onContext: () => void;
+  onWorkbench: () => void;
 }) {
   useBackCloser(true, onClose);
   return (
@@ -305,6 +308,12 @@ function HeadMenu({
             <button type="button" onClick={onContext}>
               <span>上下文</span>
               <small>用量、明细与压缩</small>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={onWorkbench}>
+              <span>工作台</span>
+              <small>变更、diff 与提交</small>
             </button>
           </li>
         </ul>
@@ -1010,6 +1019,23 @@ export function ChatScreen({
   const [planBusy, setPlanBusy] = useState(false);
   const [attachSheet, setAttachSheet] = useState(false);
   const [headMenu, setHeadMenu] = useState(false);
+  /**
+   * The workbench takeover: the changes list, its diffs, the commit card, the
+   * history and the file browser in the transcript's place. The pane's stream
+   * stays attached underneath, so `workspace_changed` frames keep arriving
+   * while it is open — that is why the entry lives here and not at the App
+   * level, where opening it would tear the stream down.
+   */
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  useBackCloser(workbenchOpen, () => setWorkbenchOpen(false));
+  /** Finished non-read-only tool calls: every bump hints the tree moved. */
+  const wrote = useMemo(
+    () =>
+      transcript.rows.filter(
+        (row) => row.kind === "tool" && !row.running && !row.readOnly,
+      ).length,
+    [transcript.rows],
+  );
   // Read once per mount: the settings screen replaces this one, so returning
   // from it is a fresh mount and must not need an event to notice the change.
   const [fold] = useState(loadFoldMode);
@@ -1796,6 +1822,16 @@ export function ChatScreen({
         </button>
       </div>
 
+      {workbenchOpen && runtime ? (
+        <Workbench
+          base={runtime.base}
+          readOnly={runtime.readOnly === true}
+          snapshot={snapshot}
+          wrote={wrote}
+          onClose={() => setWorkbenchOpen(false)}
+        />
+      ) : (
+        <>
       {transcript.gap ? (
         <div className="notice warn" role="status">
           <div>连接中断过，中间的消息可能不完整。</div>
@@ -2093,6 +2129,8 @@ export function ChatScreen({
           )}
         </div>
       </div>
+        </>
+      )}
 
       {modelSheet ? (
         <ModelSheet
@@ -2159,6 +2197,10 @@ export function ChatScreen({
           onContext={() => {
             setHeadMenu(false);
             setContextSheet(true);
+          }}
+          onWorkbench={() => {
+            setHeadMenu(false);
+            setWorkbenchOpen(true);
           }}
         />
       ) : null}

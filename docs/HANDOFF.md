@@ -1,12 +1,12 @@
 # Handoff
 
 Everything a new agent needs that is not obvious from reading the code. Written
-2026-10-29 after milestones 1–2 of `docs/PLAN.md`.
+2026-10-29 after the first two milestones of the implementation plan (since
+removed — the milestone log lived there and is gone with it).
 
-Read `docs/PLAN.md` for scope and the milestone log, and `docs/PRIOR_ART.md` for
-why the architecture looks the way it does. This file is the part that would
-otherwise be lost: environment traps, deliberate decisions, and the things that
-are **not** verified.
+Read `docs/PRIOR_ART.md` for why the architecture looks the way it does. This
+file is the part that would otherwise be lost: environment traps, deliberate
+decisions, and the things that are **not** verified.
 
 ## Environment traps
 
@@ -900,7 +900,9 @@ design. The 208 frontend tests and 11 native tests pass.
 
 ## Where to go next
 
-`docs/PLAN.md` lists milestones 3–5. My own read, in priority order:
+The plan that listed milestones 3–5 has been removed; the current direction is
+the native workbench (changes review first — `src/chat/workbench/`). My own
+read, in priority order:
 
 1. **Look at it on a phone.** Everything else is building on unseen CSS.
    `http://<lan-ip>:5274/#token=<token>`.

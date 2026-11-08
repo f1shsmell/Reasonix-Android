@@ -60,6 +60,11 @@ const serveHistory = read("internal/frontend/serve/history.go");
 const kinds = read("internal/contract/eventwire/kinds.go");
 const approval = read("internal/contract/eventwire/approval.go");
 const eventWire = read("internal/contract/eventwire/wire.go");
+const gitStatus = read("internal/platform/gitstatus/gitstatus.go");
+const gitHistory = read("internal/platform/gitstatus/history.go");
+const gitCommit = read("internal/platform/gitcommit/gitcommit.go");
+const serveChanges = read("internal/frontend/serve/changes.go");
+const controlCommit = read("internal/session/control/commit.go");
 
 const checks = [
   ["RuntimeView", structTags(serveHub, "RuntimeView"), tsFields("src/wire/runtime.ts", "RuntimeView")],
@@ -68,6 +73,12 @@ const checks = [
   ["HistoryToolCall", structTags(serveHistory, "historyToolCall"), tsFields("src/wire/history.ts", "HistoryToolCall")],
   ["Approval", structTags(approval, "Approval"), tsFields("src/wire/events.ts", "WireApproval")],
   ["Tool", structTags(eventWire, "Tool"), tsFields("src/wire/events.ts", "WireTool")],
+  ["Change", structTags(gitStatus, "Change"), tsFields("src/wire/changes.ts", "Change")],
+  ["GitCommit", structTags(gitHistory, "Commit"), tsFields("src/wire/changes.ts", "Commit")],
+  ["WorkspaceGitView", structTags(serveChanges, "workspaceGitView"), tsFields("src/wire/changes.ts", "WorkspaceGitView")],
+  ["CommitFile", structTags(gitCommit, "File"), tsFields("src/wire/changes.ts", "CommitFile")],
+  ["CommitProposal", structTags(controlCommit, "CommitProposal"), tsFields("src/wire/changes.ts", "CommitProposal")],
+  ["CommitRequest", structTags(controlCommit, "CommitRequest"), tsFields("src/wire/changes.ts", "CommitRequest")],
 ];
 
 let ok = true;

@@ -250,6 +250,21 @@ describe("isKernelPath", () => {
     }
   });
 
+  it("routes the workbench's git and commit calls through the relay", () => {
+    for (const path of [
+      "/rt/r1/changes",
+      "/rt/r1/changes/stage",
+      "/rt/r1/workspace/git/log",
+      "/rt/r1/git/repos",
+      "/rt/r1/git/commit/diff",
+      "/rt/r1/commit/propose",
+      "/rt/r1/commit",
+      "/rt/r1/workspace/files",
+    ]) {
+      expect(isKernelPath(path)).toBe(true);
+    }
+  });
+
   it("leaves the app's own bundle and the loopback control plane alone", () => {
     for (const path of ["/", "/assets/index.js", "/__reasonix/config", "/treeline"]) {
       expect(isKernelPath(path)).toBe(false);
