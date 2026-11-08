@@ -49,6 +49,7 @@ import "../ui/tokens.css";
 import "../ui/shell.css";
 import "../ui/chat.css";
 import "../ui/connect.css";
+import "../ui/workbench.css";
 
 // The chat carries Markdown and syntax highlighting; a phone that only reads
 // the list should not pay for them at launch.

@@ -67,6 +67,8 @@ const KERNEL_PATHS = [
   "/compact",
   "/rewind",
   "/branch",
+  "/git",
+  "/commit",
   "/summarize",
   "/goal",
   "/tools",

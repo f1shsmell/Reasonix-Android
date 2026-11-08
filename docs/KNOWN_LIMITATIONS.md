@@ -18,6 +18,10 @@
 
 - **打开「回答开始与结束」后，切换会话可能多震一次**。该开关默认关闭。打开后，若会话从缓存水合或历史合并中重建了行，新的行 id 会被当成「新回答开始」而震一下——用户并没有发出新问题。根因是 `useStreamHaptics` 只拿到行数组，缺少「这是真实流式开始」的信号；干净的解需要把水合/历史状态传进去，属于更大的重构。默认关闭把影响面压到主动开启的用户。
 
+## 工作台
+
+- **手机端没有「丢弃变更」和「推送」**。内核把 `POST /changes/discard`、`GET/POST /git/push` 和全部终端路由列在 host-only 表里（`internal/frontend/serve/host_routes.go`）——配对设备的凭据较弱，破坏性操作与外发操作只留给宿主窗口。这是内核侧的设计，App 无法也不应绕过。工作台里因此不渲染丢弃按钮，提交卡也只说「仅本地提交，不会推送」；丢弃与推送请回桌面端操作。`POST /changes/stage`、`POST /commit/propose`、`POST /commit` 都不在表里，手机可以暂存与提交。
+
 ## 连接
 
 - **电脑内核重启后，手机可能要重新扫码配对**。内核的 `[serve] remember_paired_devices` 默认关闭，重启后设备登记表不回填，手机里的 `reasonix_device` 凭据随之失效；此时重试旧地址不会恢复，App 会在连接卡片上给出「重新扫码配对」按钮。想跨重启保留配对，在电脑的 `config.toml` 里设 `remember_paired_devices = true`——这是内核侧配置，App 无法代改。
