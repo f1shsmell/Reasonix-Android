@@ -6,7 +6,7 @@
  * file is testable without a browser.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
@@ -43,7 +43,6 @@ import type { PromptHandlers } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
 import { buildDisplay } from "./process";
 import { loadFoldMode } from "./folding";
-import { Workbench } from "./workbench/Workbench";
 import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
@@ -77,6 +76,15 @@ function shortRef(ref: string): string {
   const at = ref.lastIndexOf("/");
   return at >= 0 ? ref.slice(at + 1) : ref;
 }
+
+/**
+ * The workbench rides its own chunk: tree, diff parser, file browser and
+ * highlight are only worth their bytes once a person actually opens 工作台,
+ * and the chat's first paint should not pay for them.
+ */
+const Workbench = lazy(() =>
+  import("./workbench/Workbench").then((m) => ({ default: m.Workbench })),
+);
 
 /**
  * Why the history read failed, in the terms that decide what to do next.
@@ -1823,13 +1831,15 @@ export function ChatScreen({
       </div>
 
       {workbenchOpen && runtime ? (
-        <Workbench
-          base={runtime.base}
-          readOnly={runtime.readOnly === true}
-          snapshot={snapshot}
-          wrote={wrote}
-          onClose={() => setWorkbenchOpen(false)}
-        />
+        <Suspense fallback={<p className="wb-wait">读取中…</p>}>
+          <Workbench
+            base={runtime.base}
+            readOnly={runtime.readOnly === true}
+            snapshot={snapshot}
+            wrote={wrote}
+            onClose={() => setWorkbenchOpen(false)}
+          />
+        </Suspense>
       ) : (
         <>
       {transcript.gap ? (
@@ -2200,7 +2210,10 @@ export function ChatScreen({
           }}
           onWorkbench={() => {
             setHeadMenu(false);
-            setWorkbenchOpen(true);
+            // Without a runtime the takeover would render nothing while the
+            // back closer still eats a press; the other sheets gate on
+            // runtime the same way.
+            if (runtime) setWorkbenchOpen(true);
           }}
         />
       ) : null}

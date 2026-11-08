@@ -59,8 +59,8 @@
   font-size: 13px;
 }
 
-.wb-repos,
-.wb-tabs + * {
+.wb-changes,
+.wb-files {
   min-width: 0;
 }
 
@@ -424,6 +424,16 @@
   font-weight: 700;
 }
 
+/* The card prints the raw status letter; give it the tree row's ink. */
+.wb-commit-files em[data-status="A"],
+.wb-commit-files em[data-status="??"] {
+  color: var(--ok);
+}
+
+.wb-commit-files em[data-status="D"] {
+  color: var(--bad);
+}
+
 .wb-commit-path {
   flex: 1;
   min-width: 0;
@@ -519,6 +529,11 @@
   color: var(--fg-dim);
   font-size: 13px;
   text-align: left;
+}
+
+.wb-history-body {
+  display: flex;
+  flex-direction: column;
 }
 
 .wb-history-row .wb-row-main {

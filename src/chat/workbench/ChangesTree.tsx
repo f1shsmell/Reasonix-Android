@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { ChangeDiff } from "../../wire/changes";
 import { stagedState } from "./gittree";
@@ -205,6 +205,10 @@ interface TreeProps {
 export function ChangesTree(props: TreeProps): React.JSX.Element {
   const [extra, setExtra] = useState(0);
   const [folded, setFolded] = useState<Set<string>>(new Set());
+  // A new tree (a refresh, a repo switch) reads from the first page again.
+  useEffect(() => {
+    setExtra(0);
+  }, [props.nodes]);
   const budget = { left: (props.budget ?? 500) + extra };
   const total = countRows(props.nodes);
   const walkState: Walk = {
@@ -229,13 +233,16 @@ export function ChangesTree(props: TreeProps): React.JSX.Element {
   };
   const drawn: ReactNode[] = [];
   for (const node of props.nodes) drawn.push(...walk(node, 0, walkState));
-  const drawnCount = total - Math.max(budget.left, 0);
+  // Rows actually drawn: the budget the walk consumed. The unspent remainder
+  // is what the "show more" line counts — a fresh budget object per render
+  // keeps the walk's mutation from leaking between renders.
+  const drawnCount = (props.budget ?? 500) + extra - Math.max(budget.left, 0);
   return (
     <div className="wb-tree">
       {drawn}
-      {budget.left <= 0 && total > drawnCount && (
+      {budget.left <= 0 && drawnCount < total && (
         <button type="button" className="wb-more" onClick={() => setExtra((value) => value + 500)}>
-          {`还有约 ${total - drawnCount} 行未显示，显示更多`}
+          {`还有 ${total - drawnCount} 行未显示，显示更多`}
         </button>
       )}
     </div>
