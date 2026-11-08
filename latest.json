@@ -1,11 +1,11 @@
 {
-  "tag": "v0.3.4",
-  "version": "0.3.4",
-  "versionCode": 24,
-  "apk": "reasonix-for-android-0.3.4.apk",
-  "notes": "# 0.3.4\n\n这一版跟进 Reasonix Studio 2.58 的几处变化：计划审批先列出将执行的步骤，上下文压缩按「归档」解释，并让实时记录里的工具名和历史保持一致。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 新增\n\n- **计划审批先看步骤**：Studio 2.58 起，计划审批卡会带上将要执行的步骤。手机现在直接列出这些步骤，阶段和子步骤分层显示，批准前就能看清要做什么。\n- **上下文用到 80% 会提醒**：上下文面板的百分比和进度条从 80% 起变成橙色，和 Studio 一致，不弹窗。\n\n## 变更\n\n- **「压缩」其实是在归档**：说明改为把这一轮之前的内容归档到电脑上，对话里只留一条简短的指针，原文不会删除。自动压缩的触发点写成它在窗口中的占比（新配置默认 90%），不再提已经移除的「成本上限」。\n- **实时工具名和历史一致**：Studio 2.58 把更多工具放到了按需调用后面。手机现在显示实际调用的工具名和参数摘要，而不是 `use_capability` 这个代理名，重开会话前后一致。\n- **后台任务和新工具有中文名**：`bash_output`、`kill_shell`、`wait`，以及查看图片/视频、按需设置、提交计划等工具，在操作行和折叠摘要里都有中文名称和归类。\n\n## 修复\n\n- **计划审批卡不再空白**：Studio 没有提供标题时显示「批准这份计划？」。\n- **代理调用的摘要不再显示 `call` / `inspect`**：改为读取真实工具的参数；没有参数时退回能力 id。\n\n## 说明\n\n- 已知限制统一记在\n  [docs/KNOWN_LIMITATIONS.md](https://github.com/f1shsmell/Reasonix-Android/blob/main/docs/KNOWN_LIMITATIONS.md)，不写进发布说明。",
+  "tag": "v0.4.0",
+  "version": "0.4.0",
+  "versionCode": 25,
+  "apk": "reasonix-for-android-0.4.0.apk",
+  "notes": "# 0.4.0\n\n这一版把 Studio 工作台的变更审查搬进了手机：会话菜单里多了「工作台」，改动清单、每个文件的 diff、暂存、模型起草的提交和提交历史都在一个屏幕里完成，不用回到电脑前。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 新增\n\n- **会话菜单多了「工作台」**：打开即是这份会话工作区的改动清单——按文件夹分组的文件树、每个文件的三态暂存勾选（已暂存/未暂存/部分暂存）、增删行数一目了然，点开文件就是逐行 diff。\n- **直接在手机上提交**：勾选要提交的文件，模型会阅读暂存内容起草提交信息，改完确认即可；含疑似密钥时需要明确确认才会放开提交。仅本地提交，不会推送。\n- **提交历史随查随看**：每个提交可以展开文件清单和任一文件的 diff；分支名、游离头、变更计数显示在工作台头部。\n- **工作区文件浏览**：按目录浏览或搜索工作区文件，只读查看内容，带语法高亮；diff 里的行号点过去直接打开对应文件。\n\n## 变更\n\n- **刷新跟着 agent 走**：agent 每写完一个非只读操作、或电脑发来工作区变化通知，变更清单在 0.7 秒落定后自动更新；正在看的 diff 会原地保持旧内容，新内容到了再替换，不会闪「读取中」。\n- **长列表分页**：变更超过 500 行时分批显示，尾部一行「还有 N 行未显示」，点一下多看 500 行。\n\n## 修复\n\n- **工作台首版评审修复**：变更超过 500 行时「显示更多」不再失效；从子目录发起的文件搜索点开不再是错误路径；切换仓库后打开的 diff 与提交历史不再串仓库；开发环境（StrictMode）下文件浏览与提交卡不再无响应。\n\n## 已知限制\n\n- 手机端没有「丢弃变更」和「推送」：这两类操作由电脑内核保留给桌面端，需要时请回电脑操作。",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.4/reasonix-for-android-0.3.4.apk",
-    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.3.4/reasonix-for-android-0.3.4.apk"
+    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.4.0/reasonix-for-android-0.4.0.apk",
+    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.4.0/reasonix-for-android-0.4.0.apk"
   ]
 }
