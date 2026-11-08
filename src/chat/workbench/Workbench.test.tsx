@@ -352,6 +352,26 @@ describe("Workbench", () => {
     expect(container.textContent).not.toContain("重新读取");
   });
 
+  it("pages a long list and counts the rows still hidden", async () => {
+    // 600 file rows across two folders: 602 rows total (the two folder rows
+    // count too), 500 drawn, the rest behind the show-more line.
+    const many: Change[] = [];
+    for (let i = 0; i < 300; i += 1) {
+      many.push({ path: `a/f${i}.ts`, status: "M", insertions: 1 });
+      many.push({ path: `b/g${i}.ts`, status: "M", insertions: 1 });
+    }
+    net.loadChanges.mockResolvedValue({ ok: true, value: { repo: true, changes: many } });
+    mount();
+    await flush();
+    const more = container.querySelector<HTMLButtonElement>(".wb-tree .wb-more");
+    expect(more?.textContent).toContain("102 行未显示");
+    act(() => more?.click());
+    await flush();
+    // The second page arrives; nothing is hidden any more.
+    expect(container.querySelector(".wb-tree .wb-more")).toBeNull();
+    expect(container.textContent).toContain("g299.ts");
+  });
+
   it("shows a read-only banner and no stage boxes under a write lease", async () => {
     root = createRoot(container);
     act(() => {

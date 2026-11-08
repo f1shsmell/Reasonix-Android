@@ -36,11 +36,13 @@ export function CommitCard({
   const [acking, setAcking] = useState(false);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Stale-draft suppression by generation alone: a superseded draft's resolve
+  // (including its abort) must not touch the state a newer draft owns. No
+  // `alive` ref here — StrictMode's simulated remount would permanently disarm
+  // it, and the unmount abort below is what actually stops the network.
   const draftId = useRef(0);
-  const alive = useRef(true);
   useEffect(
     () => () => {
-      alive.current = false;
       abortRef.current?.abort();
     },
     [],
@@ -55,7 +57,7 @@ export function CommitCard({
     setProposal(null);
     setError("");
     void proposeCommit(base, repo || undefined, controller.signal).then((reply) => {
-      if (!alive.current || mine !== draftId.current) return;
+      if (mine !== draftId.current) return;
       if (!reply.ok) {
         // A draft that never came back says nothing about the staged set —
         // claiming "nothing staged" would be a guess. The failed phase offers
@@ -97,7 +99,6 @@ export function CommitCard({
       fingerprint: proposal.fingerprint,
       ...(needsAck ? { acknowledgeSecrets: acking } : {}),
     }).then((reply) => {
-      if (!alive.current) return;
       setBusy(false);
       if (!reply.ok) {
         setError(commitMessage(reply.code));

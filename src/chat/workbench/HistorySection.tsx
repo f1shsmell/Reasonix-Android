@@ -114,6 +114,10 @@ function CommitRow({
   const [error, setError] = useState("");
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [diff, setDiff] = useState<ChangeDiff | null>(null);
+  const [diffError, setDiffError] = useState("");
+  /** The file whose diff request is in flight: a slow older answer must not
+   *  overwrite the row the person tapped last. */
+  const diffReq = useRef(0);
   const refs = commit.refs.map(refShort).join(" · ");
 
   const expand = (): void => {
@@ -132,10 +136,16 @@ function CommitRow({
       setOpenFile(null);
       return;
     }
+    const mine = ++diffReq.current;
     setOpenFile(path);
     setDiff(null);
+    setDiffError("");
     void loadCommitDiff(base, commit.id, path, repo || undefined).then((reply) => {
-      if (!reply.ok) return;
+      if (mine !== diffReq.current) return;
+      if (!reply.ok) {
+        setDiffError(reply.code);
+        return;
+      }
       setDiff(reply.value);
     });
   };
@@ -179,7 +189,8 @@ function CommitRow({
               </button>
               {openFile === file.path && (
                 <div className="wb-row-diff">
-                  {diff === null && <p className="wb-wait">读取中…</p>}
+                  {diffError && <p className="wb-wait">{`没读出来：${diffError}`}</p>}
+                  {diff === null && !diffError && <p className="wb-wait">读取中…</p>}
                   {diff !== null && diff.diff === "" && <p className="wb-wait">没有可显示的文本变化。</p>}
                   {diff !== null && diff.diff !== "" && (
                     <WorkbenchDiff

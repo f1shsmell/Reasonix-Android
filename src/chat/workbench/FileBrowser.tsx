@@ -52,20 +52,17 @@ export function FileBrowser({
   const [error, setError] = useState("");
   const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [fileError, setFileError] = useState("");
+  /** Guards every read (listing, open, jump) against an out-of-order older
+   *  answer: the latest user intent wins. A per-effect `cancelled` flag would
+   *  not span the three effects; the shared counter is the one id both the
+   *  StrictMode re-mount and a quick tap sequence respect. */
   const requestId = useRef(0);
-  const alive = useRef(true);
-  useEffect(
-    () => () => {
-      alive.current = false;
-    },
-    [],
-  );
 
   useEffect(() => {
     const mine = ++requestId.current;
     setError("");
     void listFiles(base, path, search).then((reply) => {
-      if (!alive.current || mine !== requestId.current) return;
+      if (mine !== requestId.current) return;
       if (!reply.ok) {
         setError(fileMessage(reply.code));
         setListing(null);
@@ -82,8 +79,6 @@ export function FileBrowser({
   }, [query]);
 
   // A jump from the diff's line numbers: open that file wherever it lives.
-  // Guarded by the same request id as the listing, so two rapid jumps cannot
-  // resolve out of order and show the older file's text.
   useEffect(() => {
     if (!jump) return;
     const mine = ++requestId.current;
@@ -91,7 +86,7 @@ export function FileBrowser({
     const at = jump.path.lastIndexOf("/");
     setCurrent(at < 0 ? "" : jump.path.slice(0, at));
     void readFile(base, jump.path).then((reply) => {
-      if (!alive.current || mine !== requestId.current) return;
+      if (mine !== requestId.current) return;
       if (!reply.ok) {
         setFileError(fileMessage(reply.code));
         return;
@@ -101,10 +96,15 @@ export function FileBrowser({
   }, [base, jump]);
 
   const open = (name: string): void => {
-    const full = path ? `${path}/${name}` : name;
+    // A search answers with workspace-relative paths no matter which folder
+    // the search was typed from (the kernel ignores `path` when `q` is set),
+    // so the name is the whole path there; a folder listing's names hang
+    // under the current folder.
+    const full = search ? name : path ? `${path}/${name}` : name;
+    const mine = ++requestId.current;
     setFileError("");
     void readFile(base, full).then((reply) => {
-      if (!alive.current) return;
+      if (mine !== requestId.current) return;
       if (!reply.ok) {
         setFileError(fileMessage(reply.code));
         return;

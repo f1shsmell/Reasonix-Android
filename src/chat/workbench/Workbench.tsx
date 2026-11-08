@@ -62,7 +62,11 @@ function useRevision(
       if (document.visibilityState === "visible") bump(true);
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      // A bump scheduled but not yet fired has no owner after unmount.
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    };
   }, [bump]);
   return { revision, refresh: () => bump(true) };
 }
@@ -104,6 +108,10 @@ export function Workbench({
   const [repos, setRepos] = useState<GitReposView["repos"] | null>(null);
   const [reposError, setReposError] = useState("");
   const [activeRepo, setActiveRepo] = useState("");
+  /** True once the repo list has answered (or an old kernel's 404 fell back):
+   *  the changes read waits for it, so a multi-repo workspace never flashes
+   *  the root's `repo:false` answer before the real repo is selected. */
+  const [reposReady, setReposReady] = useState(false);
 
   const [gitView, setGitView] = useState<WorkspaceGitView | null>(null);
   const [changes, setChanges] = useState<WorkspaceChanges | null>(null);
@@ -113,9 +121,12 @@ export function Workbench({
   const [stageError, setStageError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCommit, setShowCommit] = useState(false);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  /** The open diff, keyed to its repository: a repo switch invalidates it by
+   *  key comparison instead of a reset effect that races the diff fetch. */
+  const [open, setOpen] = useState<{ repo: string; path: string } | null>(null);
   const [slots, setSlots] = useState<Map<string, DiffSlot>>(new Map());
   const [jump, setJump] = useState<{ path: string; token: number } | null>(null);
+  const openPath = open !== null && open.repo === activeRepo ? open.path : null;
 
   // The repo list: read per revision, single flight by effect discipline.
   useEffect(() => {
@@ -126,10 +137,12 @@ export function Workbench({
         // 404/501 without a code is an old kernel: one repo, not a fault.
         setRepos(null);
         setReposError(reply.code === "http.404" || reply.code === "http.501" ? "" : reply.code);
+        setReposReady(true);
         return;
       }
       setReposError("");
       setRepos(reply.value.repos);
+      setReposReady(true);
     });
     return () => {
       cancelled = true;
@@ -143,16 +156,17 @@ export function Workbench({
     setActiveRepo(repos[0]?.dir ?? "");
   }, [repos, activeRepo]);
 
-  // A repository (or a pane) switch invalidates everything the open diff knew:
-  // its path is relative to the previous repo, and the slot would otherwise be
-  // re-read with the new `?repo=` against a file it does not name.
+  // A repository (or a pane) switch invalidates the diff slots; the open diff
+  // itself is keyed to its repo and simply stops matching.
   useEffect(() => {
-    setOpenPath(null);
     setSlots(new Map());
   }, [base, activeRepo]);
 
-  // The changes and the git identity of the active repository.
+  // The changes and the git identity of the active repository. Waiting for the
+  // repo list first is what keeps a multi-repo workspace from flashing the
+  // root's `repo:false` and tearing the section down for one paint.
   useEffect(() => {
+    if (!reposReady) return;
     let cancelled = false;
     const repo = activeRepo || undefined;
     void loadChanges(base, repo).then((reply) => {
@@ -171,26 +185,32 @@ export function Workbench({
     return () => {
       cancelled = true;
     };
-  }, [base, activeRepo, revision]);
+  }, [base, activeRepo, revision, reposReady]);
 
   // An open diff re-reads when the tree may have moved, so a file the agent is
-  // editing keeps its diff current.
+  // editing keeps its diff current. The previous text stays on screen until
+  // the re-read lands — blanking it to 读取中 on every burst would flicker.
   useEffect(() => {
-    if (openPath === null) return;
+    if (open === null || open.repo !== activeRepo) return;
     let cancelled = false;
-    setSlots((current) => new Map(current).set(openPath, { state: "loading" }));
-    void loadDiff(base, openPath, activeRepo || undefined).then((reply) => {
+    setSlots((current) => {
+      const prior = current.get(open.path);
+      if (prior?.state === "ready") return current;
+      const next = new Map(current).set(open.path, { state: "loading" });
+      return next;
+    });
+    void loadDiff(base, open.path, activeRepo || undefined).then((reply) => {
       if (cancelled) return;
       setSlots((current) => {
         const next = new Map(current);
-        next.set(openPath, reply.ok ? { state: "ready", diff: reply.value } : { state: "error", code: reply.code });
+        next.set(open.path, reply.ok ? { state: "ready", diff: reply.value } : { state: "error", code: reply.code });
         return next;
       });
     });
     return () => {
       cancelled = true;
     };
-  }, [base, openPath, activeRepo, revision]);
+  }, [base, open, activeRepo, revision]);
 
   const applyStage = useCallback(
     (req: { paths?: string[]; all?: boolean; unstage?: boolean }) => {
@@ -224,9 +244,16 @@ export function Workbench({
     [applyStage],
   );
 
-  const onOpenDiff = useCallback((path: string): void => {
-    setOpenPath((current) => (current === path ? null : path));
-  }, []);
+  const onOpenDiff = useCallback(
+    (path: string): void => {
+      setOpen((current) =>
+        current !== null && current.repo === activeRepo && current.path === path
+          ? null
+          : { repo: activeRepo, path },
+      );
+    },
+    [activeRepo],
+  );
 
   const onOpenFile = useCallback((path: string): void => {
     setTab("files");
