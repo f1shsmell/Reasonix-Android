@@ -886,6 +886,15 @@ interface TodoList {
   state: TodosState;
 }
 
+/**
+ * Studio's rule: a list whose every step is done is spent. The kernel keeps
+ * it, and the desktop drops it rather than leaving a finished checklist struck
+ * through above the next turn's composer.
+ */
+function liveTodos(todos: WireTodo[]): WireTodo[] {
+  return todos.length > 0 && todos.every((todo) => todo.status === "completed") ? [] : todos;
+}
+
 function useTodos(
   base: string | undefined,
   events: readonly QueuedEvent[],
@@ -978,7 +987,7 @@ function useTodos(
         return;
       }
       failed.current = false;
-      setList({ base, todos: result.items, state: "loaded" });
+      setList({ base, todos: liveTodos(result.items), state: "loaded" });
     });
   }, [base, events, lastEvent, progress, revision, reloadToken]);
 

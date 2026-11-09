@@ -595,6 +595,39 @@ describe("ChatScreen todos", () => {
     await flush();
     expect(container.textContent).toContain("0/1");
 
+    list = [
+      { content: "第一步", status: "completed" },
+      { content: "第二步", status: "in_progress" },
+    ];
+    render(
+      snapshot({
+        kind: "todo_progress",
+        todoProgress: { kind: "advance", progressRevision: 1 },
+      }),
+    );
+    await flush();
+
+    expect(container.textContent).toContain("1/2");
+    expect(container.textContent).toContain("第二步");
+  });
+
+  it("drops a finished checklist the way Studio does", async () => {
+    // Studio empties a plan whose every step is done: struck through above the
+    // next turn it reads as if that turn already has one.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.querySelector(".todos")).not.toBeNull();
+
     list = [{ content: "第一步", status: "completed" }];
     render(
       snapshot({
@@ -604,8 +637,7 @@ describe("ChatScreen todos", () => {
     );
     await flush();
 
-    expect(container.textContent).toContain("1/1");
-    expect(container.textContent).toContain("全部完成");
+    expect(container.querySelector(".todos")).toBeNull();
   });
 
   it("drops the list when a turn ends with no progress frame", async () => {
@@ -726,7 +758,10 @@ describe("ChatScreen todos", () => {
     // `lastEvent` keeps only the newest, which is the text — reading the
     // checklist from there missed the progress entirely and left it lagging
     // until the next frame.
-    let list = [{ content: "第一步", status: "in_progress" }];
+    let list = [
+      { content: "第一步", status: "in_progress" },
+      { content: "第二步", status: "pending" },
+    ];
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -738,9 +773,12 @@ describe("ChatScreen todos", () => {
 
     render(snapshot());
     await flush();
-    expect(container.textContent).toContain("0/1");
+    expect(container.textContent).toContain("0/2");
 
-    list = [{ content: "第一步", status: "completed" }];
+    list = [
+      { content: "第一步", status: "completed" },
+      { content: "第二步", status: "in_progress" },
+    ];
     const progress: EventPayload = {
       kind: "todo_progress",
       todoProgress: { kind: "advance", progressRevision: 1 },
@@ -760,7 +798,8 @@ describe("ChatScreen todos", () => {
 
     // The list was re-read and moved on, even though the newest frame in the
     // burst says nothing about todos.
-    expect(container.textContent).toContain("1/1");
+    expect(container.textContent).toContain("1/2");
+    expect(container.textContent).toContain("第二步");
   });
 
   it("keeps the conversation when the list cannot be read", async () => {
