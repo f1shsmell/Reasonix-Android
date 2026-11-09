@@ -38,7 +38,7 @@ import {
   ProxyError,
 } from "../net/server";
 import type { DeviceGrant, ProxyAccount, ProxyConfig, RemoteDevice, ServerLink } from "../net/server";
-import { disconnectProxy, setNetworkPolicy, studioAppUrl, studioWebUrl } from "../net/server";
+import { disconnectProxy, setNetworkPolicy, studioWebUrl } from "../net/server";
 import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
@@ -67,7 +67,7 @@ import { forgetFleetPeer } from "../net/fleet";
 import { NativeLogin } from "../native/login";
 import { NativePair } from "../native/pair";
 import type { PairResult } from "../native/pair";
-import { WebMode } from "../native/webmode";
+import { openStudio } from "./openStudio";
 import {
   loadBackgroundStatus,
   openBatterySettings,
@@ -1224,13 +1224,6 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   /** The computer's own Studio page, for opening the full desktop UI. */
   const webUrl = studioWebUrl(config, loadRelayDevice());
   /**
-   * The in-app WebView loads a LAN page through the loopback proxy: that is
-   * what survives an active VPN and carries the pairing cookie. A bare
-   * WebView on the kernel address has neither and times out with "打不开".
-   */
-  const appUrl = studioAppUrl(config, loadRelayDevice());
-  const viaProxy = config?.mode !== "relay" && Boolean(config?.studioUrl?.trim());
-  /**
    * The in-app page runs on the phone's own WebView, which may be years
    * behind: nothing in the app can update it, and the Studio front end needs
    * Chrome 111 for its colours and 105 for its layout. Say so on the row
@@ -1243,15 +1236,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const studioNeedsUpgrade = needsStudioUpgrade(webViewMajor);
   const openWebUrl = () => {
     setError("");
-    void WebMode.open({
-      url: appUrl,
-      viaProxy,
-      origin: config?.origin ?? "",
-    }).catch(() => {
-      // No native activity to carry it (a browser dev session, say): the
-      // browser still opens the real page by another door. It cannot reach the
-      // loopback address, so the fallback is webUrl, not appUrl.
-      void Browser.open({ url: webUrl }).catch(() => setError("打不开完整界面。"));
+    void openStudio().then((result) => {
+      if (result.kind === "none") setError("读不到这台电脑的 Studio 地址。");
+      else if (result.kind === "failed") setError("打不开完整界面。");
     });
   };
 
