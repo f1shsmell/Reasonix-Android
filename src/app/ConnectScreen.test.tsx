@@ -412,6 +412,24 @@ describe("ConnectScreen", () => {
       await press("偏好");
     }
 
+    it("shows the transcript cache and clears it on request", async () => {
+      await renderPrefs();
+
+      expect(container.textContent).toContain("会话缓存");
+      expect(container.textContent).toContain("保留会话内容");
+
+      const clear = container.querySelector("button.setting") as HTMLButtonElement | null;
+      expect(clear?.textContent).toContain("清理");
+      await act(async () => {
+        clear?.click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // jsdom has no IndexedDB, so the clear finds nothing — the point here is
+      // that the row is wired to the cache at all.
+      expect(container.textContent).toContain("没有可清理的会话缓存");
+    });
+
     it("pins a theme and remembers it", async () => {
       await renderPrefs();
 

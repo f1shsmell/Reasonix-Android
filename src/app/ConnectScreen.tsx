@@ -93,6 +93,9 @@ import type { ChatFont } from "../chat/chatFont";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
 import type { NetPolicy } from "./netpref";
 import { loadAutoHandover, saveAutoHandover } from "./handoverPref";
+import { loadRetainTranscript, saveRetainTranscript } from "./retainPref";
+import { cacheStats, clearAllCachedRows } from "../chat/transcriptCache";
+import type { CacheStats } from "../chat/transcriptCache";
 import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
@@ -197,6 +200,13 @@ function accountFailureText(failure: unknown): string {
   return signInFailureText(failure);
 }
 
+/** A size a person can read, not a byte count. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, notifyPrefs, onNotifyPrefChange, buildDiagnostics }: ConnectScreenProps) {
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
@@ -238,6 +248,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [hapticStream, setHapticStreamState] = useState(() => loadSurfaceChoice("stream"));
   /** Whether a live link may move between this computer's LAN and cloud doors. */
   const [autoHandover, setAutoHandoverState] = useState(() => loadAutoHandover());
+  /** Whether conversation content may stay on the phone between launches. */
+  const [retainTranscript, setRetainState] = useState(() => loadRetainTranscript());
+  /** What the transcript cache holds; null when IndexedDB cannot answer. */
+  const [storage, setStorage] = useState<CacheStats | null | "loading">("loading");
+  const [clearing, setClearing] = useState(false);
+  /** The last clear's outcome, shown in place of the numbers until it reloads. */
+  const [storageNote, setStorageNote] = useState("");
   /** The copy-diagnostics row's last result. */
   const [diagStatus, setDiagStatus] = useState("");
   /** Computers this phone has connected to before, newest first. */
@@ -471,6 +488,53 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     setAutoHandoverState(enabled);
     saveAutoHandover(enabled);
   }, []);
+
+  /**
+   * Read the cache's size when the preferences pane opens.
+   *
+   * IndexedDB answers asynchronously and may refuse entirely. A zero that
+   * really meant "unavailable" would read as "nothing cached", so the two are
+   * kept apart all the way to the row.
+   */
+  useEffect(() => {
+    if (pane !== "prefs") return;
+    let cancelled = false;
+    setStorage("loading");
+    setStorageNote("");
+    void cacheStats().then((stats) => {
+      if (!cancelled) setStorage(stats);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pane]);
+
+  const pickRetainTranscript = useCallback((on: boolean) => {
+    setRetainState(on);
+    // Persist before clearing: the sweep below is asynchronous, and a write
+    // that lands in between must already see retention off.
+    saveRetainTranscript(on);
+    if (!on) {
+      setStorage({ entries: 0, rows: 0, bytes: 0 });
+      setStorageNote("");
+      void clearAllCachedRows();
+    }
+  }, []);
+
+  const clearTranscripts = useCallback(async () => {
+    setClearing(true);
+    try {
+      const result = await clearAllCachedRows();
+      setStorage({ entries: 0, rows: 0, bytes: 0 });
+      setStorageNote(
+        result.entries > 0
+          ? `已清理 ${result.entries} 段${retainTranscript ? "；当前打开的会话会在下次更新时重新缓存" : ""}`
+          : "没有可清理的会话缓存",
+      );
+    } finally {
+      setClearing(false);
+    }
+  }, [retainTranscript]);
 
   const connect = useCallback(
     async (target: string, code: string) => {
@@ -1191,6 +1255,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     });
   };
 
+  const storageText =
+    storage === "loading"
+      ? "统计中…"
+      : storage === null
+        ? "统计不可用"
+        : `${storage.entries} 段 · ${storage.rows.toLocaleString()} 行 · 约 ${formatBytes(storage.bytes)}`;
+
   return (
     <div className="connect" ref={scrollRef}>
       <div className="settings-bar">
@@ -1636,6 +1707,35 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               checked={autoHandover}
               onChange={pickAutoHandover}
               ariaLabel="自动切换连接方式"
+            />
+          </div>
+        </section>
+
+        <p className="group-label">存储</p>
+        <section className="group">
+          <button
+            type="button"
+            className="setting"
+            onClick={() => void clearTranscripts()}
+            disabled={clearing}
+          >
+            <span className="setting-main">
+              <span className="setting-title">会话缓存</span>
+              <span className="setting-sub">{storageNote || storageText}</span>
+            </span>
+            <span className="setting-value">{clearing ? "清理中…" : "清理"}</span>
+          </button>
+          <div className="setting">
+            <span className="setting-main">
+              <span className="setting-title">保留会话内容</span>
+              <span className="setting-sub">
+                关闭后重开会话需要重新读取；对话原文与工具输出都会从这台手机删除，草稿和设置不受影响。
+              </span>
+            </span>
+            <Switch
+              checked={retainTranscript}
+              onChange={pickRetainTranscript}
+              ariaLabel="保留会话内容"
             />
           </div>
         </section>
