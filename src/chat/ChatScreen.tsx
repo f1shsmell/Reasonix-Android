@@ -41,10 +41,10 @@ import { MicButton, VoiceLive } from "./MicButton";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
-import type { Row, Transcript } from "./transcript";
+import type { Row, Transcript, UserRow } from "./transcript";
 import { dropCachedRows, loadCachedRows, scheduleSaveRows } from "./transcriptCache";
-import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "./Rows";
-import type { PromptHandlers } from "./Rows";
+import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble, WorkedLine } from "./Rows";
+import type { PromptHandlers, RowActions } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
 import { buildDisplay } from "./process";
 import { loadFoldMode } from "./folding";
@@ -53,8 +53,12 @@ import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
 import { CheckpointsSheet } from "./CheckpointsSheet";
+import { EditMessageSheet } from "./EditMessageSheet";
 import { QueueSheet } from "./QueueSheet";
 import { ContextSheet } from "./ContextSheet";
+import { loadCheckpoints, prepareRewind, commitRewind, rewindMessage } from "../net/rewind";
+import type { Checkpoint } from "../net/rewind";
+import { branchAt, branchMessage } from "../net/branch";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -72,6 +76,8 @@ export interface ChatScreenProps {
   onFocusConsumed?: () => void;
   /** Open the paired computer's Studio page; absent where there is no native shell. */
   onOpenStudio?: () => Promise<StudioOpenResult>;
+  /** Open a conversation the kernel just forked, by its session path. */
+  onOpenBranch?: (path: string) => void;
 }
 
 /**
@@ -439,22 +445,46 @@ const RowView = memo(function RowView({
   row,
   base,
   handlers,
+  actions,
+  turn,
+  question,
 }: {
   row: Row;
   base: string;
   handlers: PromptHandlers;
+  actions: RowActions;
+  /** The checkpoint turn this row's turn opened, when there is one. */
+  turn?: number;
+  /** The words that asked for this answer, for regenerating the same request. */
+  question?: string;
 }) {
   switch (row.kind) {
     case "user":
-      return <UserBubble row={row} base={base} />;
+      return (
+        <UserBubble
+          row={row}
+          base={base}
+          actions={actions}
+          {...(turn !== undefined ? { turn } : {})}
+        />
+      );
     case "assistant":
-      return <AssistantBubble row={row} />;
+      return (
+        <AssistantBubble
+          row={row}
+          actions={actions}
+          {...(turn !== undefined ? { turn } : {})}
+          {...(question ? { question } : {})}
+        />
+      );
     case "notice":
       return <NoticeCard row={row} />;
     case "ask":
       return <AskCard row={row} handlers={handlers} />;
     case "approval":
       return <ApprovalCard row={row} handlers={handlers} />;
+    case "worked":
+      return <WorkedLine row={row} />;
     default:
       return null;
   }
@@ -1025,6 +1055,7 @@ export function ChatScreen({
   focusAsk,
   onFocusConsumed,
   onOpenStudio,
+  onOpenBranch,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   /**
@@ -1207,6 +1238,53 @@ export function ChatScreen({
       cancelled = true;
     };
   }, [runtime?.base, turnEnd, reloadToken, setTranscript]);
+
+  // The kernel's checkpoints pair a turn with the message index that opened
+  // it, which is what lets a row say "this is the turn to go back to". Read on
+  // the same moments the status is: mount, a turn end, a manual reload.
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  useEffect(() => {
+    const base = runtime?.base;
+    if (!base) return;
+    let cancelled = false;
+    void loadCheckpoints(base).then((next) => {
+      if (!cancelled && next) setCheckpoints(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime?.base, turnEnd, reloadToken]);
+
+  const turnOf = useCallback(
+    (msgIndex: number | undefined) =>
+      msgIndex === undefined
+        ? undefined
+        : checkpoints.find((checkpoint) => checkpoint.msgIndex === msgIndex)?.turn,
+    [checkpoints],
+  );
+
+  /**
+   * Which turn each row belongs to: a user row opens its turn, and the answers
+   * and receipts under it belong to the same one.
+   */
+  const rowTurns = useMemo(() => {
+    const out = new Map<string, { turn?: number; question?: string }>();
+    let turn: number | undefined;
+    let question: string | undefined;
+    for (const row of transcript.rows) {
+      if (row.kind === "user" && row.local !== true) {
+        question = row.text;
+        turn = turnOf(row.msgIndex);
+      }
+      if (row.kind === "user" || row.kind === "assistant") {
+        out.set(row.id, {
+          ...(turn !== undefined ? { turn } : {}),
+          ...(question ? { question } : {}),
+        });
+      }
+    }
+    return out;
+  }, [transcript.rows, turnOf]);
 
   // A running turn is exactly the window where the phone may be locked. The
   // The native watcher discovers every open pane; a turn starting here is
@@ -1728,6 +1806,99 @@ export function ChatScreen({
     [runtime, scrollToBottom, attachments, forgetDraft, setTranscript],
   );
 
+  const [editMessage, setEditMessage] = useState<{ row: UserRow; turn: number } | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [rewindTurn, setRewindTurn] = useState<number | null>(null);
+
+  const quoteIntoComposer = useCallback((text: string) => {
+    const quoted = text
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    setDraft((current) => (current.trim() ? `${current}\n\n${quoted}\n\n` : `${quoted}\n\n`));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  /**
+   * Rewind to this turn and send new words in its place — Studio's rewrite and
+   * regenerate are the same act. Conversation only: the files the turn changed
+   * stay, so the words run again against the work that was already done.
+   */
+  const resendTurn = useCallback(
+    async (turn: number, text: string, fromSheet: boolean) => {
+      const base = runtime?.base;
+      if (!base) return;
+      const fail = (message: string) => {
+        if (fromSheet) setEditError(message);
+        else setPromptError(message);
+      };
+      if (fromSheet) {
+        setEditError("");
+        setEditBusy(true);
+      }
+      const prepared = await prepareRewind(base, turn, "conversation");
+      if (!prepared.ok) {
+        if (fromSheet) setEditBusy(false);
+        fail(rewindMessage(prepared.code));
+        return;
+      }
+      if (!prepared.value.canConversation) {
+        if (fromSheet) setEditBusy(false);
+        fail(prepared.value.disabledReason ?? "这一轮不能重新生成。");
+        return;
+      }
+      const committed = await commitRewind(base, prepared.value.planId);
+      if (fromSheet) setEditBusy(false);
+      if (!committed.ok) {
+        fail(rewindMessage(committed.code));
+        return;
+      }
+      if (committed.value.ok === false) {
+        fail(committed.value.error ?? "内核没有完成这次回退。");
+        return;
+      }
+      if (fromSheet) {
+        setEditMessage(null);
+        setEditError("");
+      }
+      await reload();
+      await doSend(text);
+    },
+    [runtime?.base, reload, doSend, setEditError, setEditBusy, setEditMessage, setPromptError],
+  );
+
+  const branchFromTurn = useCallback(
+    async (turn: number) => {
+      const base = runtime?.base;
+      if (!base) return;
+      const result = await branchAt(base, turn, title ? `${title} · 分支` : "");
+      if (!result.ok) {
+        setPromptError(branchMessage(result.code));
+        return;
+      }
+      if (onOpenBranch) onOpenBranch(result.path);
+      else setPromptError("这个入口打不开新分支，请在电脑上打开它。");
+    },
+    [runtime?.base, title, onOpenBranch, setPromptError],
+  );
+
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      quote: quoteIntoComposer,
+      resend: (turn, text) => void resendTurn(turn, text, false),
+      branch: (turn) => void branchFromTurn(turn),
+      edit: (row, turn) => {
+        setEditError("");
+        setEditMessage({ row, turn });
+      },
+      rewind: (turn) => setRewindTurn(turn),
+      turnOf,
+    }),
+    [quoteIntoComposer, resendTurn, branchFromTurn, turnOf, setEditError, setEditMessage, setRewindTurn],
+  );
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Enter breaks the line, Ctrl/⌘+Enter sends — the default, and the
@@ -2040,9 +2211,9 @@ export function ChatScreen({
                 aria-hidden="true"
               />
             ) : null}
-            {visible.map((entry) =>
-              entry.kind === "steps" ? (
-                entry.live ? (
+            {visible.map((entry) => {
+              if (entry.kind === "steps") {
+                return entry.live ? (
                   entry.steps.map((step) => (
                     <ActivityRow
                       key={step.id}
@@ -2058,11 +2229,24 @@ export function ChatScreen({
                     compact={entry.compact === true}
                     onOpen={() => openProcess(entry)}
                   />
-                )
-              ) : (
-                <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
-              ),
-            )}
+                );
+              }
+              // A running turn has no stable cut point: branch, regenerate and
+              // rewind would all be refused by the kernel, so the row keeps only
+              // what does not need one until it ends.
+              const context = transcript.running ? undefined : rowTurns.get(entry.row.id);
+              return (
+                <RowView
+                  key={entry.id}
+                  row={entry.row}
+                  base={runtime.base}
+                  handlers={handlers}
+                  actions={rowActions}
+                  {...(context?.turn !== undefined ? { turn: context.turn } : {})}
+                  {...(context?.question ? { question: context.question } : {})}
+                />
+              );
+            })}
           </>
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
@@ -2423,6 +2607,31 @@ export function ChatScreen({
           base={runtime.base}
           onClose={() => setCheckpointsSheet(false)}
           onRewound={() => reload()}
+        />
+      ) : null}
+
+      {rewindTurn !== null && runtime ? (
+        <CheckpointsSheet
+          base={runtime.base}
+          turn={rewindTurn}
+          onClose={() => setRewindTurn(null)}
+          onRewound={() => {
+            setRewindTurn(null);
+            void reload();
+          }}
+        />
+      ) : null}
+
+      {editMessage ? (
+        <EditMessageSheet
+          text={editMessage.row.text}
+          busy={editBusy}
+          error={editError}
+          onCancel={() => {
+            setEditMessage(null);
+            setEditError("");
+          }}
+          onSend={(text) => void resendTurn(editMessage.turn, text, true)}
         />
       ) : null}
 

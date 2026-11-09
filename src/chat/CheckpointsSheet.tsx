@@ -21,10 +21,13 @@ function coverage(plan: RewindPlan): string {
 
 export function CheckpointsSheet({
   base,
+  turn,
   onClose,
   onRewound,
 }: {
   base: string;
+  /** Go straight to this turn's plan, for a row's rewind action. */
+  turn?: number;
   onClose: () => void;
   onRewound: () => void;
 }) {
@@ -33,16 +36,6 @@ export function CheckpointsSheet({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   useBackCloser(true, onClose);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadCheckpoints(base).then((next) => {
-      if (!cancelled) setList(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [base]);
 
   const choose = useCallback(
     async (checkpoint: Checkpoint) => {
@@ -58,6 +51,21 @@ export function CheckpointsSheet({
     },
     [base],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadCheckpoints(base).then((next) => {
+      if (cancelled) return;
+      setList(next);
+      if (turn === undefined) return;
+      const target = next?.find((checkpoint) => checkpoint.turn === turn);
+      if (target) void choose(target);
+      else setError("内核没有列出这一轮的检查点，回去不了。");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, turn, choose]);
 
   const confirm = useCallback(async () => {
     if (!plan || busy) return;

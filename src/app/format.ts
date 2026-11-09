@@ -50,3 +50,21 @@ export function clockText(ms: number): string {
   if (Number.isNaN(at.getTime())) return "";
   return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
+/**
+ * A turn's run time the way Studio states it: `37m 55s`, `1h 2m`.
+ * Whole seconds, largest unit first, zero parts left out.
+ */
+export function elapsedText(ms: number): string {
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const parts: [number, string][] = [
+    [Math.floor(total / 3600), "h"],
+    [Math.floor((total % 3600) / 60), "m"],
+    [total % 60, "s"],
+  ];
+  return parts
+    .filter(([n]) => n > 0)
+    .map(([n, unit]) => `${n}${unit}`)
+    .join(" ");
+}

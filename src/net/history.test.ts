@@ -455,3 +455,16 @@ describe("loadHistory", () => {
     }
   });
 });
+describe("turn metadata", () => {
+  it("keeps when a message landed and how long its turn ran", () => {
+    const rows = foldHistory([
+      message({ role: "user", content: "问", msgIndex: 1, createdAt: 1_700_000_000_000 }),
+      message({ role: "assistant", content: "答", msgIndex: 2, workDurationMs: 2_275_000 }),
+    ]);
+
+    const user = rows.find((row) => row.kind === "user");
+    expect(user?.kind === "user" ? user.at : undefined).toBe(1_700_000_000_000);
+    const worked = rows.find((row) => row.kind === "worked");
+    expect(worked?.kind === "worked" ? worked.ms : undefined).toBe(2_275_000);
+  });
+});

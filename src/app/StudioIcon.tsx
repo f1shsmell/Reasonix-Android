@@ -30,6 +30,12 @@ const PATHS = {
     "M9 3v18",
   ],
   down: "m6 9 6 6 6-6",
+  copy: "M8 8h13v13H8V8zM16 8V3H3v13h5",
+  quote: "M7 7H3v6h6V9m0-2v8a2 2 0 0 1-2 2H5m16-10h-4v6h6V9m0-2v8a2 2 0 0 1-2 2h-2",
+  fork: "M3 12h5c2 0 3-1 4-2l8-7m-6 0h6v6M8 12c2 0 3 1 4 2l8 7m-6 0h6v-6",
+  edit: "m4 16 12-12 4 4L8 20H4v-4zM13 7l4 4",
+  rewind: "M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-4",
+  check: "m5 12 4 4L19 6",
 } as const;
 
 export type StudioIconName = keyof typeof PATHS;

@@ -911,7 +911,18 @@ export function App() {
         mode={link.state.mode}
         focusAsk={chatFocusAsk}
         onFocusConsumed={() => setChatFocusAsk(false)}
-        {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
+        {...(chatRoot
+          ? {
+              onNewSession: () => void newSessionInProject(chatRoot),
+              // A fork is a new session file on the host; opening it is the
+              // same read-and-open the session list does for a stored path.
+              onOpenBranch: (path: string) => {
+                void openRuntimeOn(chatRoot, path).then((opened) => {
+                  if (opened.ok) void openedRuntime(opened.runtime.id, chatRoot, "分支");
+                });
+              },
+            }
+          : {})}
         {...(preview?.native || Capacitor.isNativePlatform()
           ? {
               onOpenStudio: () =>

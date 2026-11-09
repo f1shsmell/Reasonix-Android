@@ -57,6 +57,19 @@ export interface UserRow {
   local?: boolean;
   /** The session index of the authored message, when the wire named it. */
   msgIndex?: number;
+  /** When it landed: `createdAt` from history, or this client's clock live. */
+  at?: number;
+}
+
+/**
+ * The close of a turn: a tick and how long it ran, as Studio draws it. Only
+ * worth a line when the turn actually took time — under half a second the
+ * duration would round to nothing.
+ */
+export interface WorkedRow {
+  kind: "worked";
+  id: string;
+  ms: number;
 }
 
 export interface NoticeRow {
@@ -96,7 +109,8 @@ export type Row =
   | ToolRow
   | NoticeRow
   | AskRow
-  | ApprovalRow;
+  | ApprovalRow
+  | WorkedRow;
 
 export interface Transcript {
   rows: Row[];
@@ -171,6 +185,7 @@ function confirmLocalUser(
     next[at] = {
       ...row,
       local: false,
+      at: row.at ?? Date.now(),
       ...(msgIndex !== undefined ? { msgIndex } : {}),
     };
   }
@@ -494,6 +509,7 @@ export function reduce(
             kind: "user",
             id: nextId("user"),
             text,
+            at: Date.now(),
             ...(msgIndex !== undefined ? { msgIndex } : {}),
           },
         ],
@@ -680,9 +696,16 @@ export function reduce(
       const rows = closePending(closeStreaming(transcript.rows, stampClock)).filter(
         (row) => !(row.kind === "assistant" && row.text === "" && row.reasoning === ""),
       );
+      // The turn's close, as Studio draws it: a tick and how long it ran. Under
+      // half a second the duration rounds to nothing, so it earns no line.
+      const ms = event.workDurationMs;
+      const closed =
+        typeof ms === "number" && ms >= 500
+          ? [...rows, { kind: "worked" as const, id: nextId("worked"), ms }]
+          : rows;
       return {
         ...transcript,
-        rows,
+        rows: closed,
         running: false,
         ended: {
           cancelled: event.cancelled === true,

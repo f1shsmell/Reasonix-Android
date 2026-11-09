@@ -1148,6 +1148,115 @@ html[data-chat-font="xl"] {
   opacity: 0.75;
 }
 
+/* The icon actions Studio puts under a row: copy, quote, fork, regenerate on
+   an answer; time, copy, edit, rewind on a person's words. */
+.row-act {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+
+.row-act:active {
+  background: rgba(var(--fg-rgb), 0.06);
+  @supports (color: color-mix(in srgb, red, blue)) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  }
+}
+
+.row-act .studio-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.copy.icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+
+.copy.icon .studio-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.user-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  padding: 0 2px;
+}
+
+.user-time {
+  color: var(--fg-dim);
+  font-size: 11px;
+  opacity: 0.8;
+  margin-right: 2px;
+}
+
+/* The turn's close, right-aligned under the answer like Studio's tick line. */
+.worked {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 0 0;
+}
+
+.worked-ok {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.worked-tick {
+  width: 13px;
+  height: 13px;
+  color: var(--ok);
+}
+
+/* Rewriting a message before it is sent again. */
+.edit-message-text {
+  width: 100%;
+  min-height: 96px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.edit-message-note {
+  margin: 8px 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.edit-message-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 .prompt .confirm:disabled {
   opacity: 0.5;
 }

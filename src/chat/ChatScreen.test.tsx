@@ -133,10 +133,36 @@ function stubKernel(
     todosStatus?: number;
     status?: unknown;
     statusStatus?: number;
+    /** The kernel's checkpoint list, pairing a turn with its message index. */
+    checkpoints?: unknown;
+    /** Where a fork lands; the screen hands the path to its opener. */
+    branchPath?: string;
   } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.endsWith("/checkpoints")) {
+      return Promise.resolve(json(options.checkpoints ?? []));
+    }
+    if (url.endsWith("/rewind/prepare")) {
+      return Promise.resolve(
+        json({
+          planId: "plan-1",
+          turn: 1,
+          coverage: "all",
+          canFiles: true,
+          canConversation: true,
+          fileCount: 0,
+          requiresConfirmation: false,
+        }),
+      );
+    }
+    if (url.endsWith("/rewind/commit")) {
+      return Promise.resolve(json({ ok: true }));
+    }
+    if (url.endsWith("/branch/at")) {
+      return Promise.resolve(json({ path: options.branchPath ?? "/w/sessions/fork.jsonl" }));
+    }
     if (url.endsWith("/todos")) {
       return Promise.resolve(json(options.todos ?? [], options.todosStatus));
     }
@@ -991,6 +1017,124 @@ describe("ChatScreen cache reading", () => {
     openMenu();
 
     expect(container.querySelector(".head-menu-note")?.textContent).toContain("还没有可统计的请求");
+  });
+});
+
+describe("ChatScreen message actions", () => {
+  const checkpoints = [{ turn: 1, prompt: "问", files: 0, msgIndex: 1 }];
+  const history = [
+    { role: "user", content: "问", msgIndex: 1, createdAt: Date.UTC(2026, 9, 9, 12, 51) },
+    { role: "assistant", content: "答", msgIndex: 2 },
+  ];
+
+  it("closes a turn with a tick and how long it ran", async () => {
+    stubKernel({ history: [] });
+
+    render(snapshot({ kind: "turn_done", workDurationMs: 2_275_000 } as EventPayload));
+    await flush();
+
+    expect(container.querySelector(".worked")?.textContent).toContain("已完成 · 37m 55s");
+  });
+
+  it("puts the person's time and actions under their words", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".user-time")?.textContent).not.toBe("");
+    expect(container.querySelector('[aria-label="编辑并重发"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="回到这条消息之前"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="新建分支"]')).toBeTruthy();
+  });
+
+  it("quotes an answer back into the composer", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("> 答");
+  });
+
+  it("regenerates by rewinding the conversation and sending the question again", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="重新生成"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    const calls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(calls).toContain("/rt/r1/rewind/prepare");
+    expect(calls).toContain("/rt/r1/rewind/commit");
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问" });
+  });
+
+  it("forks at the turn and hands the new session to the opener", async () => {
+    stubKernel({ history, checkpoints, branchPath: "/w/sessions/fork.jsonl" });
+    const onOpenBranch = vi.fn();
+
+    render(snapshot(), "r1", { onOpenBranch });
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="新建分支"]') as HTMLButtonElement).click());
+    await flush();
+
+    expect(onOpenBranch).toHaveBeenCalledWith("/w/sessions/fork.jsonl");
+  });
+
+  it("rewrites a message in place through the rewind", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="编辑并重发"]') as HTMLButtonElement).click());
+    const box = container.querySelector(".edit-message-text") as HTMLTextAreaElement;
+    expect(box.value).toBe("问");
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(box, "问（改）");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const send = Array.from(container.querySelectorAll(".edit-message-acts button")).find(
+      (button) => button.textContent?.includes("发送"),
+    ) as HTMLButtonElement;
+    act(() => send.click());
+    await flush();
+    await flush();
+
+    const calls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(calls).toContain("/rt/r1/rewind/prepare");
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问（改）" });
+  });
+
+  it("prepares the plan for the turn a row asks to rewind to", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="回到这条消息之前"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".rewind-plan")?.textContent).toContain("回到第 1 轮之前");
   });
 });
 
