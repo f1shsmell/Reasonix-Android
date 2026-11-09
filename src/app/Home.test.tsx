@@ -922,7 +922,9 @@ describe("Home", () => {
       expect(ghost.style.transform).toContain("scale(1.02)");
 
       pointer(rowAt(rows, 0), "pointermove", 160, 110);
-      expect(ghost.style.transform).toContain("translate3d(0, 100px, 0)");
+      // jsdom prints unitless zero components with `px`; match the values,
+      // not one serializer's spelling of them.
+      expect(ghost.style.transform).toMatch(/translate3d\(0(?:px)?,\s*100px,\s*0(?:px)?\)/);
       expect(rowAt(rows, 1).style.transform).toContain("translateY(-60px)");
     });
 
