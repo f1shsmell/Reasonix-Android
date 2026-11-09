@@ -490,4 +490,116 @@ describe("useLink network changes", () => {
     // attempt spending the retry means the loop is back.
     expect(probes).toBeLessThanOrEqual(4);
   });
+
+  it("keeps refusing the other computer on the retry that follows", async () => {
+    // The gate used to be read only while the link said `connected`. The walk
+    // that fails moves to `reconnecting` and keeps its target, and the retry
+    // that followed then took the account's other computer.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "cloud", target: "dev-1", name: "Mac-B", machine: "Mac-B", usedAt: 0, order: 1 },
+    ] as never);
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+    serverMock.answeringOrigins.mockResolvedValue([]);
+    vi.mocked(door.openDoor).mockImplementation(async (entry) => {
+      if (entry.kind === "cloud") return { ok: true as const };
+      return {
+        ok: false as const,
+        error: { code: "client.offline", message: "offline", retryable: true },
+      };
+    });
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+
+    const cloudOpened = () =>
+      vi.mocked(door.openDoor).mock.calls.some(([entry]) => entry.kind === "cloud");
+
+    await mount();
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+    expect(cloudOpened()).toBe(false);
+
+    // Let the backoff timer run the next walks; none may change computers.
+    for (let round = 0; round < 40; round += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+    }
+    expect(cloudOpened()).toBe(false);
+    expect(latest?.state.mode).not.toBe("cloud");
+  });
+
+  it("honours automatic switching off through a retry", async () => {
+    // The setting is a person's answer, not a property of the first walk.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "cloud", target: "dev-1", name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+    ] as never);
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+    serverMock.answeringOrigins.mockResolvedValue([]);
+    vi.mocked(door.openDoor).mockImplementation(async (entry) => {
+      if (entry.kind === "cloud") return { ok: true as const };
+      return {
+        ok: false as const,
+        error: { code: "client.offline", message: "offline", retryable: true },
+      };
+    });
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+    localStorage.setItem("reasonix.auto-handover.v1", "off");
+
+    try {
+      const cloudOpened = () =>
+        vi.mocked(door.openDoor).mock.calls.some(([entry]) => entry.kind === "cloud");
+
+      await mount();
+      act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+      await flush();
+      expect(cloudOpened()).toBe(false);
+
+      for (let round = 0; round < 40; round += 1) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+      }
+      expect(cloudOpened()).toBe(false);
+    } finally {
+      localStorage.removeItem("reasonix.auto-handover.v1");
+    }
+  });
+
+  it("does not follow a LAN door the list proves is another computer", async () => {
+    // The transport is not the only thing a handover must not change: the
+    // saved list may hold a second computer's LAN address, and reaching it
+    // would replace the project and transcript under the person.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    const spare = "http://192.168.5.9:57074";
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "lan", target: spare, name: "Mac-B", machine: "Mac-B", usedAt: 0, order: 1 },
+    ] as never);
+    const twoDoors = { ...LAN, candidates: [LAN.origin, spare] };
+    serverMock.readProxyConfig.mockResolvedValue(twoDoors);
+    serverMock.refreshProxy.mockResolvedValue(twoDoors);
+    serverMock.answeringOrigins.mockResolvedValue([spare]);
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+
+    await mount();
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+
+    expect(
+      vi.mocked(door.openDoor).mock.calls.some(([entry]) => entry.target === spare),
+    ).toBe(false);
+  });
 });

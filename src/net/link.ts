@@ -207,10 +207,17 @@ export function linkFailure(code: string, detail?: string): LinkError {
         retryable: false,
         ...withDetail,
       };
+    case "handover.unknown":
+      return {
+        code,
+        message: "还没确认两条通道连着同一台电脑，先留在当前连接上重试。",
+        retryable: true,
+        ...withDetail,
+      };
     case "handover.other_machine":
       return {
         code,
-        message: "账号里的云端电脑不是当前这台，已跳过自动切换。",
+        message: "那条通道通向另一台电脑，已跳过自动切换；需要换电脑请在连接页手动选择。",
         retryable: false,
         ...withDetail,
       };

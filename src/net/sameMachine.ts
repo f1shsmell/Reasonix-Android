@@ -9,12 +9,13 @@
  *
  * Identity comes from the saved list, which is the one place both doors meet:
  * a LAN door learns the computer's own name (`readMachineIdentity`), and a
- * cloud door carries the account's device name. `name` is the fallback for
- * rows written before the identity field existed — the same fallback
- * `preferLan` already uses.
+ * cloud door carries the account's device name — the `name` fallback for
+ * cloud rows written before the identity field existed.
  *
- * Absence is a refusal, never a guess. Two machines can share a host name,
- * and a wrong switch costs more than a link that stays down.
+ * Absence is a refusal, never a guess: "unknown" and "different" call for
+ * different answers, because only one of them says another computer answers
+ * there. Two machines can share a host name, and a wrong switch costs more
+ * than a link that stays down.
  */
 
 import { normalizeTarget } from "./savedConnections";
@@ -25,7 +26,15 @@ export interface DoorRef {
   target: string;
 }
 
-/** The identity a saved row carries, preferring the machine over its label. */
+/** What the saved list can say about two doors, never more. */
+export type MachineRelation = "same" | "different" | "unknown";
+
+/**
+ * The identity a saved row carries, or "" when the row has not learned one.
+ *
+ * A LAN row is named by its address, which says nothing about the computer;
+ * only a cloud row is named by the account's device list.
+ */
 function identityOf(rows: SavedConnection[], door: DoorRef): string {
   const target = normalizeTarget(door.kind, door.target);
   const row = rows.find(
@@ -34,7 +43,13 @@ function identityOf(rows: SavedConnection[], door: DoorRef): string {
       normalizeTarget(candidate.kind, candidate.target) === target,
   );
   if (!row) return "";
-  return (row.machine ?? "").trim() || (row.name ?? "").trim();
+  const learned = (row.machine ?? "").trim();
+  if (learned) return learned;
+  if (door.kind !== "cloud") return "";
+  // A cloud row with no name of its own is labelled by its device id, which
+  // says nothing about the computer; only the account's name does.
+  const named = (row.name ?? "").trim();
+  return named && named !== target ? named : "";
 }
 
 /** One spelling per machine, matching `machineKey`'s own normalisation. */
@@ -43,14 +58,16 @@ function fold(value: string): string {
 }
 
 /**
- * True only when both doors are recorded and name the same computer.
- *
- * A door the saved list has never seen is not evidence of anything: the app
- * cannot prove the switch is safe, so it declines.
+ * Whether two doors are proven to reach the same computer, another one, or
+ * cannot be told apart from what the saved list knows.
  */
-export function sameMachine(rows: SavedConnection[], a: DoorRef, b: DoorRef): boolean {
+export function machineRelation(
+  rows: SavedConnection[],
+  a: DoorRef,
+  b: DoorRef,
+): MachineRelation {
   const left = identityOf(rows, a);
   const right = identityOf(rows, b);
-  if (!left || !right) return false;
-  return fold(left) === fold(right);
+  if (!left || !right) return "unknown";
+  return fold(left) === fold(right) ? "same" : "different";
 }

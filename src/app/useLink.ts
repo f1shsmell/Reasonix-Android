@@ -24,7 +24,7 @@ import type { LinkError, LinkState, LinkStep } from "../net/link";
 import { loadRelayDevice, saveRelayDevice, loadStandDown, saveStandDown, clearStandDown } from "../net/relayStore";
 import { prefetchGrant, relayState } from "../net/relay";
 import { loadAutoHandover } from "./handoverPref";
-import { sameMachine } from "../net/sameMachine";
+import { machineRelation } from "../net/sameMachine";
 import type { DoorRef } from "../net/sameMachine";
 import {
   directDoorForMachine,
@@ -462,24 +462,32 @@ export function useLink(connection: Connection): Link {
       const doors = orderedDoors(config, saved, tried);
       const lanTargets = doors.filter((door) => door.kind === "lan").map((door) => door.target);
       /**
-       * Whether this walk may change transport at all.
+       * What this walk may switch to.
        *
-       * A handover swaps the route under a conversation, and a runtime id
-       * only means something on the kernel that minted it — so a door of the
-       * other kind is tried only when the person allowed automatic switching
-       * and both doors name the same computer. A first connection has no
-       * `from`, so every door is still fair game there.
+       * A runtime id only means something on the kernel that minted it, so a
+       * door the list proves reaches another computer never opens on its own
+       * — of any kind. A transport switch needs more: both doors proven to be
+       * the same computer, and the person's permission.
+       *
+       * `from` keeps `target` and `mode` through a retry (`schedule` carries
+       * them), and that is exactly the walk this rule exists for. Keying it on
+       * the `connected` phase instead let the first refused walk be followed
+       * by a retry that took the other computer. Only a first connection,
+       * which has no route at all, is free to open any door.
        */
       const autoHandover = loadAutoHandover();
       const fromDoor: DoorRef | null =
-        from.phase === "connected" && from.target
-          ? { kind: from.mode === "cloud" ? "cloud" : "lan", target: from.target }
-          : null;
+        from.target && from.mode ? { kind: from.mode, target: from.target } : null;
       const refused = (door: Door): LinkError | null => {
-        if (fromDoor === null || door.kind === fromDoor.kind) return null;
-        if (!autoHandover) return linkFailure("handover.off", `${door.kind} ${door.target}`);
-        if (!sameMachine(saved, fromDoor, door))
+        if (fromDoor === null) return null;
+        const relation = machineRelation(saved, fromDoor, door);
+        if (relation === "different")
           return linkFailure("handover.other_machine", `${door.kind} ${door.target}`);
+        if (door.kind === fromDoor.kind) return null;
+        // A door the list has not named is a refusal here, not a guess.
+        if (relation !== "same")
+          return linkFailure("handover.unknown", `${door.kind} ${door.target}`);
+        if (!autoHandover) return linkFailure("handover.off", `${door.kind} ${door.target}`);
         return null;
       };
       // A cloud handshake begins with a round trip to the account service, and

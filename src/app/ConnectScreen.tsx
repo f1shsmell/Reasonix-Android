@@ -1629,7 +1629,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             <span className="setting-main">
               <span className="setting-title">自动切换连接方式</span>
               <span className="setting-sub">
-                同一台电脑在局域网与云端之间自动切换；不同电脑永不自动切换
+                同一台电脑在局域网与云端之间自动切换；确认是另一台电脑时不自动切换
               </span>
             </span>
             <Switch
