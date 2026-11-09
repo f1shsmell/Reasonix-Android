@@ -56,6 +56,7 @@ import { CheckpointsSheet } from "./CheckpointsSheet";
 import { EditMessageSheet } from "./EditMessageSheet";
 import { QueueSheet } from "./QueueSheet";
 import { ContextSheet } from "./ContextSheet";
+import { ImageViewer } from "./ImageViewer";
 import { loadCheckpoints, prepareRewind, commitRewind, rewindMessage } from "../net/rewind";
 import type { Checkpoint } from "../net/rewind";
 import { branchAt, branchMessage } from "../net/branch";
@@ -163,6 +164,36 @@ function sendErrorText(code: string): string {
     default:
       return code;
   }
+}
+
+/** A reply held above the box instead of pasted into it. */
+interface QuotedReply {
+  id: string;
+  text: string;
+  turn?: number;
+}
+
+function quoteLineCount(text: string): number {
+  return text === "" ? 0 : text.split("\n").length;
+}
+
+/**
+ * How a quote reaches the model, worded like Studio's: the turn it came from
+ * is the identity the agent can act on, and the lines follow as a block quote.
+ */
+function quoteBlock(entry: QuotedReply): string {
+  const head =
+    entry.turn !== undefined
+      ? `[Quoting the assistant reply from turn ${entry.turn}.]`
+      : "[Quoting an earlier assistant reply in this conversation.]";
+  return [head, ...entry.text.split("\n").map((line) => `> ${line}`)].join("\n");
+}
+
+/** Quotes lead the message, then the attachments' references, then the words. */
+function composeMessage(quotes: QuotedReply[], refs: string[], text: string): string {
+  return [...quotes.map(quoteBlock), [...refs, text.trim()].filter(Boolean).join(" ")]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
@@ -449,6 +480,7 @@ const RowView = memo(function RowView({
   turn,
   branchTurn,
   question,
+  onOpenImage,
 }: {
   row: Row;
   base: string;
@@ -460,6 +492,8 @@ const RowView = memo(function RowView({
   branchTurn?: number;
   /** The words that asked for this answer, for regenerating the same request. */
   question?: string;
+  /** Show one of this row's pictures at full size. */
+  onOpenImage?: (src: string) => void;
 }) {
   switch (row.kind) {
     case "user":
@@ -469,6 +503,7 @@ const RowView = memo(function RowView({
           base={base}
           actions={actions}
           {...(turn !== undefined ? { turn } : {})}
+          {...(onOpenImage ? { onOpenImage } : {})}
         />
       );
     case "assistant":
@@ -1128,7 +1163,12 @@ export function ChatScreen({
   const [attachments, setAttachments] = useState<
     { ref: string; name: string; url?: string; image?: boolean }[]
   >([]);
+  /** Replies quoted into this message, held as chips above the box. */
+  const [quotes, setQuotes] = useState<QuotedReply[]>([]);
+  const quoteSeq = useRef(0);
   const [attachError, setAttachError] = useState("");
+  /** The picture the viewer is showing, from a sent turn or a pending chip. */
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
@@ -1311,6 +1351,8 @@ export function ChatScreen({
   }, [transcript.running, title, runtime?.name, runtime?.base, runtime?.root, runtimeId, mode]);
 
   const streaming = transcript.running;
+  /** Whether there is anything to send: words, a quote, or an attachment. */
+  const hasCompose = draft.trim() !== "" || quotes.length > 0 || attachments.length > 0;
   const display = useMemo(
     () => buildDisplay(transcript.rows, transcript.running, fold),
     [transcript.rows, transcript.running, fold],
@@ -1678,8 +1720,10 @@ export function ChatScreen({
   }, [runtime, plan, planBusy]);
 
   /**
-   * Upload the chosen files, then append their references in one edit.
+   * Upload the chosen files and hold them as chips.
    *
+   * Their references ride with the send rather than being typed into the box,
+   * so a handful of screenshots does not turn the draft into a list of paths.
    * The picker accepts several at once, and choosing again appends rather than
    * replaces: a phone screenshot flow is "one more thing to show", and making
    * the person re-pick the first file would be worse than the single-file
@@ -1717,21 +1761,10 @@ export function ChatScreen({
       }
 
       setAttaching(false);
-      if (uploaded.length > 0) {
-        setAttachments((current) => [...current, ...uploaded]);
-        // The trailing newline is load-bearing: the caret goes to the end, so
-        // anything typed next starts on its own line instead of becoming part
-        // of the reference token.
-        setDraft((current) => {
-          const base = current.replace(/\s+$/, "");
-          const refs = uploaded.map((entry) => entry.ref).join("\n");
-          return base ? `${base}\n${refs}\n` : `${refs}\n`;
-        });
-        window.setTimeout(grow, 0);
-      }
+      if (uploaded.length > 0) setAttachments((current) => [...current, ...uploaded]);
       if (failures.length > 0) setAttachError(failures.join("\n"));
     },
-    [runtime, grow],
+    [runtime],
   );
 
   const onImage = useCallback(
@@ -1753,7 +1786,6 @@ export function ChatScreen({
   );
 
   const removeAttachment = useCallback((ref: string) => {
-    setDraft((current) => current.replace(ref, "").replace(/[ \t]+\n/g, "\n").trimEnd());
     setAttachments((current) => {
       const removed = current.find((entry) => entry.ref === ref);
       if (removed?.url) URL.revokeObjectURL(removed.url);
@@ -1762,18 +1794,25 @@ export function ChatScreen({
     setAttachError("");
   }, []);
 
+  const removeQuote = useCallback((id: string) => {
+    setQuotes((current) => current.filter((entry) => entry.id !== id));
+  }, []);
+
   const doSend = useCallback(
     async (text: string) => {
       if (!runtime) return;
-      const outgoing = isolateImageRefs(text).trim();
+      // A snapshot, so a send clears exactly what it carried and leaves a chip
+      // picked while the POST was in flight for the next thought.
+      const sentQuotes = quotes;
+      const sentAttachments = attachments;
+      const outgoing = isolateImageRefs(
+        composeMessage(sentQuotes, sentAttachments.map((entry) => entry.ref), text),
+      ).trim();
       if (!outgoing) return;
       // The kernel takes a round trip to confirm a turn. Draw the person's own
       // words now; `turn_started` later confirms this row by matching its text
       // instead of appending a second copy.
       const local = optimisticUser(outgoing);
-      // A snapshot, so a send clears exactly the images it carried and leaves
-      // anything picked while the POST was in flight.
-      const sentAttachments = attachments;
       setTranscript((current) => ({ ...current, rows: [...current.rows, local] }));
       setSend({ kind: "sending" });
       const result = await submit(runtime.base, outgoing);
@@ -1781,10 +1820,13 @@ export function ChatScreen({
         setSend({ kind: "sent" });
         // Only clear what was actually sent. Text typed while the request was
         // in flight is the next thought, not part of this one.
-        if (isolateImageRefs(draftRef.current).trim() === outgoing) {
+        if (draftRef.current === text) {
           forgetDraft();
           setDraft("");
         }
+        setQuotes((current) =>
+          current.filter((entry) => !sentQuotes.some((sent) => sent.id === entry.id)),
+        );
         setAttachments((current) => {
           const kept = current.filter((entry) => !sentAttachments.includes(entry));
           for (const entry of current) {
@@ -1811,7 +1853,7 @@ export function ChatScreen({
       setTranscript((current) => removeLocalUser(current, local.id));
       lastRetry.current = outgoing;
     },
-    [runtime, scrollToBottom, attachments, forgetDraft, setTranscript],
+    [runtime, scrollToBottom, attachments, quotes, forgetDraft, setTranscript],
   );
 
   const [editMessage, setEditMessage] = useState<{ row: UserRow; turn: number } | null>(null);
@@ -1819,15 +1861,32 @@ export function ChatScreen({
   const [editError, setEditError] = useState("");
   const [rewindTurn, setRewindTurn] = useState<number | null>(null);
 
-  const quoteIntoComposer = useCallback((text: string) => {
-    const quoted = text
-      .trim()
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-    setDraft((current) => (current.trim() ? `${current}\n\n${quoted}\n\n` : `${quoted}\n\n`));
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  /**
+   * Hold a reply above the box as one chip. The turn it answers travels with
+   * it, so the model is told which reply the question is about; the same reply
+   * tapped twice is still one chip.
+   */
+  const quoteIntoComposer = useCallback(
+    (text: string, rowId: string) => {
+      const body = text.trim();
+      if (!body) return;
+      const turn = rowTurns.byRow.get(rowId)?.turn;
+      setQuotes((current) =>
+        current.some((entry) => entry.text === body && entry.turn === turn)
+          ? current
+          : [
+              ...current,
+              {
+                id: `q${++quoteSeq.current}`,
+                text: body,
+                ...(turn !== undefined ? { turn } : {}),
+              },
+            ],
+      );
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+    [rowTurns],
+  );
 
   /**
    * Rewind to this turn and send new words in its place — Studio's rewrite and
@@ -1929,16 +1988,16 @@ export function ChatScreen({
         // modifier sends. Shift stays a line break either way.
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
-          if (send.kind !== "sending" && draft.trim()) void doSend(draft);
+          if (send.kind !== "sending" && hasCompose) void doSend(draft);
         }
         return;
       }
       if (!event.shiftKey) {
         event.preventDefault();
-        if (send.kind !== "sending" && draft.trim()) void doSend(draft);
+        if (send.kind !== "sending" && hasCompose) void doSend(draft);
       }
     },
-    [draft, doSend, enterPref, send.kind],
+    [draft, doSend, hasCompose, enterPref, send.kind],
   );
 
   /**
@@ -1952,7 +2011,11 @@ export function ChatScreen({
   const sendWhileRunning = useCallback(
     async (intent: "followup" | "steer") => {
       if (!runtime) return;
-      const text = isolateImageRefs(draft).trim();
+      const sentQuotes = quotes;
+      const sentAttachments = attachments;
+      const text = isolateImageRefs(
+        composeMessage(sentQuotes, sentAttachments.map((entry) => entry.ref), draft),
+      ).trim();
       if (!text) return;
       setInboxNote(intent === "steer" ? "正在插话…" : "正在排队…");
       setPromptError("");
@@ -1972,16 +2035,22 @@ export function ChatScreen({
       setInboxNote(receiptText(result.receipt));
       // The kernel holds this message now, so the composer is free for the
       // next thought — the same rule a normal send follows.
-      if (isolateImageRefs(draftRef.current).trim() === text) {
+      if (draftRef.current === draft) {
         forgetDraft();
         setDraft("");
+        setQuotes((current) =>
+          current.filter((entry) => !sentQuotes.some((sent) => sent.id === entry.id)),
+        );
         setAttachments((current) => {
-          for (const entry of current) if (entry.url) URL.revokeObjectURL(entry.url);
-          return [];
+          const kept = current.filter((entry) => !sentAttachments.includes(entry));
+          for (const entry of current) {
+            if (!kept.includes(entry) && entry.url) URL.revokeObjectURL(entry.url);
+          }
+          return kept;
         });
       }
     },
-    [runtime, draft, forgetDraft],
+    [runtime, draft, quotes, attachments, forgetDraft],
   );
 
   const handlers = useMemo<PromptHandlers>(
@@ -2268,6 +2337,7 @@ export function ChatScreen({
                   {...(turn !== undefined ? { turn } : {})}
                   {...(branchTurn !== undefined ? { branchTurn } : {})}
                   {...(context?.question ? { question: context.question } : {})}
+                  onOpenImage={setViewingImage}
                 />
               );
             })}
@@ -2396,7 +2466,7 @@ export function ChatScreen({
         {/* While a turn runs, the composer's send button is the stop control, so
             a message typed now needs its own way out. Two buttons rather than
             one: queuing leaves the turn alone, steering joins it. */}
-        {streaming && draft.trim() && runtime.readOnly !== true ? (
+        {streaming && hasCompose && runtime.readOnly !== true ? (
           <div className="interject" role="group" aria-label="发送到运行中的回合">
             <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
               排队
@@ -2431,23 +2501,52 @@ export function ChatScreen({
             multiple
             onChange={(event) => void onFile(event)}
           />
-          {attachments.length > 0 ? (
-            <div className="composer-images">
-              {attachments.map((entry, index) => (
+          {quotes.length > 0 || attachments.length > 0 ? (
+            <div className="composer-chips">
+              {quotes.map((entry) => (
+                <div className="quote-chip" key={entry.id}>
+                  <span className="quote-glyph" aria-hidden="true">
+                    ❝
+                  </span>
+                  <span className="quote-meta">
+                    <span className="quote-name">
+                      {entry.turn !== undefined ? `引用第 ${entry.turn} 轮回复` : "引用回复"}
+                    </span>
+                    <span className="quote-lines">{quoteLineCount(entry.text)} 行</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    aria-label="移除引用"
+                    onClick={() => removeQuote(entry.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              {attachments.map((entry) => (
                 <div className="attachment" key={entry.ref}>
                   {entry.url ? (
-                    <img src={entry.url} alt="已选择的图片" />
+                    <button
+                      type="button"
+                      className="attachment-thumb"
+                      aria-label={`放大图片 ${entry.name}`}
+                      onClick={() => setViewingImage(entry.url ?? null)}
+                    >
+                      <img src={entry.url} alt="已选择的图片" />
+                    </button>
                   ) : (
                     <span className="attachment-file" aria-hidden="true">
                       {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
                     </span>
                   )}
-                  <span className="attachment-index" aria-hidden="true">
-                    {index + 1}
+                  <span className="attachment-meta">
+                    <span className="attachment-name">{entry.name}</span>
+                    <span className="attachment-kind">{entry.image ? "图片" : "文件"}</span>
                   </span>
-                  <span className="attachment-name">{entry.name}</span>
                   <button
                     type="button"
+                    className="chip-remove"
                     aria-label={`移除附件 ${entry.name}`}
                     onClick={() => removeAttachment(entry.ref)}
                   >
@@ -2525,7 +2624,7 @@ export function ChatScreen({
                 type="button"
                 className="send"
                 aria-label="发送"
-                disabled={!draft.trim() || send.kind === "sending" || attaching}
+                disabled={!hasCompose || send.kind === "sending" || attaching}
                 onClick={() => void doSend(draft)}
               >
                 ↑
@@ -2677,6 +2776,10 @@ export function ChatScreen({
           steps={process.steps}
           onClose={() => setProcess(null)}
         />
+      ) : null}
+
+      {viewingImage ? (
+        <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />
       ) : null}
     </div>
   );

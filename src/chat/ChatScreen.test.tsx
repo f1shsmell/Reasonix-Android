@@ -1050,7 +1050,7 @@ describe("ChatScreen message actions", () => {
     expect(container.querySelector('[aria-label="新建分支"]')).toBeTruthy();
   });
 
-  it("quotes an answer back into the composer", async () => {
+  it("holds a quote above the box instead of pasting it into the draft", async () => {
     stubKernel({ history, checkpoints });
 
     render(snapshot());
@@ -1059,7 +1059,34 @@ describe("ChatScreen message actions", () => {
 
     act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.value).toContain("> 答");
+    expect(textarea.value).toBe("");
+    expect(container.querySelector(".quote-chip")?.textContent).toContain("引用第 1 轮回复");
+    expect(container.querySelector(".quote-chip")?.textContent).toContain("1 行");
+
+    act(() =>
+      (container.querySelector('button[aria-label="移除引用"]') as HTMLButtonElement).click(),
+    );
+    expect(container.querySelector(".quote-chip")).toBeNull();
+  });
+
+  it("sends the quoted turn before the question", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    typeDraft("再解释一下");
+    act(() => sendButton().click());
+    await flush();
+    await flush();
+
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({
+      input: "[Quoting the assistant reply from turn 1.]\n> 答\n\n再解释一下",
+    });
+    expect(container.querySelector(".quote-chip")).toBeNull();
   });
 
   it("regenerates by rewinding the conversation and sending the question again", async () => {
@@ -1672,7 +1699,7 @@ describe("ChatScreen composer", () => {
     await flush();
 
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.value).toContain("@.reasonix/attachments/photo.png");
+    expect(textarea.value).toBe("");
     expect(container.querySelector(".attachment img")?.getAttribute("src")).toBe("blob:photo");
     expect(container.querySelector(".attachment")?.textContent).toContain("photo.png");
     expect(fetchMock).toHaveBeenCalledWith(
@@ -1689,6 +1716,51 @@ describe("ChatScreen composer", () => {
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
     expect(container.querySelector(".attachment")).toBeNull();
     expect(preview).toHaveBeenCalled();
+  });
+
+  it("opens a pending image at full size and closes the preview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/rt/r1/attachments")) {
+          return Promise.resolve(
+            json({
+              path: ".reasonix/attachments/photo.png",
+              ref: "@.reasonix/attachments/photo.png",
+              image: true,
+            }),
+          );
+        }
+        return Promise.resolve(json([]));
+      }),
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:photo");
+
+    render(snapshot());
+    await flush();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["image"], "photo.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+
+    const thumb = container.querySelector(
+      'button[aria-label="放大图片 photo.png"]',
+    ) as HTMLButtonElement;
+    act(() => thumb.click());
+
+    const dialog = container.querySelector('[role="dialog"][aria-label="图片预览"]');
+    expect(dialog?.querySelector("img")?.getAttribute("src")).toBe("blob:photo");
+
+    const close = dialog?.querySelector<HTMLButtonElement>('button[aria-label="关闭预览"]');
+    expect(close).not.toBeNull();
+    act(() => close?.click());
+    expect(container.querySelector('[aria-label="图片预览"]')).toBeNull();
+    // The chip is still staged after the preview closes.
+    expect(container.querySelector(".attachment")).not.toBeNull();
   });
 
   it("uploads a file and shows a file chip", async () => {
@@ -1718,7 +1790,7 @@ describe("ChatScreen composer", () => {
     await flush();
 
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.value).toContain("@.reasonix/attachments/app.log");
+    expect(textarea.value).toBe("");
     expect(container.querySelector(".attachment-file")?.textContent).toBe("LOG");
     expect(container.querySelector(".attachment img")).toBeNull();
     const upload = fetchMock.mock.calls.find(([url]) =>
@@ -1774,9 +1846,7 @@ describe("ChatScreen composer", () => {
     await flush();
 
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.value).toContain("@.reasonix/attachments/p1.png");
-    expect(textarea.value).toContain("@.reasonix/attachments/p3.png");
-    expect(textarea.value).not.toContain("p2.png");
+    expect(textarea.value).toBe("");
     expect(container.querySelectorAll(".attachment")).toHaveLength(2);
     expect(container.textContent).toContain("two.png");
     expect(container.textContent).toContain("图片太大");
@@ -1822,9 +1892,7 @@ describe("ChatScreen composer", () => {
     await flush();
 
     expect(container.querySelectorAll(".attachment")).toHaveLength(2);
-    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-    expect(textarea.value).toContain("@p1.png");
-    expect(textarea.value).toContain("@p2.png");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("sends the uploaded reference as the turn input", async () => {
