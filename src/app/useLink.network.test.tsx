@@ -4,8 +4,10 @@ import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useLink } from "./useLink";
 import type { Link } from "./useLink";
+import { loadConnections } from "../net/savedConnections";
 import type { Connection } from "../net/connection";
 import type { NetworkStatus } from "../net/network";
+import type { ProxyConfig } from "../net/server";
 
 const serverMock = vi.hoisted(() => ({
   refreshProxy: vi.fn(),
@@ -17,6 +19,7 @@ vi.mock("../net/server", () => serverMock);
 
 const relayMock = vi.hoisted(() => ({
   prefetchGrant: vi.fn(),
+  relayState: vi.fn(() => "none"),
 }));
 vi.mock("../net/relay", () => relayMock);
 
@@ -29,6 +32,13 @@ vi.mock("../net/savedConnections", () => ({
   originName: vi.fn((origin: string) => origin),
   normalizeTarget: vi.fn((_kind: string, target: string) => target.replace(/\/$/, "")),
   machineKey: vi.fn((name: string) => name.trim().toLowerCase()),
+  originHost: vi.fn((origin: string) => {
+    try {
+      return new URL(origin).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }),
 }));
 
 vi.mock("../net/relayStore", () => ({
@@ -72,8 +82,8 @@ function status(overrides: Partial<NetworkStatus> = {}): NetworkStatus {
 function fakeConnection() {
   return {
     current: {
-      reach: { kind: "ok" as const },
-      runtimes: [],
+      reach: { kind: "ok" as "ok" | "unauthorized" },
+      runtimes: [] as unknown[],
       stream: { kind: "idle" as const },
     },
     lost: false,
@@ -81,6 +91,7 @@ function fakeConnection() {
     refresh: vi.fn(async () => true),
     resetFailures: vi.fn(),
     wakeStream: vi.fn(),
+    subscribe: vi.fn((_listener: (snapshot: unknown) => void) => () => {}),
   };
 }
 
@@ -122,6 +133,10 @@ beforeEach(() => {
   serverMock.refreshProxy.mockResolvedValue(LAN);
   serverMock.answeringOrigins.mockResolvedValue([]);
   serverMock.readMachineIdentity.mockResolvedValue(null);
+  // `clearAllMocks` clears calls, not implementations: a test that replaced
+  // the saved rows would otherwise leak them into the next one.
+  vi.mocked(loadConnections).mockReturnValue([]);
+  relayMock.relayState.mockReturnValue("none");
 });
 
 afterEach(() => {
@@ -238,6 +253,174 @@ describe("useLink network changes", () => {
     const asked = relayMock.prefetchGrant.mock.invocationCallOrder[0] ?? Infinity;
     const swept = serverMock.answeringOrigins.mock.invocationCallOrder[0] ?? Infinity;
     expect(asked).toBeLessThan(swept);
+  });
+
+  it("never hands a conversation to another computer", async () => {
+    // A runtime id only means something on the kernel that minted it. The
+    // account's recent device may be a different computer entirely, so a walk
+    // that started on a LAN door must not open it.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    // A second LAN address for the same computer: the first one is the
+    // proxy's current origin, which the walk verifies before the door list
+    // and therefore marks as already tried.
+    const spare = "http://192.168.5.9:57074";
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "lan", target: spare, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+      { kind: "cloud", target: "dev-1", name: "Mac-B", machine: "Mac-B", usedAt: 0, order: 2 },
+    ] as never);
+
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+    serverMock.answeringOrigins.mockResolvedValue([spare]);
+
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+    vi.mocked(door.openDoor).mockClear();
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+
+    const kinds = vi.mocked(door.openDoor).mock.calls.map(([entry]) => entry.kind);
+    // The LAN door is still tried; the other computer's cloud door is not.
+    expect(kinds).toContain("lan");
+    expect(kinds).not.toContain("cloud");
+  });
+
+  it("stays on its own door when automatic switching is off", async () => {
+    // The switch is a person's choice: even the same computer must not be
+    // reached through the other transport behind their back.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    const spare = "http://192.168.5.9:57074";
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "lan", target: spare, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+      { kind: "cloud", target: "dev-1", name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 2 },
+    ] as never);
+
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+    serverMock.answeringOrigins.mockResolvedValue([spare]);
+    localStorage.setItem("reasonix.auto-handover.v1", "off");
+
+    try {
+      await mount();
+      fake.quickCheck.mockResolvedValue(false);
+      fake.refresh.mockResolvedValue(false);
+      vi.mocked(door.openDoor).mockClear();
+
+      act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+      await flush();
+
+      const kinds = vi.mocked(door.openDoor).mock.calls.map(([entry]) => entry.kind);
+      expect(kinds).toContain("lan");
+      expect(kinds).not.toContain("cloud");
+    } finally {
+      localStorage.removeItem("reasonix.auto-handover.v1");
+    }
+  });
+
+  it("reacts to a dead LAN stream instead of waiting for the watch timer", async () => {
+    // A retrying stream is an event; the 30 s poll is not. Two retries rule
+    // out a kernel restarting a single pane, so one short probe decides
+    // whether the route is gone — and a dead one walks the doors at once.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    const spare = "http://192.168.5.9:57074";
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "lan", target: spare, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+    ] as never);
+
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+    serverMock.answeringOrigins.mockResolvedValue([spare]);
+
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    fake.refresh.mockResolvedValue(false);
+    vi.mocked(door.openDoor).mockClear();
+
+    const listener = vi.mocked(fake.subscribe).mock.calls[0]?.[0];
+    expect(listener).toBeDefined();
+    act(() => {
+      listener?.({ stream: { kind: "retrying", attempt: 2, afterMs: 500 } });
+    });
+    await flush();
+
+    expect(fake.quickCheck).toHaveBeenCalled();
+    expect(vi.mocked(door.openDoor).mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("moves to the account when a LAN pairing has expired", async () => {
+    // A refusal is about the door. The LAN cookie cannot be repaired by
+    // retrying it, while the account still reaches the same machine.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "cloud", target: "dev-1", name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+    ] as never);
+
+    const withCloud = { ...LAN, relayDevice: "dev-1", account: { signedIn: true } };
+    serverMock.readProxyConfig.mockResolvedValue(withCloud);
+    serverMock.refreshProxy.mockResolvedValue(withCloud);
+
+    await mount();
+    // The route now refuses every read: the LAN pairing expired.
+    fake.current.reach = { kind: "unauthorized" };
+    fake.refresh.mockResolvedValue(false);
+    vi.mocked(door.openDoor).mockResolvedValue({ ok: true });
+
+    act(() => latest?.check());
+    await flush();
+
+    const kinds = vi.mocked(door.openDoor).mock.calls.map(([entry]) => entry.kind);
+    expect(kinds).not.toContain("lan");
+    expect(kinds).toContain("cloud");
+  });
+
+  it("keeps a working link's face while it tries the next door", async () => {
+    // The session is still on screen; only the transport is being repaired.
+    // Blinking back to "finding the computer" is what made a hiccup look like
+    // a disconnection.
+    await mount();
+    fake.quickCheck.mockResolvedValue(false);
+    let release: () => void = () => {};
+    serverMock.refreshProxy.mockImplementation(
+      () => new Promise<ProxyConfig | null>((resolve) => (release = () => resolve(LAN))),
+    );
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+    await flush();
+
+    expect(latest?.state.phase).toBe("connected");
+    expect(latest?.state.step).toBe("probe");
+
+    release();
+    await flush();
+  });
+
+  it("leaves a reconnecting relay alone on a resume", async () => {
+    // The relay retries its own socket for up to a minute. Probing during that
+    // window would time out against a link that is about to return, and the
+    // walk that followed would tear it down.
+    await mount();
+    fake.quickCheck.mockClear();
+    relayMock.relayState.mockReturnValue("reconnecting");
+
+    act(() => latest?.reassess());
+    await flush();
+
+    expect(fake.quickCheck).not.toHaveBeenCalled();
+    expect(latest?.state.phase).toBe("connected");
   });
 
   it("probes a missed door again before waiting out a backoff", async () => {

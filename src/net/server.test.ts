@@ -5,6 +5,7 @@ import {
   firstAnswering,
   originAnswers,
   parseServerLink,
+  probeDoor,
   probeUpstream,
   ProxyError,
   readProxyConfig,
@@ -120,6 +121,57 @@ describe("proxy control plane", () => {
       status: 403,
       code: "device.pairing_invalid",
     } satisfies Partial<ProxyError>);
+  });
+});
+
+describe("probeDoor", () => {
+  it("names the computer behind a door that answers", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ machine: "MacBook-Pro" })));
+
+    expect(await probeDoor("http://192.168.5.3:57074")).toEqual({
+      ok: true,
+      machine: "MacBook-Pro",
+    });
+  });
+
+  it("keeps a refusal apart from a dead network", async () => {
+    // The two need different next steps: re-pair, or retry later.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ code: "device.unauthorized" }, 401)),
+    );
+
+    expect(await probeDoor("http://192.168.5.3:57074")).toEqual({
+      ok: false,
+      code: "device.unauthorized",
+    });
+  });
+
+  it("accepts a kernel that answers without naming itself", async () => {
+    // An older build is a working door, not a broken one.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({})));
+
+    expect(await probeDoor("http://192.168.5.3:57074")).toEqual({ ok: true, machine: "" });
+  });
+
+  it("lets an older shell fall back instead of refusing every door", async () => {
+    // A proxy that predates `/__reasonix/device` answers 404. Refusing here
+    // would turn an app upgrade into a connection that can never open.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ code: "proxy.unknown_path" }, 404)),
+    );
+
+    expect(await probeDoor("http://192.168.5.3:57074")).toEqual({ ok: true, machine: "" });
+  });
+
+  it("reports a dropped request as offline", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    expect(await probeDoor("http://192.168.5.3:57074")).toEqual({
+      ok: false,
+      code: "client.offline",
+    });
   });
 });
 

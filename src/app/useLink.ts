@@ -22,7 +22,10 @@ import {
 } from "../net/link";
 import type { LinkError, LinkState, LinkStep } from "../net/link";
 import { loadRelayDevice, saveRelayDevice, loadStandDown, saveStandDown, clearStandDown } from "../net/relayStore";
-import { prefetchGrant } from "../net/relay";
+import { prefetchGrant, relayState } from "../net/relay";
+import { loadAutoHandover } from "./handoverPref";
+import { sameMachine } from "../net/sameMachine";
+import type { DoorRef } from "../net/sameMachine";
 import {
   directDoorForMachine,
   learnConnectionMachine,
@@ -30,6 +33,7 @@ import {
   latestConnection,
   machineKey,
   normalizeTarget,
+  originHost,
   originName,
   rememberConnection,
 } from "../net/savedConnections";
@@ -58,11 +62,25 @@ export function lanDoorsOf(config: ProxyConfig | null): string[] {
   // my Wi-Fi". Rows the app knows about but the proxy does not keep their
   // place at the end rather than jumping the queue.
   const ordered = [...(config?.preferred ?? []), ...(config?.candidates ?? [])];
-  return [
-    ...new Set(
-      [config?.origin ?? "", ...ordered, ...saved].filter(Boolean),
-    ),
-  ];
+  /**
+   * One door per host.
+   *
+   * A kernel that restarted on a new port leaves its old address behind in
+   * the proxy's list, and both would be probed — a deadline spent on a door
+   * that is gone. Hosts are compared the way `originHost` does, so a spelling
+   * difference is not a second computer. Different hosts stay: a Wi-Fi
+   * address and a tunnel address are two doors to one machine and both work.
+   */
+  const doors: string[] = [];
+  const hosts = new Set<string>();
+  for (const origin of [config?.origin ?? "", ...ordered, ...saved]) {
+    if (!origin) continue;
+    const host = originHost(origin);
+    if (host && hosts.has(host)) continue;
+    if (host) hosts.add(host);
+    if (!doors.includes(origin)) doors.push(origin);
+  }
+  return doors;
 }
 
 /**
@@ -191,6 +209,18 @@ export interface Link {
   noteDisconnected: () => void;
 }
 
+/**
+ * What one walk may do differently.
+ *
+ * `skipLan` is set by a stale pairing: the LAN cookie that expired cannot be
+ * repaired by retrying it, while the account may still reach the same
+ * machine. Passing it per call rather than through a shared flag keeps it
+ * from leaking into an unrelated retry that happens to start first.
+ */
+export interface AttemptOptions {
+  skipLan?: boolean;
+}
+
 export function useLink(connection: Connection): Link {
   const [state, setState] = useState<LinkState>(idleLink);
   const stateRef = useRef<LinkState>(idleLink);
@@ -225,7 +255,7 @@ export function useLink(connection: Connection): Link {
   const lastNetworkKick = useRef(0);
   /** One short verification after a change; overlapping events share it. */
   const reassessing = useRef(false);
-  const attemptRef = useRef<() => Promise<void>>(async () => {});
+  const attemptRef = useRef<(options?: AttemptOptions) => Promise<void>>(async () => {});
 
   const emit = useCallback((next: LinkState) => {
     stateRef.current = next;
@@ -325,12 +355,20 @@ export function useLink(connection: Connection): Link {
     [emit, failed],
   );
 
-  const attempt = useCallback(async () => {
+  const attempt = useCallback(async (options: AttemptOptions = {}) => {
     if (active.current) return;
     active.current = true;
     const mine = ++generation.current;
     const live = () => generation.current === mine;
     clearTimer();
+    /**
+     * What the app was doing before this attempt.
+     *
+     * Read before any `emit`: a retry keeps the phase it started under, and
+     * the transport it was on is what a handover has to be judged against.
+     */
+    const from = stateRef.current;
+    const skipLan = options.skipLan === true;
     // The system says there is no network: every door would fail on a socket
     // that cannot open. Wait for the network instead of spending the retry
     // budget on a phone that is offline.
@@ -350,12 +388,32 @@ export function useLink(connection: Connection): Link {
     // An automatic retry stays "reconnecting" while it runs; only a person
     // starting from idle sees "connecting".
     const retrying = stateRef.current.phase === "reconnecting";
-    const stage = (step: LinkStep): LinkState => ({
-      ...connectingLink(step, stateRef.current),
-      ...(retrying ? { phase: "reconnecting" as const } : {}),
-    });
+    /**
+     * A walk that started from a working link keeps that link's face.
+     *
+     * The session is still on screen and the transport is being repaired, not
+     * established, so the chip must not blink back to "finding the computer"
+     * for the second it takes to try the next door. The budget is short on
+     * purpose: a repair that is really an outage has to say so, and a failure
+     * is still reported at once by `schedule`.
+     */
+    const recovering = from.phase === "connected";
+    const silentUntil = recovering ? Date.now() + 3_000 : 0;
+    const stage = (step: LinkStep): LinkState => {
+      if (Date.now() < silentUntil && stateRef.current.phase === "connected") {
+        return { ...stateRef.current, step };
+      }
+      return {
+        ...connectingLink(step, stateRef.current),
+        // A repair that ran out of budget is "reconnecting", not "connecting":
+        // the person never asked for a new link, they lost the one they had.
+        ...(retrying || recovering ? { phase: "reconnecting" as const } : {}),
+      };
+    };
     emit(stage("probe"));
-    let last: LinkError | null = null;
+    // A skipped LAN walk still has to say why it ended if no cloud door can
+    // be opened: the person's pairing expired, not their network.
+    let last: LinkError | null = skipLan ? linkFailure("device.unauthorized") : null;
     try {
       const fresh = await refreshProxy();
       if (!live()) return;
@@ -386,7 +444,7 @@ export function useLink(connection: Connection): Link {
       // remember it so the ordered walk below does not repeat it. The key is
       // the normalised target, which is what `orderedDoors` compares against:
       // an origin with a trailing slash is the same door.
-      if (config.mode !== "relay" && config.origin) {
+      if (!skipLan && config.mode !== "relay" && config.origin) {
         tried.add(`lan:${normalizeTarget("lan", config.origin)}`);
         const reached = await connection.refresh();
         if (!live()) return;
@@ -403,6 +461,27 @@ export function useLink(connection: Connection): Link {
       // and the walk keeps the list's order for the ones that do answer.
       const doors = orderedDoors(config, saved, tried);
       const lanTargets = doors.filter((door) => door.kind === "lan").map((door) => door.target);
+      /**
+       * Whether this walk may change transport at all.
+       *
+       * A handover swaps the route under a conversation, and a runtime id
+       * only means something on the kernel that minted it — so a door of the
+       * other kind is tried only when the person allowed automatic switching
+       * and both doors name the same computer. A first connection has no
+       * `from`, so every door is still fair game there.
+       */
+      const autoHandover = loadAutoHandover();
+      const fromDoor: DoorRef | null =
+        from.phase === "connected" && from.target
+          ? { kind: from.mode === "cloud" ? "cloud" : "lan", target: from.target }
+          : null;
+      const refused = (door: Door): LinkError | null => {
+        if (fromDoor === null || door.kind === fromDoor.kind) return null;
+        if (!autoHandover) return linkFailure("handover.off", `${door.kind} ${door.target}`);
+        if (!sameMachine(saved, fromDoor, door))
+          return linkFailure("handover.other_machine", `${door.kind} ${door.target}`);
+        return null;
+      };
       // A cloud handshake begins with a round trip to the account service, and
       // the walk cannot reach that door until this sweep has finished. Ask for
       // the ticket now so the round trip runs beside the probe instead of
@@ -411,11 +490,16 @@ export function useLink(connection: Connection): Link {
       // the door while it is still fresh.
       if (config.account.signedIn) {
         for (const door of doors) {
+          // Deliberately not filtered by `refused`: a ticket touches no proxy
+          // upstream and no socket, and keeping the request beside the sweep
+          // is what stops a cloud handshake from starting only after the LAN
+          // probe has finished. A door that turns out to be refused costs one
+          // cached round trip, not a wrong switch.
           if (door.kind === "cloud") prefetchGrant(door.target);
         }
       }
       const reachable = new Set(
-        lanTargets.length > 0 ? await answeringOrigins(lanTargets) : [],
+        !skipLan && lanTargets.length > 0 ? await answeringOrigins(lanTargets) : [],
       );
       if (!live()) return;
 
@@ -424,6 +508,18 @@ export function useLink(connection: Connection): Link {
         const name =
           door.name ?? (door.kind === "lan" ? originName(door.target) : "云端电脑");
         if (door.kind === "cloud" && !config.account.signedIn) continue;
+        // The credential that just expired belongs to every LAN door, so a
+        // stale-pairing walk spends nothing on them.
+        if (skipLan && door.kind === "lan") continue;
+        // A refusal is not a failure of this route: it is a rule about what
+        // may change without the person asking. Keep walking the doors of the
+        // transport already in use; only a walk with nothing left to try ends
+        // on it.
+        const refusal = refused(door);
+        if (refusal) {
+          last = last ?? refusal;
+          continue;
+        }
         if (door.kind === "lan" && !reachable.has(door.target)) {
           last = last ?? linkFailure("client.offline", `origin ${door.target}`);
           continue;
@@ -528,40 +624,61 @@ export function useLink(connection: Connection): Link {
   }, [attempt]);
 
   /**
-   * Verify the route a live link is on, without ever changing it.
+   * Move a link whose door refused onto another door of the same computer.
    *
-   * Safe to call as often as a screen mounts: it reads `/runtimes` and decides
+   * A refusal is decisive, but it is about the door: the LAN cookie that
+   * expired cannot be repaired by retrying it, while the account may still
+   * reach the same machine. The walk runs with LAN doors skipped, and
+   * `refused()` still holds the machine check — so this lands on the cloud
+   * route of the same computer, or nowhere at all.
+   */
+  const recoverStalePairing = useCallback(() => {
+    if (standDown.current || active.current) return;
+    if (stateRef.current.phase !== "connected") return;
+    backoff.current.reset();
+    // Only a refusal on the LAN route says the LAN cookie is dead. A refusal
+    // carried over the relay may be about the account, and the neighbour may
+    // still answer — so that walk keeps every door.
+    const skipLan = stateRef.current.mode === "lan";
+    void attemptRef.current({ skipLan });
+  }, []);
+
+  /**
+   * Verify the route a live link is on, without changing a working one.
+   *
+   * Safe to call as often as a screen mounts: a route that answers decides
    * nothing. Switching a working relay to the LAN is an improvement, not a
    * repair, and doing it here meant a settings visit could silently replace
    * the transport under a conversation — which is the other half of the "it
-   * disconnects when I open settings" report. The `watch` timer owns
-   * reconnection; this only looks.
+   * disconnects when I open settings" report. Only a refusal acts, and only
+   * by moving to another door of the same computer.
    */
   const check = useCallback(() => {
     void (async () => {
       await connection.refresh();
       // An expired pairing is an answer, not a hiccup: the kernel refused
       // every read it will refuse until the person re-pairs. Leaving the chip
-      // on 已连接 with a dead session is exactly the wedge the tolerance was
-      // not meant to create, so the machine moves to `failed` and says why.
+      // on 已连接 with a dead session is the wedge the tolerance was not meant
+      // to create — but the computer may still be reachable through the
+      // account, so this is a handover, not a failure.
       if (
         connection.current.reach.kind === "unauthorized" &&
         !standDown.current &&
         !active.current &&
         stateRef.current.phase === "connected"
       ) {
-        failed(linkFailure("device.unauthorized"), stateRef.current);
+        recoverStalePairing();
       }
     })();
-  }, [connection, failed]);
+  }, [connection, recoverStalePairing]);
 
   /**
    * Look after a live link on a timer.
    *
-   * The difference from `check` is what happens when the route stops
-   * answering: `check` only records it, and this reconnects — but only once
-   * the transport has failed twice in a row (`Connection.lost`). A single
-   * lost request is a Wi-Fi hiccup, and acting on it is what used to drop a
+   * The difference from `check` is what happens when the transport stops
+   * answering: `check` only reads, and this reconnects — but only once the
+   * transport has failed twice in a row (`Connection.lost`). A single lost
+   * request is a Wi-Fi hiccup, and acting on it is what used to drop a
    * working connection the moment a screen appeared.
    */
   const watch = useCallback(() => {
@@ -580,7 +697,7 @@ export function useLink(connection: Connection): Link {
         !active.current &&
         stateRef.current.phase === "connected"
       ) {
-        failed(linkFailure("device.unauthorized"), stateRef.current);
+        recoverStalePairing();
         return;
       }
       if (!connection.lost) return;
@@ -589,7 +706,46 @@ export function useLink(connection: Connection): Link {
       backoff.current.reset();
       void attemptRef.current();
     })();
-  }, [connection, failed]);
+  }, [connection, recoverStalePairing]);
+
+  /**
+   * A retrying stream is the earliest sign the whole route is gone.
+   *
+   * The watch timer is a poll and can be half a minute late; a stream that has
+   * retried twice (about a second) is an event, and a kernel restarting one
+   * pane rarely costs more than one. A short probe then says whether this is
+   * the pane or the computer, and a dead route goes straight to a fresh walk
+   * instead of waiting for the next tick.
+   *
+   * LAN only: a cloud stream is carried by the relay, whose own reconnection
+   * is the thing to wait for — probing it here would race `relayAlive` and
+   * turn a self-healing link into a handover.
+   */
+  const streamProbe = useRef(false);
+  useEffect(
+    () =>
+      connection.subscribe((snapshot) => {
+        if (streamProbe.current || standDown.current || active.current) return;
+        const live = stateRef.current;
+        if (live.phase !== "connected" || live.mode !== "lan") return;
+        const stream = snapshot.stream;
+        if (stream.kind !== "retrying" || stream.attempt < 2) return;
+        streamProbe.current = true;
+        void (async () => {
+          try {
+            const reached = await connection.quickCheck(3_000);
+            if (reached) return;
+            if (standDown.current || active.current) return;
+            if (stateRef.current.phase !== "connected") return;
+            backoff.current.reset();
+            void attemptRef.current();
+          } finally {
+            streamProbe.current = false;
+          }
+        })();
+      }),
+    [connection],
+  );
 
   /** A LAN upgrade just failed; do not retry it on every timer tick. */
   const lastUpgrade = useRef(0);
@@ -608,6 +764,9 @@ export function useLink(connection: Connection): Link {
    */
   const preferLan = useCallback(() => {
     if (standDown.current || active.current) return;
+    // The person turned automatic switching off: a live cloud link stays
+    // where it is until they pick a door themselves.
+    if (!loadAutoHandover()) return;
     const live = stateRef.current;
     if (live.phase !== "connected" || live.mode !== "cloud" || !live.target) return;
     if (Date.now() - lastUpgrade.current < 15_000) return;
@@ -714,6 +873,10 @@ export function useLink(connection: Connection): Link {
   const reassess = useCallback(() => {
     if (standDown.current || active.current || reassessing.current) return;
     if (stateRef.current.phase !== "connected") return;
+    // A reconnecting relay is already healing. Its requests stay pending
+    // until the socket is back, so a probe here would time out against a link
+    // that is about to return — and then start a walk that tears it down.
+    if (relayState() === "reconnecting") return;
     reassessing.current = true;
     void (async () => {
       try {

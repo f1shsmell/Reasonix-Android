@@ -92,6 +92,7 @@ import { CHAT_FONT_CHOICES, applyChatFont, loadChatFont, saveChatFont } from "..
 import type { ChatFont } from "../chat/chatFont";
 import { NET_POLICY_CHOICES, loadNetPolicy, saveNetPolicy } from "./netpref";
 import type { NetPolicy } from "./netpref";
+import { loadAutoHandover, saveAutoHandover } from "./handoverPref";
 import { ENTER_CHOICES, loadEnterPref, saveEnterPref } from "./enterPref";
 import type { EnterPref } from "./enterPref";
 import { Segmented } from "./Segmented";
@@ -235,6 +236,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [hapticDrag, setHapticDragState] = useState(() => loadSurfaceChoice("drag"));
   /** Stream feedback: the two edges of an answer, not the text between them. */
   const [hapticStream, setHapticStreamState] = useState(() => loadSurfaceChoice("stream"));
+  /** Whether a live link may move between this computer's LAN and cloud doors. */
+  const [autoHandover, setAutoHandoverState] = useState(() => loadAutoHandover());
   /** The copy-diagnostics row's last result. */
   const [diagStatus, setDiagStatus] = useState("");
   /** Computers this phone has connected to before, newest first. */
@@ -455,6 +458,18 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const pickHapticStream = useCallback((enabled: boolean) => {
     setHapticStreamState(enabled);
     saveHapticSurface("stream", enabled);
+  }, []);
+
+  /**
+   * The person's answer about moving between transports.
+   *
+   * Written immediately rather than on leaving the screen: the next automatic
+   * kick reads it, and a switch that is flipped back before the screen closes
+   * must not leave a stale value behind.
+   */
+  const pickAutoHandover = useCallback((enabled: boolean) => {
+    setAutoHandoverState(enabled);
+    saveAutoHandover(enabled);
   }, []);
 
   const connect = useCallback(
@@ -1610,6 +1625,19 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               />
             </div>
           ) : null}
+          <div className="setting">
+            <span className="setting-main">
+              <span className="setting-title">自动切换连接方式</span>
+              <span className="setting-sub">
+                同一台电脑在局域网与云端之间自动切换；不同电脑永不自动切换
+              </span>
+            </span>
+            <Switch
+              checked={autoHandover}
+              onChange={pickAutoHandover}
+              ariaLabel="自动切换连接方式"
+            />
+          </div>
         </section>
 
         <p className="group-label">派发</p>

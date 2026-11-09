@@ -42,6 +42,16 @@ export class RelayError extends Error {
   }
 }
 
+/**
+ * What the link itself is doing, as opposed to what a request to it did.
+ *
+ * A reconnecting relay is healing on its own: its requests stay pending until
+ * the socket is back, so a read that times out during that window says
+ * nothing about the computer. Keeping this fact separate is what stops the
+ * link machine from reconnecting a route that is about to return.
+ */
+export type RelayState = "open" | "reconnecting" | "ended";
+
 interface RelayDevice {
   id: string;
   publicKey: string;
@@ -466,6 +476,8 @@ export class RelayLink {
   private sending: Promise<void> = Promise.resolve();
   private reconnecting = false;
   private ended = false;
+  private state: RelayState = "open";
+  private readonly watchers = new Set<(state: RelayState) => void>();
 
   constructor(private readonly deviceId: string, first: Connection) {
     this.current = first;
@@ -474,6 +486,23 @@ export class RelayLink {
 
   get isEnded(): boolean {
     return this.ended;
+  }
+
+  /** The transport's own condition, independent of any single request. */
+  get currentState(): RelayState {
+    return this.state;
+  }
+
+  /** Follow the link's condition; returns the unsubscribe. */
+  watch(listener: (state: RelayState) => void): () => void {
+    this.watchers.add(listener);
+    return () => this.watchers.delete(listener);
+  }
+
+  private publishState(next: RelayState): void {
+    if (this.state === next) return;
+    this.state = next;
+    for (const watcher of this.watchers) watcher(next);
   }
 
   /** Which device this link is for; a recovery must not reuse a link to another. */
@@ -617,7 +646,10 @@ export class RelayLink {
       this.finish("这台电脑已断开远程连接。");
       return;
     }
-    if (!this.reconnecting) void this.reconnect(reason);
+    if (!this.reconnecting) {
+      this.publishState("reconnecting");
+      void this.reconnect(reason);
+    }
   }
 
   private async reconnect(reason: string): Promise<void> {
@@ -630,6 +662,7 @@ export class RelayLink {
         try {
           const connection = await openConnection(this.deviceId);
           this.attach(connection);
+          this.publishState("open");
           for (const [id, entry] of this.pending) {
             await this.send(id, {
               v: 1,
@@ -658,6 +691,7 @@ export class RelayLink {
   private finish(reason: string): void {
     if (this.ended) return;
     this.ended = true;
+    this.publishState("ended");
     for (const entry of this.pending.values()) {
       if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.reject(new RelayError("ended", reason));
@@ -887,6 +921,17 @@ export async function ensureRelay(
 
 export function relayAlive(): boolean {
   return activeLink !== null && !activeLink.isEnded;
+}
+
+/**
+ * The active relay's condition, or `none` when no relay is routing.
+ *
+ * `none` is deliberately distinct from `ended`: a LAN link has no relay at
+ * all, while `ended` means one gave up and its requests will never be
+ * answered.
+ */
+export function relayState(): RelayState | "none" {
+  return activeLink?.currentState ?? "none";
 }
 
 /** The device the relay is bound to, even while it is reconnecting. */

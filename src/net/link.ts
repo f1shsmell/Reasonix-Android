@@ -154,7 +154,8 @@ export function linkFailure(code: string, detail?: string): LinkError {
     case "http.403":
       return {
         code,
-        message: "配对或登录已失效，请重新扫码配对或重新登录；重试旧地址不会恢复。",
+        message:
+          "配对或登录已失效，请重新扫码配对或重新登录；重试旧地址不会恢复。电脑换端口后也需要重新扫码。",
         retryable: false,
         ...withDetail,
       };
@@ -199,6 +200,20 @@ export function linkFailure(code: string, detail?: string): LinkError {
     case "http.503":
     case "http.504":
       return { code, message: "到不了这台电脑，检查网络后重试。", retryable: true, ...withDetail };
+    case "handover.off":
+      return {
+        code,
+        message: "连接已断开；自动切换已关闭，请在设置里手动换一条通道。",
+        retryable: false,
+        ...withDetail,
+      };
+    case "handover.other_machine":
+      return {
+        code,
+        message: "账号里的云端电脑不是当前这台，已跳过自动切换。",
+        retryable: false,
+        ...withDetail,
+      };
     default:
       return { code, message: `没连上：${code}`, retryable: true, ...withDetail };
   }
@@ -216,7 +231,7 @@ export class Backoff {
   attempt = 0;
 
   constructor(
-    readonly initialMs = 1_000,
+    readonly initialMs = 500,
     readonly maxMs = 30_000,
     readonly maxAttempts = 8,
     private readonly random: () => number = Math.random,

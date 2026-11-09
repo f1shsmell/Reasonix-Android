@@ -289,6 +289,48 @@ export async function readMachineIdentity(
   }
 }
 
+/**
+ * Whether a LAN origin can serve this phone right now.
+ *
+ * The same read as `readMachineIdentity`, but the failure keeps its code.
+ * A door that is merely unreachable and a door whose pairing expired are both
+ * "cannot switch", and the person's next step differs — retry later versus
+ * re-pair — so folding them into `null` is not enough for a gate.
+ *
+ * `ok` means the origin answered and authorized this phone. A kernel that
+ * names no machine still qualifies: it is an older build, not a broken door.
+ */
+export type DoorProbe = { ok: true; machine: string } | { ok: false; code: string };
+
+export async function probeDoor(origin: string, timeoutMs = 4_000): Promise<DoorProbe> {
+  try {
+    const body = await request<{ machine?: unknown } | null>(
+      "/__reasonix/device",
+      { method: "POST", body: JSON.stringify({ origin }) },
+      timeoutMs,
+    );
+    // A page served where no proxy exists answers 200 with HTML, which parses
+    // to no body at all. That is not a door: it is the absence of one.
+    if (body === null || typeof body !== "object") {
+      return { ok: false, code: "proxy.bad_response" };
+    }
+    const machine = typeof body.machine === "string" ? body.machine.trim() : "";
+    return { ok: true, machine };
+  } catch (error) {
+    if (error instanceof ProxyError) {
+      // An older shell has no `/__reasonix/device` at all. Refusing every LAN
+      // door there would turn an app upgrade into a broken connection, so the
+      // caller is told to fall back to switch-then-verify.
+      if (error.code === "proxy.unknown_path") return { ok: true, machine: "" };
+      return { ok: false, code: error.code };
+    }
+    return {
+      ok: false,
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
+    };
+  }
+}
+
 // ---- fleet: the other computers this phone listens to -------------------
 
 /**

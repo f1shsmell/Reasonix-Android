@@ -25,8 +25,8 @@ export interface StreamHandlers {
   onCursor?: (lastEventId: number) => void;
 }
 
-/** Backoff: 0.5s, 1s, 2s, 4s, 8s, then a 15s ceiling. */
-const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 15000];
+/** Backoff: 0.25s, 1s, 2s, 4s, 8s, then a 15s ceiling. */
+const BACKOFF_MS = [250, 1000, 2000, 4000, 8000, 15000];
 const CURSOR_KEY = "reasonix.cursor.";
 
 export class RuntimeStream {
@@ -49,9 +49,9 @@ export class RuntimeStream {
     return this.lastEventId;
   }
 
-  start(): void {
+  start(announce = true): void {
     this.stopped = false;
-    this.connect();
+    this.connect(announce);
   }
 
   stop(): void {
@@ -60,6 +60,21 @@ export class RuntimeStream {
     this.source?.close();
     this.source = null;
     this.handlers.onState({ kind: "closed", reason: "stopped by caller" });
+  }
+
+  /**
+   * Close without announcing.
+   *
+   * A repair that replaces a stream must not blink the pane's status: the
+   * conversation is not disconnected, only its transport is being swapped.
+   * `stop()` is for a caller that means it — a pane the person closed, or a
+   * runtime that went away.
+   */
+  close(): void {
+    this.stopped = true;
+    this.clearTimer();
+    this.source?.close();
+    this.source = null;
   }
 
   /**

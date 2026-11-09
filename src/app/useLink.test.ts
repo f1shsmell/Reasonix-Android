@@ -30,6 +30,13 @@ vi.mock("../net/savedConnections", () => ({
   rememberConnection: () => [],
   learnConnectionMachine: () => [],
   machineKey: (machine: string | undefined) => (machine ?? "").trim().toLowerCase(),
+  originHost: (origin: string) => {
+    try {
+      return new URL(origin).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  },
   directDoorForMachine: () => null,
 }));
 
@@ -108,6 +115,31 @@ describe("lanDoorsOf", () => {
     );
 
     expect(doors).toEqual(["http://192.168.5.3:57074"]);
+  });
+
+  it("keeps one door per host when a restart left its old port behind", () => {
+    // The proxy appends every origin it was ever told about, so a kernel that
+    // restarted on a new port leaves both addresses in the list. Probing the
+    // dead one costs a deadline and can never answer.
+    const doors = lanDoorsOf(
+      config({
+        candidates: ["http://192.168.5.3:57074", "http://192.168.5.3:61234"],
+        preferred: ["http://192.168.5.3:61234", "http://192.168.5.3:57074"],
+      }),
+    );
+
+    expect(doors).toEqual(["http://192.168.5.3:61234"]);
+  });
+
+  it("keeps a second host for the same computer", () => {
+    // A Wi-Fi address and a mesh-VPN address are two doors, not a restart.
+    const doors = lanDoorsOf(
+      config({
+        candidates: ["http://192.168.5.3:57074", "http://172.16.2.59:57074"],
+      }),
+    );
+
+    expect(doors).toEqual(["http://192.168.5.3:57074", "http://172.16.2.59:57074"]);
   });
 
   it("has nothing to try without a proxy or a saved row", () => {
