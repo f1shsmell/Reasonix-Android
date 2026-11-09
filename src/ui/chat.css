@@ -562,11 +562,15 @@ html[data-chat-font="xl"] {
 }
 
 /* Reading back through a long answer must not trap the person there: the
-   control floats over the record's lower edge and disappears at the bottom. */
+   pair rides the record's lower edge, right-aligned with the composer, and
+   each half disappears at the end it no longer serves. */
 .jump-latest-wrap {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
   flex: none;
+  padding-right: 12px;
   pointer-events: none;
 }
 
@@ -577,17 +581,21 @@ html[data-chat-font="xl"] {
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 12px;
   background: var(--bg-raised);
-  color: var(--accent);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2);
+  color: var(--fg-dim);
+  box-shadow: 0 2px 8px -3px rgba(0, 0, 0, 0.18);
   animation: rx-rise var(--dur-2) var(--ease-out) both;
   pointer-events: auto;
 }
 
 .jump-latest svg {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
+}
+
+.jump-latest[data-value="up"] svg {
+  rotate: 180deg;
 }
 
 @keyframes process-pulse {

@@ -2173,16 +2173,21 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(240);
-      const pill = container.querySelector(".jump-latest") as HTMLButtonElement;
-      expect(pill).toBeTruthy();
-      // It rides over the record with the composer, so the last row can pass
-      // under both; the arrow is the whole control and the name is for speech.
-      expect(pill.closest(".chat-dock")).toBeTruthy();
-      expect(pill.textContent?.trim()).toBe("");
-      expect(pill.getAttribute("aria-label")).toBe("跳到最新");
+      // Studio's pair: up once there is more above, down once there is more
+      // below. Both ride over the record with the composer, so the last row
+      // can pass under them; the chevron is the whole control, named for
+      // speech.
+      act(() => (container.querySelector(".transcript") as HTMLElement).dispatchEvent(new Event("scroll")));
+      const up = container.querySelector('[aria-label="回到会话顶部"]') as HTMLButtonElement;
+      const down = container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement;
+      expect(up).toBeTruthy();
+      expect(down.closest(".chat-dock")).toBeTruthy();
+      expect(down.textContent?.trim()).toBe("");
 
-      act(() => pill.click());
-      expect(container.querySelector(".jump-latest")).toBeNull();
+      act(() => down.click());
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeNull();
+      act(() => up.click());
+      expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeNull();
     } finally {
       scroll.restore();
     }
@@ -2204,7 +2209,10 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(1000);
-      expect(container.querySelector(".jump-latest")).toBeNull();
+      // At the bottom of a long record only the up half of Studio's pair is
+      // still owed; the down half has nowhere to go.
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeNull();
+      expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeTruthy();
     } finally {
       scroll.restore();
     }

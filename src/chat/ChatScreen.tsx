@@ -1060,6 +1060,8 @@ export function ChatScreen({
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
   );
+  /** False once the record sits below its top edge; the up control appears then. */
+  const [atTop, setAtTop] = useState(true);
   /** The model the catalog last confirmed, shown until the transcript reports one. */
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
@@ -1295,6 +1297,14 @@ export function ChatScreen({
     list.scrollTo({ top: list.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
+  /** Studio's up control goes straight to the start of the conversation. */
+  const scrollToTop = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    setAtTop(true);
+    list.scrollTop = 0;
+  }, []);
+
   /**
    * The lower chrome floats over the record so its rows can scroll behind it;
    * the transcript ends with that height as padding, which is why it is
@@ -1358,9 +1368,11 @@ export function ChatScreen({
     if (saved && !saved.atBottom) {
       list.scrollTop = saved.top;
       setAtBottom(false);
+      setAtTop(saved.top < 48);
     } else {
       list.scrollTop = list.scrollHeight;
       setAtBottom(true);
+      setAtTop(list.scrollTop < 48);
     }
   }, [history, readingId]);
 
@@ -1370,6 +1382,7 @@ export function ChatScreen({
     if (!focusAsk || history.kind !== "loaded") return;
     scrollToBottom(false);
     setAtBottom(true);
+    setAtTop(listRef.current ? listRef.current.scrollTop < 48 : true);
     onFocusConsumed?.();
   }, [focusAsk, history.kind, scrollToBottom, onFocusConsumed]);
 
@@ -1389,6 +1402,7 @@ export function ChatScreen({
     if (!list) return;
     const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
     setAtBottom(gap < 48);
+    setAtTop(list.scrollTop < 48);
     // Near the top with more above the window: widen it. The 400px lead is
     // enough that the widen lands before the reader hits the spacer.
     if (list.scrollTop < 400) growWindow();
@@ -2032,32 +2046,56 @@ export function ChatScreen({
       {/* The lower chrome rides above the record instead of shortening it, so
           a row scrolled to the edge can pass under it rather than end at it. */}
       <div className="chat-dock" ref={dockRef}>
-        {!atBottom && transcript.rows.length > 0 ? (
+        {transcript.rows.length > 0 && (!atTop || !atBottom) ? (
           <div className="jump-latest-wrap">
-            <button
-              type="button"
-              className="jump-latest"
-              aria-label="跳到最新"
-              title="跳到最新"
-              onClick={() => {
-                // The flag must go up before setAtBottom: that state change is
-                // what triggers the follow effect run the glide has to skip.
-                jumpGlide.current = true;
-                scrollToBottom(true);
-                setAtBottom(true);
-              }}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path
-                  d="M12 5v13M6 11.5l6 6 6-6"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            {!atTop ? (
+              <button
+                type="button"
+                className="jump-latest"
+                data-value="up"
+                aria-label="回到会话顶部"
+                title="回到会话顶部"
+                onClick={scrollToTop}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M6 9l6 6 6-6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
+            {!atBottom ? (
+              <button
+                type="button"
+                className="jump-latest"
+                data-value="down"
+                aria-label="跳到最新"
+                title="跳到最新"
+                onClick={() => {
+                  // The flag must go up before setAtBottom: that state change is
+                  // what triggers the follow effect run the glide has to skip.
+                  jumpGlide.current = true;
+                  scrollToBottom(true);
+                  setAtBottom(true);
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M6 9l6 6 6-6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
           </div>
         ) : null}
   
