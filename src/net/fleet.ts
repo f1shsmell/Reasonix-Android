@@ -22,6 +22,7 @@
 import { fleetRead, loadFleet, saveFleet } from "./server";
 import type { FleetEntry } from "./server";
 import { isRuntimeView } from "./connection";
+import { originHost } from "./savedConnections";
 import { parseRuntimeStatus } from "./status";
 import type { Decision } from "./status";
 import type { RuntimeView } from "../wire/runtime";
@@ -434,19 +435,30 @@ export async function syncFleetPeer(
   }
   const row: FleetEntry = { kind, target, name, watchable: true };
   const key = originKey(kind, target);
-  const at = peers.findIndex(
-    (entry) => entry.kind === kind && originKey(entry.kind, entry.target) === key,
-  );
+  const host = kind === "lan" ? originHost(target) : "";
+  const at = peers.findIndex((entry) => {
+    if (entry.kind !== kind) return false;
+    if (originKey(entry.kind, entry.target) === key) return true;
+    // A desktop kernel may pick a new port when it restarts. That is the same
+    // computer, not a second one: the list has four slots and must not spend
+    // them on one machine's port history.
+    return host !== "" && originHost(entry.target) === host;
+  });
   if (at >= 0) {
     const existing = peers[at];
+    if (!existing) return;
+    const sameDoor = originKey(existing.kind, existing.target) === key;
     // A reconnect to a watched computer is the common case; only a changed
-    // name is worth another write to the proxy.
-    if (existing && existing.name === name) {
+    // name, or a door that moved to a new port, is worth another write.
+    if (existing.name === name && sameDoor) {
       if (peers.length !== current.length) await saveFleet(peers);
       return;
     }
     const next = [...peers];
-    next[at] = { ...row, target: existing?.target ?? target };
+    // A door spelled differently keeps its original spelling; a door that
+    // moved to a new port takes the new one, or the list keeps pointing at a
+    // port that is gone.
+    next[at] = { ...row, target: sameDoor ? existing.target : target };
     await saveFleet(next);
     return;
   }

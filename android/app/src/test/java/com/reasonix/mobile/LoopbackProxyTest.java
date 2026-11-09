@@ -11,7 +11,10 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.json.JSONArray;
@@ -120,6 +123,84 @@ public class LoopbackProxyTest {
     public void fleetRouteRefusesAnUnusableIndex() {
         assertEquals(-1, ProxyPaths.fleetPeerIndex("/__reasonix/fleet/abc/runtimes"));
         assertEquals(-1, ProxyPaths.fleetPeerIndex("/__reasonix/fleet//runtimes"));
+    }
+
+    @Test
+    public void keepsOneCandidatePerHostWhenAPortMoves() {
+        // A kernel that restarted on a new port is the same computer. Keeping
+        // both would make every refresh probe a door that is gone.
+        List<String> kept = ProxyPaths.onePerHost(
+                Arrays.asList("http://192.168.5.3:57074", "http://172.16.2.59:57074"),
+                "http://192.168.5.3:61234");
+
+        assertEquals(
+                Arrays.asList("http://192.168.5.3:61234", "http://172.16.2.59:57074"),
+                kept);
+    }
+
+    @Test
+    public void comparesHostsWhateverCaseTheyWereSpelledIn() {
+        List<String> kept = ProxyPaths.onePerHost(
+                Arrays.asList("http://MyMac.local:56789"),
+                "http://mymac.local:61234");
+
+        assertEquals(Collections.singletonList("http://mymac.local:61234"), kept);
+    }
+
+    @Test
+    public void keepsAnOriginItCannotParse() {
+        // Refusing to guess is safer than treating every unreadable address as
+        // one machine.
+        List<String> kept = ProxyPaths.onePerHost(
+                Arrays.asList("not-a-url", "http://192.168.5.3:57074"),
+                "http://192.168.5.3:61234");
+
+        assertEquals(Arrays.asList("http://192.168.5.3:61234", "not-a-url"), kept);
+    }
+
+    @Test
+    public void dropsAnExactDuplicate() {
+        List<String> kept = ProxyPaths.onePerHost(
+                Collections.singletonList("http://192.168.5.3:57074"),
+                "http://192.168.5.3:57074");
+
+        assertEquals(Collections.singletonList("http://192.168.5.3:57074"), kept);
+    }
+
+    @Test
+    public void keepsOneOriginPerHostAmongTheOldOnesToo() {
+        // An install that upgraded already carries several ports of one
+        // machine. Switching to another address type must not carry them all
+        // forward.
+        List<String> kept = ProxyPaths.onePerHost(
+                Arrays.asList(
+                        "http://192.168.5.3:57074",
+                        "http://192.168.5.3:61234",
+                        "http://172.16.2.59:57074"),
+                "http://172.16.2.59:61234");
+
+        assertEquals(
+                Arrays.asList("http://172.16.2.59:61234", "http://192.168.5.3:57074"),
+                kept);
+    }
+
+    @Test
+    public void keepsTheListWhenThereIsNoNewOrigin() {
+        List<String> existing = Arrays.asList("http://192.168.5.3:57074");
+
+        assertEquals(existing, ProxyPaths.onePerHost(existing, ""));
+        assertEquals(existing, ProxyPaths.onePerHost(existing, null));
+    }
+
+    @Test
+    public void putsTheNewestOriginFirst() {
+        List<String> kept = ProxyPaths.onePerHost(
+                Arrays.asList("http://alpha:1", "http://beta:2"),
+                "http://gamma:3");
+
+        assertEquals(
+                Arrays.asList("http://gamma:3", "http://alpha:1", "http://beta:2"),
+                kept);
     }
 
     @Test

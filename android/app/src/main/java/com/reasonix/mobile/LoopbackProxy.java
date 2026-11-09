@@ -28,6 +28,7 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -683,12 +684,15 @@ public final class LoopbackProxy {
         } catch (JSONException e) {
             list = new JSONArray();
         }
-        JSONArray next = new JSONArray();
-        next.put(origin);
+        List<String> existing = new ArrayList<>();
         for (int i = 0; i < list.length(); i++) {
             String value = list.optString(i, "");
-            if (!value.isEmpty() && !value.equals(origin)) next.put(value);
+            if (!value.isEmpty()) existing.add(value);
         }
+        // A kernel that restarted on a new port is the same computer: keeping
+        // both would make every refresh probe a door that is gone.
+        JSONArray next = new JSONArray();
+        for (String value : ProxyPaths.onePerHost(existing, origin)) next.put(value);
         prefs.edit().putString(KEY_ORIGIN, origin).putString(KEY_CANDIDATES, next.toString()).apply();
     }
 
