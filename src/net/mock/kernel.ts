@@ -81,6 +81,7 @@ const status = {
   sessionPath: "/demo/.reasonix/demo.jsonl",
   toolApprovalMode: "ask",
   decisions: [],
+  sessionUsage: { requests: 6, cacheHit: 7900, cacheMiss: 2100, cacheUnknown: 0 },
 };
 
 /** The waiting pane's status: a plan approval blocks it. */

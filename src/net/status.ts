@@ -47,6 +47,11 @@ export interface RuntimeStatus {
   toolApprovalMode?: string;
   workspaceRoot?: string;
   sessionPath?: string;
+  /**
+   * The session's cache split, from the kernel's ledger when it reports one and
+   * from the agent's own counters otherwise. Absent before the first request.
+   */
+  cache?: { hit: number; miss: number; unknown: number };
 }
 
 export type StatusRead =
@@ -130,7 +135,30 @@ function status(value: unknown): RuntimeStatus | null {
     out.workspaceRoot = row.workspaceRoot;
   }
   if (typeof row.sessionPath === "string" && row.sessionPath) out.sessionPath = row.sessionPath;
+  // Studio's preference: the ledger's split when it has requests, else the
+  // agent's own counters. Unsplit prompt is in `miss` and carried as `unknown`.
+  const usage = row.sessionUsage;
+  if (usage !== null && typeof usage === "object") {
+    const totals = usage as Record<string, unknown>;
+    if (tokens(totals.requests) > 0) {
+      out.cache = {
+        hit: tokens(totals.cacheHit),
+        miss: tokens(totals.cacheMiss),
+        unknown: tokens(totals.cacheUnknown),
+      };
+    }
+  }
+  if (!out.cache) {
+    const hit = tokens(row.cacheHit);
+    const miss = tokens(row.cacheMiss);
+    if (hit + miss > 0) out.cache = { hit, miss, unknown: 0 };
+  }
   return out;
+}
+
+/** A token count as the wire wrote it; anything unusable is no tokens. */
+function tokens(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 export async function loadStatus(base: string): Promise<StatusRead> {

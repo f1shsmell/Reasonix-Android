@@ -953,6 +953,47 @@ describe("ChatScreen todos", () => {
   });
 });
 
+describe("ChatScreen cache reading", () => {
+  function openMenu(): void {
+    act(() => (container.querySelector('button[aria-label="更多"]') as HTMLButtonElement).click());
+  }
+
+  it("states the session's cache hit rate in the head menu", async () => {
+    stubKernel({
+      history: [{ role: "user", content: "你好", msgIndex: 1 }],
+      status: {
+        running: false,
+        busy: false,
+        decisions: [],
+        sessionUsage: { requests: 2, cacheHit: 750, cacheMiss: 250, cacheUnknown: 0 },
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    openMenu();
+
+    const note = container.querySelector(".head-menu-note");
+    expect(note?.textContent).toContain("缓存命中率");
+    expect(note?.textContent).toContain("75%");
+    expect(note?.textContent).toContain("命中 750");
+    expect(note?.textContent).toContain("未命中 250");
+  });
+
+  it("says nothing was measured before a prompt is split", async () => {
+    stubKernel({
+      history: [{ role: "user", content: "你好", msgIndex: 1 }],
+      status: { running: false, busy: false, decisions: [] },
+    });
+
+    render(snapshot());
+    await flush();
+    openMenu();
+
+    expect(container.querySelector(".head-menu-note")?.textContent).toContain("还没有可统计的请求");
+  });
+});
+
 function typeDraft(text: string): void {
   const textarea = container.querySelector("textarea");
   if (!textarea) throw new Error("no composer");
@@ -2217,16 +2258,28 @@ describe("ChatScreen reading position", () => {
       // can pass under them; the chevron is the whole control, named for
       // speech.
       act(() => (container.querySelector(".transcript") as HTMLElement).dispatchEvent(new Event("scroll")));
+      const transcript = container.querySelector(".transcript") as HTMLElement;
       const up = container.querySelector('[aria-label="回到会话顶部"]') as HTMLButtonElement;
       const down = container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement;
       expect(up).toBeTruthy();
       expect(down.closest(".chat-dock")).toBeTruthy();
       expect(down.textContent?.trim()).toBe("");
 
-      act(() => down.click());
-      expect(container.querySelector('[aria-label="跳到最新"]')).toBeNull();
+      // The up half goes first; the down half stays because the end is still
+      // out of view.
       act(() => up.click());
       expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeNull();
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
+
+      // The jump control only goes once the glide actually arrives, so a
+      // glide that falls short keeps its way back.
+      act(() => (container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement).click());
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
+      act(() => {
+        transcript.scrollTop = 600;
+        transcript.dispatchEvent(new Event("scroll"));
+      });
+      expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();
     }
@@ -2248,10 +2301,9 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(1000);
-      // At the bottom of a long record only the up half of Studio's pair is
-      // still owed; the down half has nowhere to go.
-      expect(container.querySelector('[aria-label="跳到最新"]')).toBeNull();
-      expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeTruthy();
+      // The pair marks being away from the end; at the end there is nothing to
+      // offer, in either direction.
+      expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();
     }

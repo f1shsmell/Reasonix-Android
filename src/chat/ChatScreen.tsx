@@ -20,6 +20,7 @@ import {
 } from "../net/approval";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
+import { cachePercent } from "./cacheRate";
 import { MAX_FILE_MB, MAX_IMAGE_MB, isolateImageRefs, uploadFile, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
@@ -31,6 +32,7 @@ import { StudioIcon } from "../app/StudioIcon";
 import type { StudioOpenResult } from "../app/openStudio";
 import { loadEnterPref } from "../app/enterPref";
 import type { EnterPref } from "../app/enterPref";
+import { compactCount } from "../app/format";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
 import { speechSupported } from "../native/speech";
@@ -250,6 +252,7 @@ function AttachSheet({
 function HeadMenu({
   model,
   approval,
+  cache,
   onClose,
   onReload,
   onModel,
@@ -261,6 +264,7 @@ function HeadMenu({
 }: {
   model: string;
   approval: string;
+  cache: { hit: number; miss: number; unknown: number } | null;
   onClose: () => void;
   onReload: () => void;
   onModel: () => void;
@@ -324,6 +328,12 @@ function HeadMenu({
             </button>
           </li>
           <li>
+            <div className="head-menu-note">
+              <span>缓存命中率</span>
+              <small>{cacheNote(cache)}</small>
+            </div>
+          </li>
+          <li>
             <button type="button" onClick={onWorkbench}>
               <span>工作台</span>
               <small>变更、diff 与提交</small>
@@ -333,6 +343,18 @@ function HeadMenu({
       </section>
     </div>
   );
+}
+
+/**
+ * The cache split as one line: the rate first, then the counts it came from.
+ * Unsplit prompt is left out of the rate by `cachePercent`, so the counts are
+ * the ledger's own and need no adjustment.
+ */
+function cacheNote(cache: { hit: number; miss: number; unknown: number } | null): string {
+  if (!cache) return "还没有可统计的请求";
+  const percent = cachePercent(cache.hit, cache.miss, cache.unknown);
+  if (percent === null) return "还没有可统计的请求";
+  return `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
 }
 
 /**
@@ -899,6 +921,7 @@ function useTodos(
   base: string | undefined,
   events: readonly QueuedEvent[],
   lastEvent: EventPayload | undefined,
+  turnEnd: EventPayload | null,
   reloadToken: number,
 ): { todos: WireTodo[]; state: TodosState } {
   const [list, setList] = useState<TodoList | null>(null);
@@ -936,16 +959,9 @@ function useTodos(
 
   useEffect(() => {
     if (!base) return;
-    // The same burst rule as `progress`: a turn end followed by any other frame
-    // in one poll keeps only the newer payload in `lastEvent`, so scan the
-    // queue for it.
-    const boundary = (() => {
-      for (let at = events.length - 1; at >= 0; at -= 1) {
-        const event = events[at]?.event;
-        if (event?.kind === "turn_done") return event;
-      }
-      return lastEvent?.kind === "turn_done" ? lastEvent : null;
-    })();
+    // The turn end is scanned from the whole burst by the caller: a burst keeps
+    // only its newest frame in `lastEvent`, which may be anything.
+    const boundary = turnEnd;
     const forced =
       (boundary !== null && boundary !== seenBoundary.current) || reloadToken !== seenReload.current;
     const switched = base !== loadedBase.current;
@@ -989,7 +1005,7 @@ function useTodos(
       failed.current = false;
       setList({ base, todos: liveTodos(result.items), state: "loaded" });
     });
-  }, [base, events, lastEvent, progress, revision, reloadToken]);
+  }, [base, events, lastEvent, turnEnd, progress, revision, reloadToken]);
 
   // The first render after a base change still holds the old list — the effect
   // that clears it runs after paint. Hiding a mismatched list here is what
@@ -1042,10 +1058,23 @@ export function ChatScreen({
     runtime?.sessionPath,
     runStartedAtRef,
   );
+  /**
+   * The newest turn end in the poll, whichever frame follows it. The checklist
+   * and the cache meter both re-read on it, and a burst keeps only its newest
+   * payload in `lastEvent`, so the queue is scanned here once.
+   */
+  const turnEnd = useMemo(() => {
+    for (let at = snapshot.events.length - 1; at >= 0; at -= 1) {
+      const event = snapshot.events[at]?.event;
+      if (event?.kind === "turn_done") return event;
+    }
+    return snapshot.lastEvent?.kind === "turn_done" ? snapshot.lastEvent : null;
+  }, [snapshot.events, snapshot.lastEvent]);
   const { todos, state: todosState } = useTodos(
     runtime?.base,
     snapshot.events,
     snapshot.lastEvent,
+    turnEnd,
     reloadToken,
   );
   /** The stored transcript's identity; a pane id is only the fallback. */
@@ -1071,6 +1100,8 @@ export function ChatScreen({
   );
   /** False once the record sits below its top edge; the up control appears then. */
   const [atTop, setAtTop] = useState(true);
+  /** The session's cache split, as the kernel last reported it. */
+  const [cache, setCache] = useState<{ hit: number; miss: number; unknown: number } | null>(null);
   /** The model the catalog last confirmed, shown until the transcript reports one. */
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
@@ -1134,9 +1165,6 @@ export function ChatScreen({
   /** Prompt decisions in flight, by ask/approval id: a second tap on the same
       card while its POST is a round trip away would fire the call twice. */
   const deciding = useRef(new Set<string>());
-  /** Set while a jump button's smooth glide is in motion, so the follow
-      effect below skips the one run that would cancel it. */
-  const jumpGlide = useRef(false);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -1159,7 +1187,8 @@ export function ChatScreen({
   // running when the screen opened has no `turn_started` to flip the composer
   // into its stop state. The kernel's own status is the only place that says
   // so, and without this read the phone offers no way to stop work it can see
-  // is happening.
+  // is happening. The same read carries the session's cache split, so mount, a
+  // turn end and a manual reload are its only moments.
   useEffect(() => {
     const base = runtime?.base;
     if (!base) return;
@@ -1168,6 +1197,7 @@ export function ChatScreen({
       if (cancelled || !result.ok) return;
       setPlan(result.status.plan);
       setApproval(result.status.toolApprovalMode ?? "");
+      setCache(result.status.cache ?? null);
       if (result.status.modelRef) setStatusModel(result.status.modelRef);
       if (result.status.effort) setStatusEffort(result.status.effort);
       if (!result.status.running) return;
@@ -1176,7 +1206,7 @@ export function ChatScreen({
     return () => {
       cancelled = true;
     };
-  }, [runtime?.base, setTranscript]);
+  }, [runtime?.base, turnEnd, reloadToken, setTranscript]);
 
   // A running turn is exactly the window where the phone may be locked. The
   // The native watcher discovers every open pane; a turn starting here is
@@ -1356,13 +1386,6 @@ export function ChatScreen({
   // streaming transcript can do.
   useLayoutEffect(() => {
     if (!atBottom) return;
-    // The jump button's glide is already heading here, and setting atBottom
-    // re-renders straight into this effect — an instant scroll now would
-    // cancel the smooth animation mid-flight. Skip exactly that one run.
-    if (jumpGlide.current) {
-      jumpGlide.current = false;
-      return;
-    }
     scrollToBottom(false);
   }, [transcript.rows, atBottom, scrollToBottom]);
 
@@ -1911,6 +1934,7 @@ export function ChatScreen({
     });
   };
 
+
   return (
     <div className="chat" style={{ "--chat-dock": `${dockHeight}px` } as CSSProperties}>
       <div className="chat-head">
@@ -2055,7 +2079,7 @@ export function ChatScreen({
       {/* The lower chrome rides above the record instead of shortening it, so
           a row scrolled to the edge can pass under it rather than end at it. */}
       <div className="chat-dock" ref={dockRef}>
-        {transcript.rows.length > 0 && (!atTop || !atBottom) ? (
+        {transcript.rows.length > 0 && !atBottom ? (
           <div className="jump-latest-wrap">
             {!atTop ? (
               <button
@@ -2078,33 +2102,25 @@ export function ChatScreen({
                 </svg>
               </button>
             ) : null}
-            {!atBottom ? (
-              <button
-                type="button"
-                className="jump-latest"
-                data-value="down"
-                aria-label="跳到最新"
-                title="跳到最新"
-                onClick={() => {
-                  // The flag must go up before setAtBottom: that state change is
-                  // what triggers the follow effect run the glide has to skip.
-                  jumpGlide.current = true;
-                  scrollToBottom(true);
-                  setAtBottom(true);
-                }}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path
-                    d="M6 9l6 6 6-6"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="jump-latest"
+              data-value="down"
+              aria-label="跳到最新"
+              title="跳到最新"
+              onClick={() => scrollToBottom(true)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M6 9l6 6 6-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           </div>
         ) : null}
   
@@ -2354,6 +2370,7 @@ export function ChatScreen({
         <HeadMenu
           model={shortRef(pickedModel || transcript.modelRef || statusModel || "")}
           approval={approval}
+          cache={cache}
           onClose={() => setHeadMenu(false)}
           onReload={() => {
             setHeadMenu(false);
