@@ -1312,7 +1312,25 @@ export function ChatScreen({
     const watch = new ResizeObserver(measure);
     watch.observe(dock);
     return () => watch.disconnect();
-  }, [runtime?.base]);
+  }, [runtime?.base, workbenchOpen]);
+
+  /**
+   * A dock that changed height moved the end of the record by the same
+   * amount. Pin only a reader who was already at the bottom: the true
+   * pre-change gap is the measured gap minus that delta, and sliding past it
+   * is what a jump glide looks like from here — it must not be cut short into
+   * an instant scroll.
+   */
+  const lastDockHeight = useRef(0);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const delta = dockHeight - lastDockHeight.current;
+    lastDockHeight.current = dockHeight;
+    if (!list || delta === 0) return;
+    const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (gap - delta >= 48) return;
+    list.scrollTop = list.scrollHeight;
+  }, [dockHeight]);
 
   // Follow the newest row only while the person is already at the bottom.
   // Yanking the view down while they read back is the single worst thing a
@@ -1327,9 +1345,7 @@ export function ChatScreen({
       return;
     }
     scrollToBottom(false);
-    // The dock growing (a notice, a checklist, a taller draft) changes how
-    // much of the record is visible; a reader at the bottom stays there.
-  }, [transcript.rows, atBottom, scrollToBottom, dockHeight]);
+  }, [transcript.rows, atBottom, scrollToBottom]);
 
   // Reopening a conversation puts the reader back where they were. The stored
   // history decides the height, so this waits for it; a pane opened for the
@@ -2016,236 +2032,236 @@ export function ChatScreen({
       {/* The lower chrome rides above the record instead of shortening it, so
           a row scrolled to the edge can pass under it rather than end at it. */}
       <div className="chat-dock" ref={dockRef}>
-      {!atBottom && transcript.rows.length > 0 ? (
-        <div className="jump-latest-wrap">
-          <button
-            type="button"
-            className="jump-latest"
-            aria-label="跳到最新"
-            title="跳到最新"
-            onClick={() => {
-              // The flag must go up before setAtBottom: that state change is
-              // what triggers the follow effect run the glide has to skip.
-              jumpGlide.current = true;
-              scrollToBottom(true);
-              setAtBottom(true);
-            }}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                d="M12 5v13M6 11.5l6 6 6-6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-      ) : null}
-
-      <TodoPanel todos={todos} state={todosState} />
-
-      {/* One strip, highest priority first. Four bars stacked over the
-          composer is noise; a person can only act on one thing at a time. */}
-      {send.kind === "failed" ? (
-        <div className="sendfail" role="alert">
-          <span>
-            {send.unconfirmed
-              ? "不确定这一轮有没有发出去。先刷新确认，别直接重发；原文还在输入框里。"
-              : `没发出去：${sendErrorText(send.detail)}`}
-          </span>
-          {send.unconfirmed ? (
+        {!atBottom && transcript.rows.length > 0 ? (
+          <div className="jump-latest-wrap">
             <button
               type="button"
+              className="jump-latest"
+              aria-label="跳到最新"
+              title="跳到最新"
               onClick={() => {
-                setSend({ kind: "idle" });
-                reload();
+                // The flag must go up before setAtBottom: that state change is
+                // what triggers the follow effect run the glide has to skip.
+                jumpGlide.current = true;
+                scrollToBottom(true);
+                setAtBottom(true);
               }}
             >
-              刷新确认
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M12 5v13M6 11.5l6 6 6-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
-          ) : send.retryable && lastRetry.current ? (
-            <button type="button" onClick={() => void doSend(lastRetry.current)}>
-              重试
-            </button>
-          ) : (
-            <button type="button" onClick={() => setSend({ kind: "idle" })}>
-              知道了
-            </button>
-          )}
-        </div>
-      ) : promptError ? (
-        <div className="sendfail" role="alert">
-          <span>{promptError}</span>
-          <button type="button" onClick={() => setPromptError("")}>
-            知道了
-          </button>
-        </div>
-      ) : attachError ? (
-        <div className="sendfail" role="alert">
-          <span>{attachError}</span>
-          <button type="button" onClick={() => setAttachError("")}>
-            知道了
-          </button>
-        </div>
-      ) : inboxNote ? (
-        <div className="inbox-note" role="status">
-          <button
-            type="button"
-            className="inbox-note-open"
-            onClick={() => setQueueSheet(true)}
-            aria-label="查看排队列表"
-          >
-            {inboxNote}
-          </button>
-          <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
-            ×
-          </button>
-        </div>
-      ) : null}
-
-      {/* While a turn runs, the composer's send button is the stop control, so
-          a message typed now needs its own way out. Two buttons rather than
-          one: queuing leaves the turn alone, steering joins it. */}
-      {streaming && draft.trim() && runtime.readOnly !== true ? (
-        <div className="interject" role="group" aria-label="发送到运行中的回合">
-          <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
-            排队
-          </button>
-          <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
-            插话
-          </button>
-        </div>
-      ) : null}
-
-      <div className="composer">
-        <input
-          ref={imageRef}
-          className="file-input"
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(event) => void onImage(event)}
-        />
-        <input
-          ref={cameraRef}
-          className="file-input"
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(event) => void onImage(event)}
-        />
-        <input
-          ref={fileRef}
-          className="file-input"
-          type="file"
-          multiple
-          onChange={(event) => void onFile(event)}
-        />
-        {attachments.length > 0 ? (
-          <div className="composer-images">
-            {attachments.map((entry, index) => (
-              <div className="attachment" key={entry.ref}>
-                {entry.url ? (
-                  <img src={entry.url} alt="已选择的图片" />
-                ) : (
-                  <span className="attachment-file" aria-hidden="true">
-                    {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
-                  </span>
-                )}
-                <span className="attachment-index" aria-hidden="true">
-                  {index + 1}
-                </span>
-                <span className="attachment-name">{entry.name}</span>
-                <button
-                  type="button"
-                  aria-label={`移除附件 ${entry.name}`}
-                  onClick={() => removeAttachment(entry.ref)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
           </div>
         ) : null}
-        <VoiceLive session={voice} onCancel={cancelVoice} />
-        <textarea
-          ref={inputRef}
-          value={draft}
-          placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
-          disabled={runtime.readOnly === true}
-          rows={1}
-          // The soft keyboard's return key says what it does. Off "send" it
-          // would keep showing a send arrow while Enter inserts a line break.
-          enterKeyHint={enterPref === "send" ? "send" : "enter"}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            grow();
-          }}
-          onKeyDown={onKeyDown}
-        />
-        <div className="composer-bar">
-          <button
-            type="button"
-            className="iconbtn attach"
-            aria-label="添加图片或计划"
-            onClick={openAttach}
-            disabled={runtime.readOnly === true || attaching}
-          >
-            {attaching ? "…" : "＋"}
-          </button>
-          {runtime.readOnly ? (
-            <span className="composer-model">只读</span>
-          ) : (
+  
+        <TodoPanel todos={todos} state={todosState} />
+  
+        {/* One strip, highest priority first. Four bars stacked over the
+            composer is noise; a person can only act on one thing at a time. */}
+        {send.kind === "failed" ? (
+          <div className="sendfail" role="alert">
+            <span>
+              {send.unconfirmed
+                ? "不确定这一轮有没有发出去。先刷新确认，别直接重发；原文还在输入框里。"
+                : `没发出去：${sendErrorText(send.detail)}`}
+            </span>
+            {send.unconfirmed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSend({ kind: "idle" });
+                  reload();
+                }}
+              >
+                刷新确认
+              </button>
+            ) : send.retryable && lastRetry.current ? (
+              <button type="button" onClick={() => void doSend(lastRetry.current)}>
+                重试
+              </button>
+            ) : (
+              <button type="button" onClick={() => setSend({ kind: "idle" })}>
+                知道了
+              </button>
+            )}
+          </div>
+        ) : promptError ? (
+          <div className="sendfail" role="alert">
+            <span>{promptError}</span>
+            <button type="button" onClick={() => setPromptError("")}>
+              知道了
+            </button>
+          </div>
+        ) : attachError ? (
+          <div className="sendfail" role="alert">
+            <span>{attachError}</span>
+            <button type="button" onClick={() => setAttachError("")}>
+              知道了
+            </button>
+          </div>
+        ) : inboxNote ? (
+          <div className="inbox-note" role="status">
             <button
               type="button"
-              className="modelchip"
-              onClick={() => setModelSheet(true)}
-              aria-label="切换模型"
-              title="切换模型"
+              className="inbox-note-open"
+              onClick={() => setQueueSheet(true)}
+              aria-label="查看排队列表"
             >
-              {`${shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}${
-                statusEffort ? ` · ${effortDisplayName(statusEffort)}` : ""
-              }`}
+              {inboxNote}
             </button>
-          )}
-          {speechSupported() ? (
-            <MicButton
-              session={voice}
-              disabled={runtime.readOnly === true}
-              down={voiceDown}
-              move={voiceMove}
-              up={voiceUp}
-            />
+            <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
+              ×
+            </button>
+          </div>
+        ) : null}
+  
+        {/* While a turn runs, the composer's send button is the stop control, so
+            a message typed now needs its own way out. Two buttons rather than
+            one: queuing leaves the turn alone, steering joins it. */}
+        {streaming && draft.trim() && runtime.readOnly !== true ? (
+          <div className="interject" role="group" aria-label="发送到运行中的回合">
+            <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
+              排队
+            </button>
+            <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
+              插话
+            </button>
+          </div>
+        ) : null}
+  
+        <div className="composer">
+          <input
+            ref={imageRef}
+            className="file-input"
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => void onImage(event)}
+          />
+          <input
+            ref={cameraRef}
+            className="file-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => void onImage(event)}
+          />
+          <input
+            ref={fileRef}
+            className="file-input"
+            type="file"
+            multiple
+            onChange={(event) => void onFile(event)}
+          />
+          {attachments.length > 0 ? (
+            <div className="composer-images">
+              {attachments.map((entry, index) => (
+                <div className="attachment" key={entry.ref}>
+                  {entry.url ? (
+                    <img src={entry.url} alt="已选择的图片" />
+                  ) : (
+                    <span className="attachment-file" aria-hidden="true">
+                      {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
+                    </span>
+                  )}
+                  <span className="attachment-index" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <span className="attachment-name">{entry.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`移除附件 ${entry.name}`}
+                    onClick={() => removeAttachment(entry.ref)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           ) : null}
-          {streaming ? (
+          <VoiceLive session={voice} onCancel={cancelVoice} />
+          <textarea
+            ref={inputRef}
+            value={draft}
+            placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
+            disabled={runtime.readOnly === true}
+            rows={1}
+            // The soft keyboard's return key says what it does. Off "send" it
+            // would keep showing a send arrow while Enter inserts a line break.
+            enterKeyHint={enterPref === "send" ? "send" : "enter"}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              grow();
+            }}
+            onKeyDown={onKeyDown}
+          />
+          <div className="composer-bar">
             <button
               type="button"
-              className="send stop"
-              aria-label="停止"
-              onClick={() => {
-                void cancel(runtime.base).then((result) => {
-                  if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
-                });
-              }}
+              className="iconbtn attach"
+              aria-label="添加图片或计划"
+              onClick={openAttach}
+              disabled={runtime.readOnly === true || attaching}
             >
-              停止
+              {attaching ? "…" : "＋"}
             </button>
-          ) : (
-            <button
-              type="button"
-              className="send"
-              aria-label="发送"
-              disabled={!draft.trim() || send.kind === "sending" || attaching}
-              onClick={() => void doSend(draft)}
-            >
-              ↑
-            </button>
-          )}
+            {runtime.readOnly ? (
+              <span className="composer-model">只读</span>
+            ) : (
+              <button
+                type="button"
+                className="modelchip"
+                onClick={() => setModelSheet(true)}
+                aria-label="切换模型"
+                title="切换模型"
+              >
+                {`${shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}${
+                  statusEffort ? ` · ${effortDisplayName(statusEffort)}` : ""
+                }`}
+              </button>
+            )}
+            {speechSupported() ? (
+              <MicButton
+                session={voice}
+                disabled={runtime.readOnly === true}
+                down={voiceDown}
+                move={voiceMove}
+                up={voiceUp}
+              />
+            ) : null}
+            {streaming ? (
+              <button
+                type="button"
+                className="send stop"
+                aria-label="停止"
+                onClick={() => {
+                  void cancel(runtime.base).then((result) => {
+                    if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
+                  });
+                }}
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="send"
+                aria-label="发送"
+                disabled={!draft.trim() || send.kind === "sending" || attaching}
+                onClick={() => void doSend(draft)}
+              >
+                ↑
+              </button>
+            )}
+          </div>
         </div>
-      </div>
       </div>
         </>
       )}
