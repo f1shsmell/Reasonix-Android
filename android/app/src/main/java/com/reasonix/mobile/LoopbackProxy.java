@@ -501,22 +501,25 @@ public final class LoopbackProxy {
             } else {
                 cookies.apply(conn, uri);
             }
-            int status = conn.getResponseCode();
-            if (status == 401 || status == 403) {
+            int status = ProxyPaths.deviceStatus(conn.getResponseCode());
+            if (status == 401) {
                 ProxyWire.writeJson(socket, 401, "{\"code\":\"device.unauthorized\"}");
+                return;
+            }
+            if (status == 404) {
+                // An older kernel has no `/device`; the app's probe treats
+                // this like an older proxy and switches, then verifies.
+                ProxyWire.writeJson(socket, 404, "{\"code\":\"proxy.unknown_path\"}");
                 return;
             }
             if (status != 200) {
                 ProxyWire.writeJson(socket, 502, "{\"code\":\"proxy.upstream_unreachable\"}");
                 return;
             }
-            String machine = machineOf(ProxyWire.readText(conn));
-            if (machine.isEmpty()) {
-                ProxyWire.writeJson(socket, 502, "{\"code\":\"device.identity_missing\"}");
-                return;
-            }
+            // A kernel that names no machine is an older build, not a broken
+            // door: the identity is a hint, and absence is answered as such.
             JSONObject out = new JSONObject();
-            out.put("machine", machine);
+            out.put("machine", machineOf(ProxyWire.readText(conn)));
             ProxyWire.writeJson(socket, 200, out.toString());
         } finally {
             if (conn != null) conn.disconnect();

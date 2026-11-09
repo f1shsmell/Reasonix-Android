@@ -204,6 +204,28 @@ public class LoopbackProxyTest {
     }
 
     @Test
+    public void mapsADeviceReadToTheStatusTheAppUnderstands() {
+        // Only 200 is a door that answered with an identity to give; 401/403
+        // is a refusal about this phone, everything else is unreadable. A
+        // missing route (404) is an older kernel, which the app tolerates.
+        assertEquals(401, ProxyPaths.deviceStatus(401));
+        assertEquals(401, ProxyPaths.deviceStatus(403));
+        assertEquals(200, ProxyPaths.deviceStatus(200));
+        assertEquals(404, ProxyPaths.deviceStatus(404));
+        assertEquals(502, ProxyPaths.deviceStatus(500));
+        assertEquals(502, ProxyPaths.deviceStatus(503));
+    }
+
+    @Test
+    public void readsAnEmptyIdentityFromAnOlderKernel() {
+        // A kernel that names no machine is an older build, not a broken
+        // door: the proxy answers with an empty name instead of refusing.
+        assertEquals("", LoopbackProxy.machineOf("{\"id\":\"1\",\"ordinal\":1}"));
+        assertEquals("", LoopbackProxy.machineOf(""));
+        assertEquals("Mac-A", LoopbackProxy.machineOf("{\"machine\":\" Mac-A \"}"));
+    }
+
+    @Test
     public void classifiesLanTargetsForNetworkBinding() {
         assertNotNull(LanRoute.lanTarget("192.168.1.20"));
         assertNotNull(LanRoute.lanTarget("10.0.2.2"));

@@ -198,6 +198,19 @@ final class ProxyPaths {
         return next;
     }
 
+    /**
+     * The status the control plane answers for a kernel's `GET /device`.
+     *
+     * 404 is an older kernel without the route, tolerated like an older
+     * proxy; only a 200 may name a machine, and it may name none.
+     */
+    static int deviceStatus(int upstreamStatus) {
+        if (upstreamStatus == 401 || upstreamStatus == 403) return 401;
+        if (upstreamStatus == 404) return 404;
+        if (upstreamStatus != 200) return 502;
+        return 200;
+    }
+
     static String normalizeOrigin(String raw) {
         try {
             URI uri = URI.create(raw.trim());
