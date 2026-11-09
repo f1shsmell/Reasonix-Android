@@ -37,6 +37,7 @@ export const SETTINGS_DEFAULTS = {
   notificationOptions: false,
   cloudWatch: false,
   autoHandover: true,
+  retainTranscript: true,
   notify: { ongoing: false, ask: true, done: true, headsUp: true },
   haptics: { master: true, drag: true, stream: false },
 } as const;
@@ -52,6 +53,7 @@ export const SETTINGS_KEYS = {
   notificationOptions: "reasonix.notificationOptions.v1",
   cloudWatch: "reasonix.cloudWatch.v1",
   autoHandover: "reasonix.auto-handover.v1",
+  retainTranscript: "reasonix.retain-transcript.v1",
   notify: {
     ongoing: "reasonix.notify.ongoing",
     ask: "reasonix.notify.ask",

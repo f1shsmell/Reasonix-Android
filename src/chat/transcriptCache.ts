@@ -27,8 +27,21 @@
  * all. So an entry is written under every key the caller knows and read back
  * under whichever key it has, which is what keeps the two paths from missing
  * each other.
+ *
+ * ## Why there are two stores
+ *
+ * The `transcripts` store holds the rows. The `meta` store holds the same
+ * entry's shape — keys, row count, byte size — and no content. Statistics and
+ * eviction read `meta` only: `getAll()` on the content store deserializes
+ * every row of every conversation, and at the size limits below that is
+ * hundreds of megabytes on a phone that only wanted to know how much space it
+ * is using.
+ *
+ * The two stores are always written in one transaction, so a crash can never
+ * leave a meta record pointing at rows that were never saved.
  */
 
+import { loadRetainTranscript } from "../app/retainPref";
 import type { Row } from "./transcript";
 
 /**
@@ -38,15 +51,20 @@ import type { Row } from "./transcript";
  */
 const MAX_ROWS = 800;
 /** A serialized entry above this is skipped: writing it would stall more than it saves. */
-const MAX_BYTES = 2_500_000;
+const MAX_ENTRY_CHARS = 2_500_000;
 /** Entries kept at all; the oldest are pruned whenever a write happens. */
 const MAX_ENTRIES = 60;
+/** Content budget across every entry, in UTF-8 bytes. */
+const MAX_TOTAL_BYTES = 64_000_000;
 /** Writes coalesce: a streaming turn replaces the rows many times a second. */
 const WRITE_DELAY_MS = 800;
 
 const DB_NAME = "reasonix.cache";
-const DB_VERSION = 1;
-const STORE = "transcripts";
+const DB_VERSION = 2;
+const TRANSCRIPTS = "transcripts";
+const META = "meta";
+/** Marks a finished migration; it carries no ids, so readers skip it. */
+const META_MARKER = "__reasonix.cache.meta.v2";
 
 interface Entry {
   /** Every key this entry is filed under; pruning reads them in one call. */
@@ -55,8 +73,23 @@ interface Entry {
   savedAt: number;
 }
 
+/** What an entry looks like without its content. */
+interface EntryMeta {
+  ids: string[];
+  rows: number;
+  bytes: number;
+  savedAt: number;
+}
+
 /** The keys a conversation can be reached by. Empty strings are dropped. */
 export type CacheKeys = readonly (string | undefined)[];
+
+export interface CacheStats {
+  /** Conversations, not keys: one entry reached by two keys counts once. */
+  entries: number;
+  rows: number;
+  bytes: number;
+}
 
 function usableKeys(keys: CacheKeys): string[] {
   const seen = new Set<string>();
@@ -75,12 +108,20 @@ const memory = new Map<string, Entry>();
 /** Rows written since the last flush, so coalesced timers save the newest. */
 const pending = new Map<string, Row[]>();
 const timers = new Map<string, number>();
+/**
+ * Bumped by a clear. A flush that started before it must not write after it:
+ * the person asked for the content to be gone, and a timer that was already
+ * in flight would put it back.
+ */
+let epoch = 0;
 
 /**
  * L2: opened once. A WebView without IndexedDB, or one that refuses the open
  * (private mode, eviction), loses only the cold-start layer.
  */
 let dbPromise: Promise<IDBDatabase | null> | null = null;
+/** The one-time migration into `meta`; every disk read waits on it. */
+let ready: Promise<void> | null = null;
 
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise === null) {
@@ -92,9 +133,9 @@ function openDb(): Promise<IDBDatabase | null> {
         }
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = () => {
-          if (!request.result.objectStoreNames.contains(STORE)) {
-            request.result.createObjectStore(STORE);
-          }
+          const db = request.result;
+          if (!db.objectStoreNames.contains(TRANSCRIPTS)) db.createObjectStore(TRANSCRIPTS);
+          if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
         };
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => resolve(null);
@@ -102,9 +143,115 @@ function openDb(): Promise<IDBDatabase | null> {
       } catch {
         resolve(null);
       }
-    }).catch(() => null);
+    })
+      .then((db) => {
+        if (db !== null) ready = ensureMeta(db).catch(() => {});
+        return db;
+      })
+      .catch(() => null);
   }
   return dbPromise;
+}
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(new Error("indexeddb request failed"));
+  });
+}
+
+/** UTF-8 bytes, the unit the size budget is stated in. */
+function byteLength(json: string): number {
+  return new TextEncoder().encode(json).length;
+}
+
+/**
+ * Fill `meta` from an older database, once.
+ *
+ * The marker makes this idempotent: every write is an overwrite and every
+ * delete is a no-op when the key is gone, so a run that dies halfway is
+ * finished by the next one instead of being skipped. A cursor reads one entry
+ * at a time — `getAll()` here would deserialize the whole cache to build a
+ * summary of it.
+ */
+async function ensureMeta(db: IDBDatabase): Promise<void> {
+  try {
+    const marker = await requestResult(
+      db.transaction(META, "readonly").objectStore(META).get(META_MARKER),
+    );
+    if (marker) return;
+  } catch {
+    return;
+  }
+
+  const winners = new Map<string, EntryMeta>();
+  const losers: string[][] = [];
+  await new Promise<void>((resolve) => {
+    let request: IDBRequest<IDBCursorWithValue | null>;
+    try {
+      request = db.transaction(TRANSCRIPTS, "readonly").objectStore(TRANSCRIPTS).openCursor();
+    } catch {
+      resolve();
+      return;
+    }
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      const entry = cursor.value as Entry | undefined;
+      if (entry && Array.isArray(entry.ids) && entry.ids.length > 0) {
+        const primary = entry.ids[0];
+        if (primary) {
+          const rows = Array.isArray(entry.rows) ? entry.rows : [];
+          const record: EntryMeta = {
+            ids: entry.ids,
+            rows: rows.length,
+            bytes: byteLength(JSON.stringify(rows)),
+            savedAt: typeof entry.savedAt === "number" ? entry.savedAt : 0,
+          };
+          const prior = winners.get(primary);
+          if (!prior) {
+            winners.set(primary, record);
+          } else if (prior.savedAt < record.savedAt) {
+            losers.push(prior.ids);
+            winners.set(primary, record);
+          } else {
+            losers.push(record.ids);
+          }
+        }
+      }
+      cursor.continue();
+    };
+    request.onerror = () => resolve();
+  });
+
+  try {
+    const tx = db.transaction([TRANSCRIPTS, META], "readwrite");
+    const transcripts = tx.objectStore(TRANSCRIPTS);
+    const meta = tx.objectStore(META);
+    const winnerKeys = new Set<string>();
+    for (const record of winners.values()) {
+      for (const id of record.ids) winnerKeys.add(id);
+    }
+    for (const record of winners.values()) {
+      for (const id of record.ids) meta.put(record, id);
+    }
+    // A superseded entry's own pane id is dead weight: the new pane has its
+    // own, and nothing will ever ask for the old one again. A key the winner
+    // also carries is the shared session path and must survive.
+    for (const ids of losers) {
+      for (const id of ids) {
+        if (winnerKeys.has(id)) continue;
+        transcripts.delete(id);
+        meta.delete(id);
+      }
+    }
+    meta.put({ migratedAt: Date.now() }, META_MARKER);
+  } catch {
+    // A failed migration costs one more scan next time, not correctness.
+  }
 }
 
 /** Remember an entry under all its keys, so either path finds it later. */
@@ -136,6 +283,9 @@ function forget(ids: readonly string[]): void {
  * conversation ever reaches disk.
  */
 export async function loadCachedRows(keys: CacheKeys): Promise<Row[] | null> {
+  // The person asked for the content not to stay on this phone. A leftover
+  // entry from before the switch must not be readable either.
+  if (!loadRetainTranscript()) return null;
   const wanted = usableKeys(keys);
   if (wanted.length === 0) return null;
   for (const id of wanted) {
@@ -144,9 +294,10 @@ export async function loadCachedRows(keys: CacheKeys): Promise<Row[] | null> {
   }
   const db = await openDb();
   if (!db) return null;
+  if (ready) await ready;
   return new Promise((resolve) => {
     try {
-      const store = db.transaction(STORE, "readonly").objectStore(STORE);
+      const store = db.transaction(TRANSCRIPTS, "readonly").objectStore(TRANSCRIPTS);
       let settled = false;
       const finish = (rows: Row[] | null, entry?: Entry) => {
         if (settled) return;
@@ -191,6 +342,7 @@ export async function loadCachedRows(keys: CacheKeys): Promise<Row[] | null> {
  * than written.
  */
 export function scheduleSaveRows(keys: CacheKeys, rows: Row[]): void {
+  if (!loadRetainTranscript()) return;
   if (rows.length === 0) return;
   const ids = usableKeys(keys);
   if (ids.length === 0) return;
@@ -220,38 +372,151 @@ async function flushRows(primary: string): Promise<void> {
   // that scheduled the flush, so recover the rest from there.
   const known = memory.get(primary);
   const ids = known?.ids ?? [primary];
-  if (JSON.stringify(rows).length > MAX_BYTES) {
+  const generation = epoch;
+  const json = JSON.stringify(rows);
+  if (json.length > MAX_ENTRY_CHARS) {
     forget(ids);
-    await dropCachedRows(ids);
+    dropCachedRows(ids);
     return;
   }
+  const bytes = byteLength(json);
   const db = await openDb();
   if (!db) return;
+  if (ready) await ready;
+  // A clear landed while this write was waiting on the database. The person
+  // asked for the content to be gone; writing it now would undo that.
+  if (generation !== epoch) return;
   try {
-    const store = db.transaction(STORE, "readwrite").objectStore(STORE);
-    const entry: Entry = { ids, rows, savedAt: Date.now() };
-    for (const id of ids) store.put(entry, id);
-    const all = store.getAll();
+    const savedAt = Date.now();
+    const entry: Entry = { ids, rows, savedAt };
+    const record: EntryMeta = { ids, rows: rows.length, bytes, savedAt };
+    const tx = db.transaction([TRANSCRIPTS, META], "readwrite");
+    const transcripts = tx.objectStore(TRANSCRIPTS);
+    const meta = tx.objectStore(META);
+    for (const id of ids) {
+      transcripts.put(entry, id);
+      meta.put(record, id);
+    }
+    // Prune from `meta`, inside the same transaction: the content store is
+    // never read to decide what to throw away.
+    const all = meta.getAll();
     all.onsuccess = () => {
-      const entries = (all.result ?? []) as Entry[];
-      // An entry reachable by two keys appears twice; prune by identity, not
-      // by count, or the second copy would delete the first.
-      const unique = new Map<string, Entry>();
-      for (const candidate of entries) {
-        const key = candidate.ids?.[0] ?? "";
-        const prior = unique.get(key);
-        if (!prior || prior.savedAt < candidate.savedAt) unique.set(key, candidate);
+      const records = ((all.result as EntryMeta[]) ?? []).filter(
+        (candidate) => candidate && Array.isArray(candidate.ids) && candidate.ids.length > 0,
+      );
+      const byPrimary = new Map<string, EntryMeta>();
+      for (const candidate of records) {
+        const key = candidate.ids[0];
+        if (!key) continue;
+        const prior = byPrimary.get(key);
+        if (!prior || prior.savedAt < candidate.savedAt) byPrimary.set(key, candidate);
       }
-      const ordered = [...unique.values()].sort((a, b) => a.savedAt - b.savedAt);
-      if (ordered.length <= MAX_ENTRIES) return;
-      for (const stale of ordered.slice(0, ordered.length - MAX_ENTRIES)) {
-        if (stale.ids.includes(primary)) continue;
-        for (const id of stale.ids) store.delete(id);
+      const ordered = [...byPrimary.values()].sort((a, b) => a.savedAt - b.savedAt);
+      const survivors: EntryMeta[] = [];
+      let total = 0;
+      for (let index = ordered.length - 1; index >= 0 && survivors.length < MAX_ENTRIES; index -= 1) {
+        const candidate = ordered[index];
+        if (!candidate) continue;
+        if (survivors.length > 0 && total + candidate.bytes > MAX_TOTAL_BYTES) break;
+        survivors.push(candidate);
+        total += candidate.bytes;
+      }
+      const keep = new Set(survivors.map((candidate) => candidate.ids[0]));
+      // The entry just written stays even when it is the oldest by timestamp:
+      // dropping the conversation on screen would defeat the cache.
+      keep.add(primary);
+      const survivorKeys = new Set(survivors.flatMap((candidate) => candidate.ids));
+      for (const candidate of ordered) {
+        const key = candidate.ids[0];
+        if (!key || keep.has(key)) continue;
+        for (const id of candidate.ids) {
+          if (survivorKeys.has(id)) continue;
+          transcripts.delete(id);
+          meta.delete(id);
+        }
       }
     };
     // A failed or aborted transaction costs this one write, not correctness.
   } catch {
     // Ignore: the history read remains the source of truth.
+  }
+}
+
+/**
+ * What the cache currently holds, without reading a single row.
+ *
+ * `null` means IndexedDB is unavailable or the read failed — the settings
+ * screen shows "unavailable" rather than a zero that would look like "empty".
+ */
+export async function cacheStats(): Promise<CacheStats | null> {
+  const db = await openDb();
+  if (!db) return null;
+  try {
+    if (ready) await ready;
+    const records = await requestResult<EntryMeta[]>(
+      db.transaction(META, "readonly").objectStore(META).getAll(),
+    );
+    const byPrimary = new Map<string, EntryMeta>();
+    for (const candidate of records ?? []) {
+      if (!candidate || !Array.isArray(candidate.ids) || candidate.ids.length === 0) continue;
+      const key = candidate.ids[0];
+      if (!key) continue;
+      const prior = byPrimary.get(key);
+      if (!prior || prior.savedAt < candidate.savedAt) byPrimary.set(key, candidate);
+    }
+    let rows = 0;
+    let bytes = 0;
+    for (const candidate of byPrimary.values()) {
+      rows += candidate.rows;
+      bytes += candidate.bytes;
+    }
+    return { entries: byPrimary.size, rows, bytes };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Forget every conversation.
+ *
+ * `epoch` is bumped first, so a flush that was already waiting on the database
+ * sees it and writes nothing. The in-process state is cleared synchronously
+ * for the same reason: a timer that fires after this call must find nothing to
+ * write. Returns how many conversations were dropped, so the screen does not
+ * have to ask again.
+ */
+export async function clearAllCachedRows(): Promise<{ entries: number }> {
+  epoch += 1;
+  memory.clear();
+  pending.clear();
+  for (const timer of timers.values()) window.clearTimeout(timer);
+  timers.clear();
+  const db = await openDb();
+  if (!db) return { entries: 0 };
+  try {
+    if (ready) await ready;
+    const tx = db.transaction([TRANSCRIPTS, META], "readwrite");
+    const transcripts = tx.objectStore(TRANSCRIPTS);
+    const meta = tx.objectStore(META);
+    // The count and the clear happen in the request's own callback: a
+    // `setTimeout(0)` here would race the IndexedDB task queue and report zero
+    // conversations on a phone where the clear did run.
+    const entries = await new Promise<number>((resolve) => {
+      const all = meta.getAll();
+      all.onsuccess = () => {
+        const records = ((all.result as EntryMeta[]) ?? []).filter(
+          (candidate) => candidate && Array.isArray(candidate.ids) && candidate.ids.length > 0,
+        );
+        const count = new Set(records.map((candidate) => candidate.ids[0])).size;
+        transcripts.clear();
+        meta.clear();
+        resolve(count);
+      };
+      all.onerror = () => resolve(0);
+    });
+    return { entries };
+  } catch {
+    return { entries: 0 };
   }
 }
 
@@ -272,8 +537,11 @@ export function dropCachedRows(keys: CacheKeys): void {
     const db = await openDb();
     if (!db) return;
     try {
-      const store = db.transaction(STORE, "readwrite").objectStore(STORE);
-      for (const id of ids) store.delete(id);
+      const tx = db.transaction([TRANSCRIPTS, META], "readwrite");
+      for (const id of ids) {
+        tx.objectStore(TRANSCRIPTS).delete(id);
+        tx.objectStore(META).delete(id);
+      }
     } catch {
       // Ignore: a leftover entry is stale data the next read corrects.
     }
@@ -282,8 +550,17 @@ export function dropCachedRows(keys: CacheKeys): void {
 
 /** Reset everything. Tests only: module state would otherwise leak between them. */
 export function resetTranscriptCache(): void {
+  epoch += 1;
   memory.clear();
   pending.clear();
   for (const timer of timers.values()) window.clearTimeout(timer);
   timers.clear();
+}
+
+/**
+ * A launch that starts with retention off may have died before the previous
+ * clear finished. Sweeping once at startup closes that window.
+ */
+if (typeof window !== "undefined" && !loadRetainTranscript()) {
+  void clearAllCachedRows();
 }
