@@ -495,6 +495,34 @@ describe("UserBubble", () => {
       expect.anything(),
     );
   });
+
+  it("hands a loaded picture to the viewer when it is tapped", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("png", { status: 200, headers: { "content-type": "image/png" } }),
+      ),
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:message");
+    const onOpenImage = vi.fn();
+
+    render(
+      <UserBubble
+        row={{ kind: "user", id: "u2", text: "@.reasonix/attachments/photo.png" }}
+        base="/rt/r1"
+        onOpenImage={onOpenImage}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const button = container.querySelector('button[aria-label="放大图片"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    act(() => button.click());
+    expect(onOpenImage).toHaveBeenCalledWith("blob:message");
+  });
 });
 describe("AssistantBubble action row", () => {
   it("shows the landing clock beside the copy action when it watched the end", () => {

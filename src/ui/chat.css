@@ -1490,8 +1490,20 @@ html[data-chat-font="xl"] {
   font-size: 10px;
 }
 
-.composer .attachment button,
-.quote-chip button {
+.attachment-thumb {
+  display: block;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.chip-remove {
   flex: none;
   width: 22px;
   height: 22px;
@@ -1858,6 +1870,68 @@ html[data-chat-font="xl"] {
   max-height: none;
   object-fit: cover;
   border-radius: 10px;
+}
+
+.message-image-button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: zoom-in;
+}
+
+.message-image-button .message-image {
+  display: block;
+}
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.94);
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.image-viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.image-viewer-stage img {
+  max-width: 100vw;
+  max-height: 100vh;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+.image-viewer-close {
+  position: absolute;
+  top: calc(12px + var(--rx-inset-top, env(safe-area-inset-top, 0px)));
+  right: 12px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .sendfail {

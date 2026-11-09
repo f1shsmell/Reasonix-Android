@@ -1718,6 +1718,51 @@ describe("ChatScreen composer", () => {
     expect(preview).toHaveBeenCalled();
   });
 
+  it("opens a pending image at full size and closes the preview", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/rt/r1/attachments")) {
+          return Promise.resolve(
+            json({
+              path: ".reasonix/attachments/photo.png",
+              ref: "@.reasonix/attachments/photo.png",
+              image: true,
+            }),
+          );
+        }
+        return Promise.resolve(json([]));
+      }),
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:photo");
+
+    render(snapshot());
+    await flush();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["image"], "photo.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+
+    const thumb = container.querySelector(
+      'button[aria-label="放大图片 photo.png"]',
+    ) as HTMLButtonElement;
+    act(() => thumb.click());
+
+    const dialog = container.querySelector('[role="dialog"][aria-label="图片预览"]');
+    expect(dialog?.querySelector("img")?.getAttribute("src")).toBe("blob:photo");
+
+    const close = dialog?.querySelector<HTMLButtonElement>('button[aria-label="关闭预览"]');
+    expect(close).not.toBeNull();
+    act(() => close?.click());
+    expect(container.querySelector('[aria-label="图片预览"]')).toBeNull();
+    // The chip is still staged after the preview closes.
+    expect(container.querySelector(".attachment")).not.toBeNull();
+  });
+
   it("uploads a file and shows a file chip", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);

@@ -58,7 +58,15 @@ function withoutImageRefs(text: string): string {
 }
 
 /** Fetch the stored image through the same transport as the rest of the app. */
-function MessageImage({ base, path }: { base: string; path: string }) {
+function MessageImage({
+  base,
+  path,
+  onOpen,
+}: {
+  base: string;
+  path: string;
+  onOpen?: (src: string) => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,7 +93,20 @@ function MessageImage({ base, path }: { base: string; path: string }) {
     };
   }, [base, path]);
 
-  return url ? <img className="message-image" src={url} alt="图片附件" loading="lazy" /> : null;
+  if (!url) return null;
+  const picture = <img className="message-image" src={url} alt="图片附件" loading="lazy" />;
+  return onOpen ? (
+    <button
+      type="button"
+      className="message-image-button"
+      aria-label="放大图片"
+      onClick={() => onOpen(url)}
+    >
+      {picture}
+    </button>
+  ) : (
+    picture
+  );
 }
 
 export function UserBubble({
@@ -93,12 +114,15 @@ export function UserBubble({
   base,
   actions,
   turn,
+  onOpenImage,
 }: {
   row: UserRow;
   base?: string;
   actions?: RowActions;
   /** The checkpoint turn this message opened, when the kernel listed one. */
   turn?: number;
+  /** Show one of this message's pictures at full size. */
+  onOpenImage?: (src: string) => void;
 }) {
   const refs = base ? imageRefs(row.text) : [];
   const text = refs.length > 0 ? withoutImageRefs(row.text) : row.text;
@@ -109,7 +133,12 @@ export function UserBubble({
         {base && refs.length > 0 ? (
           <div className={refs.length > 1 ? "message-images multi" : "message-images"}>
             {refs.map((ref) => (
-              <MessageImage key={ref} base={base} path={ref} />
+              <MessageImage
+                key={ref}
+                base={base}
+                path={ref}
+                {...(onOpenImage ? { onOpen: onOpenImage } : {})}
+              />
             ))}
           </div>
         ) : null}

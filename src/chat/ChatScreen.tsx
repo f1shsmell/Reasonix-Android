@@ -56,6 +56,7 @@ import { CheckpointsSheet } from "./CheckpointsSheet";
 import { EditMessageSheet } from "./EditMessageSheet";
 import { QueueSheet } from "./QueueSheet";
 import { ContextSheet } from "./ContextSheet";
+import { ImageViewer } from "./ImageViewer";
 import { loadCheckpoints, prepareRewind, commitRewind, rewindMessage } from "../net/rewind";
 import type { Checkpoint } from "../net/rewind";
 import { branchAt, branchMessage } from "../net/branch";
@@ -479,6 +480,7 @@ const RowView = memo(function RowView({
   turn,
   branchTurn,
   question,
+  onOpenImage,
 }: {
   row: Row;
   base: string;
@@ -490,6 +492,8 @@ const RowView = memo(function RowView({
   branchTurn?: number;
   /** The words that asked for this answer, for regenerating the same request. */
   question?: string;
+  /** Show one of this row's pictures at full size. */
+  onOpenImage?: (src: string) => void;
 }) {
   switch (row.kind) {
     case "user":
@@ -499,6 +503,7 @@ const RowView = memo(function RowView({
           base={base}
           actions={actions}
           {...(turn !== undefined ? { turn } : {})}
+          {...(onOpenImage ? { onOpenImage } : {})}
         />
       );
     case "assistant":
@@ -1162,6 +1167,8 @@ export function ChatScreen({
   const [quotes, setQuotes] = useState<QuotedReply[]>([]);
   const quoteSeq = useRef(0);
   const [attachError, setAttachError] = useState("");
+  /** The picture the viewer is showing, from a sent turn or a pending chip. */
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
@@ -2330,6 +2337,7 @@ export function ChatScreen({
                   {...(turn !== undefined ? { turn } : {})}
                   {...(branchTurn !== undefined ? { branchTurn } : {})}
                   {...(context?.question ? { question: context.question } : {})}
+                  onOpenImage={setViewingImage}
                 />
               );
             })}
@@ -2508,6 +2516,7 @@ export function ChatScreen({
                   </span>
                   <button
                     type="button"
+                    className="chip-remove"
                     aria-label="移除引用"
                     onClick={() => removeQuote(entry.id)}
                   >
@@ -2518,7 +2527,14 @@ export function ChatScreen({
               {attachments.map((entry) => (
                 <div className="attachment" key={entry.ref}>
                   {entry.url ? (
-                    <img src={entry.url} alt="已选择的图片" />
+                    <button
+                      type="button"
+                      className="attachment-thumb"
+                      aria-label={`放大图片 ${entry.name}`}
+                      onClick={() => setViewingImage(entry.url ?? null)}
+                    >
+                      <img src={entry.url} alt="已选择的图片" />
+                    </button>
                   ) : (
                     <span className="attachment-file" aria-hidden="true">
                       {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
@@ -2530,6 +2546,7 @@ export function ChatScreen({
                   </span>
                   <button
                     type="button"
+                    className="chip-remove"
                     aria-label={`移除附件 ${entry.name}`}
                     onClick={() => removeAttachment(entry.ref)}
                   >
@@ -2759,6 +2776,10 @@ export function ChatScreen({
           steps={process.steps}
           onClose={() => setProcess(null)}
         />
+      ) : null}
+
+      {viewingImage ? (
+        <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />
       ) : null}
     </div>
   );
