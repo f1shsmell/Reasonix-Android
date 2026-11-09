@@ -2271,8 +2271,8 @@ describe("ChatScreen reading position", () => {
       expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeNull();
       expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
 
-      // The jump control only goes once the glide actually arrives, so a
-      // glide that falls short keeps its way back.
+      // The control goes when the scroller reports the end; a jump that could
+      // not reach it keeps its way back.
       act(() => (container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement).click());
       expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
       act(() => {

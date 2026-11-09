@@ -2108,7 +2108,7 @@ export function ChatScreen({
               data-value="down"
               aria-label="跳到最新"
               title="跳到最新"
-              onClick={() => scrollToBottom(true)}
+              onClick={() => scrollToBottom(false)}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path
