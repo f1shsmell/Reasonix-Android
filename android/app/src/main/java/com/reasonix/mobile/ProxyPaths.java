@@ -4,8 +4,12 @@ import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Route parsing and URL rewriting for the loopback proxy.
@@ -145,6 +149,66 @@ final class ProxyPaths {
         } catch (IllegalArgumentException e) {
             return "";
         }
+    }
+
+    /**
+     * The remembered origins to keep when {@code origin} becomes the newest.
+     *
+     * A kernel picks a fresh port on restart unless the person pinned one, so
+     * the same computer keeps arriving under a new origin. Keeping every one
+     * of them makes `/__reasonix/refresh` probe a queue of doors that no
+     * longer answer — three seconds each, on a phone that has left the
+     * network. One origin per host is the same rule the app's saved list
+     * already uses.
+     *
+     * The newest origin goes first: callers rely on that order to try the door
+     * that was just paired before the ones that merely were remembered.
+     *
+     * Two origins are the same computer when their hosts match, ignoring case
+     * — host names are case-insensitive. An origin this class cannot parse
+     * keeps its place: refusing to guess is safer than treating every
+     * unreadable address as one machine.
+     *
+     * The old list is deduplicated against itself too, not only against
+     * {@code origin}: a phone that upgraded from an older build already has
+     * several ports of one machine in here, and a walk that switches to
+     * another address type would otherwise carry all of them forward.
+     */
+    static List<String> onePerHost(List<String> existing, String origin) {
+        List<String> next = new ArrayList<>();
+        if (origin == null || origin.isEmpty()) {
+            if (existing != null) next.addAll(existing);
+            return next;
+        }
+        Set<String> hosts = new HashSet<>();
+        next.add(origin);
+        String host = hostOf(origin);
+        if (!host.isEmpty()) hosts.add(host.toLowerCase(Locale.ROOT));
+        if (existing == null) return next;
+        for (String value : existing) {
+            if (value == null || value.isEmpty() || value.equals(origin)) continue;
+            String other = hostOf(value);
+            if (!other.isEmpty()) {
+                String key = other.toLowerCase(Locale.ROOT);
+                if (hosts.contains(key)) continue;
+                hosts.add(key);
+            }
+            next.add(value);
+        }
+        return next;
+    }
+
+    /**
+     * The status the control plane answers for a kernel's `GET /device`.
+     *
+     * 404 is an older kernel without the route, tolerated like an older
+     * proxy; only a 200 may name a machine, and it may name none.
+     */
+    static int deviceStatus(int upstreamStatus) {
+        if (upstreamStatus == 401 || upstreamStatus == 403) return 401;
+        if (upstreamStatus == 404) return 404;
+        if (upstreamStatus != 200) return 502;
+        return 200;
     }
 
     static String normalizeOrigin(String raw) {

@@ -190,9 +190,16 @@ export function moveConnection(key: string, index: number): SavedConnection[] {
  * host are two doors: a LAN address and a tunnel to the same computer are both
  * usable, and folding them would drop a route.
  */
-function originHost(origin: string): string {
+/**
+ * The host part of a LAN origin, which survives a port change.
+ *
+ * Lower-cased because host names are case-insensitive: `MyMac.local` and
+ * `mymac.local` are one computer, and a restart that also changed the
+ * spelling must still be recognised as the same door moving to a new port.
+ */
+export function originHost(origin: string): string {
   try {
-    return new URL(origin).hostname;
+    return new URL(origin).hostname.toLowerCase();
   } catch {
     return "";
   }
@@ -208,9 +215,9 @@ function originHost(origin: string): string {
  *
  * ## Restarts, not routes
  *
- * A desktop kernel picks a fresh port each time it starts. Keying the list on
- * the origin alone meant every restart added a row, and the list filled with
- * doors that no longer answer.
+ * A desktop kernel picks a fresh port each time it starts, unless the person
+ * pinned one in Studio. Keying the list on the origin alone meant every
+ * restart added a row, and the list filled with doors that no longer answer.
  *
  * The same machine on the same host with a different port is that restart, so
  * the row moves to the new port instead of a second one appearing. The same

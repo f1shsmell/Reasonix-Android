@@ -168,6 +168,7 @@ vi.mock("../net/relay", () => ({
   ensureRelay: vi.fn(),
   clearRelayRouting: vi.fn(),
   prefetchGrant: vi.fn(),
+  relayState: vi.fn(() => "none"),
   RelayError: class RelayError extends Error {
     readonly kind: string;
     constructor(kind: string, message: string) {
@@ -183,6 +184,7 @@ vi.mock("../net/server", () => ({
   markRelay: vi.fn(),
   firstAnswering: vi.fn(),
   answeringOrigins: vi.fn(),
+  probeDoor: vi.fn(async () => ({ ok: true as const, machine: "" })),
   probeUpstream: vi.fn(),
   readMachineIdentity: vi.fn(async () => null),
   loadFleet: vi.fn(async () => null),

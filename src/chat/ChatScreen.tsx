@@ -1946,7 +1946,7 @@ export function ChatScreen({
         <div className="sendfail" role="alert">
           <span>
             {send.unconfirmed
-              ? "不确定这一轮有没有发出去。先刷新确认，别直接重发。"
+              ? "不确定这一轮有没有发出去。先刷新确认，别直接重发；原文还在输入框里。"
               : `没发出去：${sendErrorText(send.detail)}`}
           </span>
           {send.unconfirmed ? (

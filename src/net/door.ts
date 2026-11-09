@@ -16,6 +16,7 @@ import { learnConnectionMachine, rememberConnection } from "./savedConnections";
 import {
   configureProxy,
   markRelay,
+  probeDoor,
   probeUpstream,
   readMachineIdentity,
   ProxyError,
@@ -40,6 +41,13 @@ export async function openDoor(
   try {
     if (door.kind === "lan") {
       onStep("switch");
+      // Verify before tearing anything down. The switch itself is a local
+      // write, so a door that cannot answer leaves the current route intact —
+      // that is the difference between a handover and an outage.
+      const pre = await probeDoor(door.target);
+      if (!pre.ok) {
+        return { ok: false, error: linkFailure(pre.code, `origin ${door.target}`) };
+      }
       await configureProxy(door.target);
       clearRelayRouting();
       onStep("verify");
@@ -48,11 +56,14 @@ export async function openDoor(
         return { ok: false, error: linkFailure(reach.code, `origin ${door.target}`) };
       }
       rememberConnection("lan", door.target, door.name, door.machine);
-      // The name arrives after the door is open; recording it late is enough
-      // to recognise this computer's cloud device on the next list.
-      void readMachineIdentity(door.target).then((identity) => {
-        if (identity) learnConnectionMachine("lan", door.target, identity.machine);
-      });
+      // The probe already named the computer; only a build that could not
+      // answer it needs the late read.
+      if (pre.machine) learnConnectionMachine("lan", door.target, pre.machine);
+      else {
+        void readMachineIdentity(door.target).then((identity) => {
+          if (identity) learnConnectionMachine("lan", door.target, identity.machine);
+        });
+      }
       void syncFleetPeer("lan", door.target, door.name ?? door.target).catch(() => {});
       return { ok: true };
     }

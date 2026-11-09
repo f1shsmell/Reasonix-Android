@@ -9,6 +9,7 @@
 
 import type { RuntimeView } from "../wire/runtime";
 import { fetchWithTimeout } from "./http";
+import { relayState } from "./relay";
 import { RuntimeStream, loadCursor, saveCursor, streamUrl } from "./stream";
 import type { StreamState } from "./stream";
 import type { EventPayload } from "../wire/events";
@@ -224,6 +225,15 @@ export class Connection {
   async refresh(): Promise<boolean> {
     const seq = ++this.refreshSeq;
     const stale = () => seq !== this.refreshSeq;
+    /**
+     * A reconnecting relay is healing itself.
+     *
+     * Its requests stay pending until the socket is back, so a read that times
+     * out in that window says nothing about the computer. Counting it would
+     * make the link machine reconnect a route that is about to return on its
+     * own — the opposite of what the tolerance above is for.
+     */
+    const relayHealing = relayState() === "reconnecting";
     try {
       const response = await fetchWithTimeout("/runtimes", { credentials: "same-origin" }, 12_000);
       if (stale()) return false;
@@ -259,6 +269,7 @@ export class Connection {
       return true;
     } catch (error) {
       if (stale()) return false;
+      if (relayHealing) return false;
       this.failures += 1;
       // One lost request is not a lost computer. Keep the last good answer on
       // screen and let the next probe decide; only a second failure in a row
@@ -360,7 +371,7 @@ export class Connection {
       this.publish({ stream: { kind: "closed", reason: "runtime went away" } });
       return;
     }
-    if (this.activeBase !== runtime.base) this.attach(active);
+    if (this.activeBase !== runtime.base) this.attach(active, { silent: true });
   }
 
   /**
@@ -368,11 +379,20 @@ export class Connection {
    *
    * The cursor is loaded per runtime and persisted on every numbered frame, so
    * a cold start resumes rather than replays from zero.
+   *
+   * `silent` is for a repair: the same pane is now read from another base (a
+   * handover moved the kernel from the relay to its LAN origin), and the
+   * conversation did not change. A silent attach therefore keeps the pane's
+   * status and its undrained frames — publishing `closed` there made a working
+   * chat blink every time the transport moved. A different runtime is a new
+   * pane, and must not inherit the previous one's queue even when silent.
    */
-  attach(runtimeId: string): void {
-    this.stream?.stop();
+  attach(runtimeId: string, options: { silent?: boolean } = {}): void {
+    const sameRuntime = this.activeRuntime === runtimeId;
+    if (options.silent) this.stream?.close();
+    else this.stream?.stop();
     this.stream = null;
-    this.clearLastEvent();
+    if (!options.silent || !sameRuntime) this.clearLastEvent();
     this.activeRuntime = runtimeId;
     const runtime = this.snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
     if (!runtime) {
@@ -386,7 +406,9 @@ export class Connection {
       onCursor: (seq) => saveCursor(runtimeId, seq),
     }, loadCursor(runtimeId));
     this.stream = stream;
-    stream.start();
+    // A repair skips `connecting` too: the new base is either open or it is
+    // not, and the first state a person sees should be the true one.
+    stream.start(!options.silent);
   }
 
   detach(): void {

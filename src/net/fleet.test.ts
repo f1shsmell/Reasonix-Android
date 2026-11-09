@@ -258,6 +258,30 @@ describe("syncFleetPeer", () => {
     expect(written[1]?.name).toBe("beta renamed");
   });
 
+  it("moves a watched computer to its new port instead of taking another slot", async () => {
+    // A desktop kernel picks a fresh port on restart unless the person pinned
+    // one. Four slots would fill with one machine's port history otherwise.
+    serverMock.loadFleet.mockResolvedValue([lanPeer("alpha")]);
+
+    await syncFleetPeer("lan", "http://alpha:61234", "alpha");
+
+    const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ target: "http://alpha:61234", name: "alpha" });
+  });
+
+  it("recognises a moved port whatever case its host was spelled in", async () => {
+    serverMock.loadFleet.mockResolvedValue([
+      { kind: "lan", target: "http://MyMac.local:56789", name: "Mac", watchable: true },
+    ]);
+
+    await syncFleetPeer("lan", "http://mymac.local:61234", "Mac");
+
+    const written = serverMock.saveFleet.mock.calls[0]?.[0] ?? [];
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ target: "http://mymac.local:61234" });
+  });
+
   it("leaves a full list alone rather than dropping a watched computer", async () => {
     serverMock.loadFleet.mockResolvedValue([
       lanPeer("a"),

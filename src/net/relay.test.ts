@@ -131,6 +131,10 @@ describe("RelayLink", () => {
     const failurePromise = link
       .fetch(new Request("http://127.0.0.1:8788/submit", { method: "POST", body: "{}" }))
       .then(() => null, (error: unknown) => error);
+    // The link's own condition, which a caller reads instead of guessing from
+    // a request that timed out.
+    const states: string[] = [];
+    link.watch((state) => states.push(state));
     await new Promise((resolve) => setTimeout(resolve, 0));
     const closeListener = listeners.get("close")?.[0];
     closeListener?.({ code: 1006, reason: "abnormal" });
@@ -142,6 +146,8 @@ describe("RelayLink", () => {
     expect((failure as RelayError).kind).toBe("transient");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(link.isEnded).toBe(false);
+    expect(link.currentState).toBe("reconnecting");
+    expect(states).toContain("reconnecting");
 
     // The reconnect then ends the link on the refused grant; a fetch after
     // that is refused at once instead of hanging.
@@ -151,6 +157,8 @@ describe("RelayLink", () => {
     expect(ended).toBeInstanceOf(RelayError);
     expect((ended as RelayError).kind).toBe("ended");
     expect(link.isEnded).toBe(true);
+    expect(link.currentState).toBe("ended");
+    expect(states).toContain("ended");
   });
 });
 

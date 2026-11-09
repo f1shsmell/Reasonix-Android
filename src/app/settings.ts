@@ -36,6 +36,7 @@ export const SETTINGS_DEFAULTS = {
   folding: "standard",
   notificationOptions: false,
   cloudWatch: false,
+  autoHandover: true,
   notify: { ongoing: false, ask: true, done: true, headsUp: true },
   haptics: { master: true, drag: true, stream: false },
 } as const;
@@ -50,6 +51,7 @@ export const SETTINGS_KEYS = {
   folding: "reasonix.folding.v1",
   notificationOptions: "reasonix.notificationOptions.v1",
   cloudWatch: "reasonix.cloudWatch.v1",
+  autoHandover: "reasonix.auto-handover.v1",
   notify: {
     ongoing: "reasonix.notify.ongoing",
     ask: "reasonix.notify.ask",

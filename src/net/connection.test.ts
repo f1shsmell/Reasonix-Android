@@ -418,6 +418,61 @@ describe("Connection", () => {
     expect(connection.current.stream.kind).toBe("open");
   });
 
+  it("swaps the stream under a handover without announcing a close", async () => {
+    // A repair keeps the pane's face: the transport moved, the conversation
+    // did not. Publishing `closed` here blinked a working chat every time a
+    // handover replaced the base, and clearing the queue dropped frames the
+    // screen had not drained yet.
+    class Source {
+      static latest: Source | null = null;
+      onopen: (() => void) | null = null;
+      onmessage: ((message: { data: string; lastEventId: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      closed = false;
+      constructor() {
+        Source.latest = this;
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    let runtimes = [{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }];
+    vi.stubGlobal("EventSource", Source);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(runtimes), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const connection = new Connection();
+    await connection.refresh();
+    connection.attach("r1");
+    const first = Source.latest;
+    first?.onopen?.();
+    first?.onmessage?.({
+      data: JSON.stringify({ kind: "text", text: "queued" }),
+      lastEventId: "1",
+    });
+    expect(connection.current.stream.kind).toBe("open");
+
+    const states: string[] = [];
+    connection.subscribe((snapshot) => states.push(snapshot.stream.kind));
+
+    // The same pane is now read through the relay; only its base moved.
+    runtimes = [{ id: "r1", base: "/relay/rt/r1", root: "/w", name: "w" }];
+    await connection.refresh();
+
+    expect(first?.closed).toBe(true);
+    expect(Source.latest).not.toBe(first);
+    expect(states).not.toContain("closed");
+    expect(connection.current.stream.kind).toBe("open");
+    expect(connection.current.lastEvent).toEqual({ kind: "text", text: "queued" });
+  });
+
   it("leaves a stream alone when it is neither open nor retrying", async () => {
     // Detached, the connection has no stream to rebuild: waking must not throw
     // or invent one.
