@@ -2173,9 +2173,15 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(240);
-      expect(container.querySelector(".jump-latest")).toBeTruthy();
+      const pill = container.querySelector(".jump-latest") as HTMLButtonElement;
+      expect(pill).toBeTruthy();
+      // It rides over the record with the composer, so the last row can pass
+      // under both; the arrow is the whole control and the name is for speech.
+      expect(pill.closest(".chat-dock")).toBeTruthy();
+      expect(pill.textContent?.trim()).toBe("");
+      expect(pill.getAttribute("aria-label")).toBe("跳到最新");
 
-      act(() => (container.querySelector(".jump-latest") as HTMLButtonElement).click());
+      act(() => pill.click());
       expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();

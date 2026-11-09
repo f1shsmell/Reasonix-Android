@@ -7,6 +7,7 @@
  */
 
 import { memo, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
@@ -1294,6 +1295,25 @@ export function ChatScreen({
     list.scrollTo({ top: list.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
+  /**
+   * The lower chrome floats over the record so its rows can scroll behind it;
+   * the transcript ends with that height as padding, which is why it is
+   * measured. The dock grows with a checklist, a notice and a long draft, and
+   * a fixed guess would leave the last row behind the composer.
+   */
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const measure = () => setDockHeight(Math.round(dock.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(dock);
+    return () => watch.disconnect();
+  }, [runtime?.base]);
+
   // Follow the newest row only while the person is already at the bottom.
   // Yanking the view down while they read back is the single worst thing a
   // streaming transcript can do.
@@ -1307,7 +1327,9 @@ export function ChatScreen({
       return;
     }
     scrollToBottom(false);
-  }, [transcript.rows, atBottom, scrollToBottom]);
+    // The dock growing (a notice, a checklist, a taller draft) changes how
+    // much of the record is visible; a reader at the bottom stays there.
+  }, [transcript.rows, atBottom, scrollToBottom, dockHeight]);
 
   // Reopening a conversation puts the reader back where they were. The stored
   // history decides the height, so this waits for it; a pane opened for the
@@ -1851,7 +1873,7 @@ export function ChatScreen({
   };
 
   return (
-    <div className="chat">
+    <div className="chat" style={{ "--chat-dock": `${dockHeight}px` } as CSSProperties}>
       <div className="chat-head">
         <button type="button" className="iconbtn back" onClick={onBack} aria-label="返回">
           ←
@@ -1991,11 +2013,16 @@ export function ChatScreen({
         ) : null}
       </div>
 
+      {/* The lower chrome rides above the record instead of shortening it, so
+          a row scrolled to the edge can pass under it rather than end at it. */}
+      <div className="chat-dock" ref={dockRef}>
       {!atBottom && transcript.rows.length > 0 ? (
         <div className="jump-latest-wrap">
           <button
             type="button"
             className="jump-latest"
+            aria-label="跳到最新"
+            title="跳到最新"
             onClick={() => {
               // The flag must go up before setAtBottom: that state change is
               // what triggers the follow effect run the glide has to skip.
@@ -2004,7 +2031,16 @@ export function ChatScreen({
               setAtBottom(true);
             }}
           >
-            ↓ 最新
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M12 5v13M6 11.5l6 6 6-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
         </div>
       ) : null}
@@ -2209,6 +2245,7 @@ export function ChatScreen({
             </button>
           )}
         </div>
+      </div>
       </div>
         </>
       )}

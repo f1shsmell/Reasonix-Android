@@ -24,6 +24,7 @@ html[data-chat-font="xl"] {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
   /* See shell.css: the top inset is measured natively into `--rx-inset-top`,
      because `env()` reports the bar's height whether or not the window already
      cleared it, and Capacitor's own variable was measured never to arrive. The
@@ -198,14 +199,16 @@ html[data-chat-font="xl"] {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 12px 4px;
+  /* `--chat-dock` is measured from the floating chrome; the padding is what
+     lets the last row scroll clear of it. */
+  padding: 12px 12px calc(var(--chat-dock, 92px) + 10px);
   display: flex;
   flex-direction: column;
   gap: 10px;
   /* The keyboard resizes the viewport; this keeps the newest row visible
      instead of letting the scroll position drift upward. */
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: 12px;
+  scroll-padding-bottom: calc(var(--chat-dock, 92px) + 10px);
 }
 
 /* ---- rows ---- */
@@ -539,30 +542,52 @@ html[data-chat-font="xl"] {
   animation: process-pulse 1.4s ease-in-out infinite;
 }
 
+/* The transcript keeps the screen's height; this chrome rides above it. The
+   gaps between its pieces stay transparent to touch, so a drag started there
+   still scrolls the record underneath. */
+.chat-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.chat-dock > :not(.jump-latest-wrap) {
+  pointer-events: auto;
+}
+
 /* Reading back through a long answer must not trap the person there: the
-   control sits over the transcript's lower edge and disappears at the bottom. */
+   control floats over the record's lower edge and disappears at the bottom. */
 .jump-latest-wrap {
   display: flex;
   justify-content: center;
   flex: none;
-  /* The button's shadow reaches above its top edge; the padding keeps it
-     from darkening the line at the scroll edge. */
-  padding: 8px 0 2px;
-  position: relative;
-  z-index: 3;
+  pointer-events: none;
 }
 
 .jump-latest {
-  min-height: 32px;
-  padding: 0 12px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--bg-raised);
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2);
   animation: rx-rise var(--dur-2) var(--ease-out) both;
+  pointer-events: auto;
+}
+
+.jump-latest svg {
+  width: 17px;
+  height: 17px;
 }
 
 @keyframes process-pulse {
@@ -1129,9 +1154,11 @@ html[data-chat-font="xl"] {
   padding: 8px 10px 6px;
   border: 1px solid var(--line);
   border-radius: 22px;
-  background: rgba(var(--bg-raised-rgb), 0.88);
+  /* Rows now scroll behind the card; at 88% their blur read as a smudge
+     under the draft. */
+  background: rgba(var(--bg-raised-rgb), 0.96);
   @supports (color: color-mix(in srgb, red, blue)) {
-  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-raised) 96%, transparent);
   }
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
