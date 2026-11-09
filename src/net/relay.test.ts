@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deviceFingerprint, pinDevice } from "./deviceTrust";
-import { RelayError, RelayEventSource, RelayLink, connectRelay, isKernelPath } from "./relay";
+import { RelayError, RelayEventSource, RelayLink, clearRelayRouting, connectRelay, isKernelPath } from "./relay";
 
 type Handler = (event: {
   data?: string;
@@ -228,6 +228,34 @@ describe("connectRelay trust", () => {
 
     expect(failure).toBeInstanceOf(RelayError);
     expect((failure as RelayError).kind).toBe("ended");
+    expect(socket).not.toHaveBeenCalled();
+  });
+
+  it("abandons a connect that was cleared while its grant was in flight", async () => {
+    // A restore may be abandoned while its grant request is still running.
+    // The late attempt must not ask the person to trust a key for a link
+    // nobody wants, and must not install itself afterwards.
+    let release: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      ),
+    );
+    const socket = vi.fn();
+    vi.stubGlobal("WebSocket", socket);
+
+    const pending = connectRelay("dev1").catch((error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    clearRelayRouting();
+    release(grant(KEY_A));
+
+    const failure = await pending;
+    expect(failure).toBeInstanceOf(RelayError);
+    expect((failure as RelayError).kind).toBe("transient");
     expect(socket).not.toHaveBeenCalled();
   });
 

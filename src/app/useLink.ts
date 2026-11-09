@@ -51,6 +51,19 @@ function reachCode(reach: ConnectionSnapshot["reach"]): string {
   return reach.kind === "unauthorized" ? "device.unauthorized" : "client.offline";
 }
 
+/**
+ * Whether a door that has just been opened survived its first read.
+ *
+ * `openDoor` already proved the route with its own `/runtimes` probe, so the
+ * read that follows loads the pane list rather than re-litigating the switch.
+ * `Connection.probeRoute` is what says which of its failures are verdicts: a
+ * tolerated hiccup is noise, a refusal or a second failure in a row is the
+ * door saying no.
+ */
+async function doorHeld(connection: Connection): Promise<boolean> {
+  return (await connection.probeRoute()) !== "down";
+}
+
 /** Every LAN address worth trying, the ones this phone can reach directly first. */
 export function lanDoorsOf(config: ProxyConfig | null): string[] {
   const saved = config?.ephemeral
@@ -506,8 +519,16 @@ export function useLink(connection: Connection): Link {
           if (door.kind === "cloud") prefetchGrant(door.target);
         }
       }
+      /**
+       * Which LAN doors are worth a probe.
+       *
+       * The sweep asks the proxy, which probes each address natively on the
+       * Wi-Fi a switch would itself use. That matters under a VPN: a fetch
+       * from the page follows the default route, and a neighbour carried into
+       * the tunnel answers as dead.
+       */
       const reachable = new Set(
-        !skipLan && lanTargets.length > 0 ? await answeringOrigins(lanTargets) : [],
+        skipLan || lanTargets.length === 0 ? [] : await answeringOrigins(lanTargets),
       );
       if (!live()) return;
 
@@ -545,10 +566,10 @@ export function useLink(connection: Connection): Link {
         );
         if (!live()) return;
         if (result.ok) {
-          // Verify the door with the read's own answer, not the snapshot: a
-          // tolerated hiccup leaves `reach` at "ok" from an earlier door, and
-          // trusting that would call a dead route connected.
-          const reached = await connection.refresh();
+          // The door has just answered its own probe, so failures counted on
+          // the previous route must not add up with this one's first hiccup.
+          connection.resetFailures();
+          const reached = await doorHeld(connection);
           if (!live()) return;
           if (reached) {
             if (door.kind === "lan") {
@@ -840,7 +861,11 @@ export function useLink(connection: Connection): Link {
           () => {},
         );
         if (!stillLive()) return;
-        if (opened.ok && (await connection.refresh()) && stillLive()) {
+        // The route changed under the counter: a failure counted against the
+        // cloud door says nothing about this one, and must not be allowed to
+        // turn the LAN door's first dropped packet into a verdict.
+        connection.resetFailures();
+        if (opened.ok && (await doorHeld(connection)) && stillLive()) {
           // Keep the cloud id as the hint for the next time the phone leaves.
           saveRelayDevice(cloudTarget);
           connected(door.target, door.name, "lan", machine);
@@ -853,7 +878,8 @@ export function useLink(connection: Connection): Link {
           () => {},
         );
         if (!stillLive()) return;
-        if (restored.ok && (await connection.refresh()) && stillLive()) {
+        connection.resetFailures();
+        if (restored.ok && (await doorHeld(connection)) && stillLive()) {
           connected(cloudTarget, cloudName, "cloud", machine);
           return;
         }
@@ -1049,7 +1075,11 @@ export function useLink(connection: Connection): Link {
           failed(result.error, room());
           return { ok: false };
         }
-        const reached = await connection.refresh();
+        // `openDoor` proved the new route; this read loads the panes. Failures
+        // from the route just left must not be counted against it, or one
+        // dropped packet reports a switch that actually worked as failed.
+        connection.resetFailures();
+        const reached = await doorHeld(connection);
         if (!live()) return { ok: false };
         if (!reached) {
           failed(linkFailure(reachCode(connection.current.reach)), room());

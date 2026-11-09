@@ -80,7 +80,7 @@ function status(overrides: Partial<NetworkStatus> = {}): NetworkStatus {
 }
 
 function fakeConnection() {
-  return {
+  const fake = {
     current: {
       reach: { kind: "ok" as "ok" | "unauthorized" },
       runtimes: [] as unknown[],
@@ -89,10 +89,16 @@ function fakeConnection() {
     lost: false,
     quickCheck: vi.fn(async () => true),
     refresh: vi.fn(async () => true),
+    /** Mirrors the real contract: the verdict follows the read and `reach`. */
+    probeRoute: vi.fn(async (): Promise<"up" | "hiccup" | "down"> => {
+      if (await fake.refresh()) return "up";
+      return fake.current.reach.kind === "ok" ? "hiccup" : "down";
+    }),
     resetFailures: vi.fn(),
     wakeStream: vi.fn(),
     subscribe: vi.fn((_listener: (snapshot: unknown) => void) => () => {}),
   };
+  return fake;
 }
 
 let container: HTMLDivElement;
@@ -601,5 +607,81 @@ describe("useLink network changes", () => {
     expect(
       vi.mocked(door.openDoor).mock.calls.some(([entry]) => entry.target === spare),
     ).toBe(false);
+  });
+
+  it("keeps a LAN upgrade that only dropped its first packet", async () => {
+    // The verification read that follows a switch is not a second opinion on
+    // the switch: `openDoor` already proved the route. A single dropped
+    // packet — the common shape on a phone that just left a VPN's route —
+    // must not send the link back to the relay, which is what made a working
+    // handover look like a failed one.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "cloud", target: "dev-1", name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+    ] as never);
+    const cloud = {
+      ...LAN,
+      mode: "relay" as const,
+      relayDevice: "dev-1",
+      direct: [LAN.origin],
+      account: { signedIn: true },
+    };
+    serverMock.readProxyConfig.mockResolvedValue(cloud);
+    serverMock.refreshProxy.mockResolvedValue(cloud);
+    serverMock.readMachineIdentity.mockResolvedValue({ machine: "Mac-A" });
+    vi.mocked(door.openDoor).mockResolvedValue({ ok: true });
+
+    await mount();
+    expect(latest?.state.mode).toBe("cloud");
+
+    // The hiccup's own shape: the read says "no", the route is not lost.
+    fake.refresh.mockResolvedValue(false);
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+    await flush();
+
+    expect(latest?.state.phase).toBe("connected");
+    expect(latest?.state.mode).toBe("lan");
+    // Restoring the relay would have been a second switch.
+    const kinds = vi.mocked(door.openDoor).mock.calls.map(([entry]) => entry.kind);
+    expect(kinds).toEqual(["lan"]);
+  });
+
+  it("still puts the relay back when the LAN door is refused", async () => {
+    // The other half of the tolerance: a refusal is a verdict, not a hiccup.
+    // Keeping the LAN link after one would leave the person on a route the
+    // kernel has already said no to.
+    const saved = await import("../net/savedConnections");
+    const door = await import("../net/door");
+    vi.mocked(saved.loadConnections).mockReturnValue([
+      { kind: "lan", target: LAN.origin, name: "Mac-A", usedAt: 0, order: 0 },
+      { kind: "cloud", target: "dev-1", name: "Mac-A", machine: "Mac-A", usedAt: 0, order: 1 },
+    ] as never);
+    const cloud = {
+      ...LAN,
+      mode: "relay" as const,
+      relayDevice: "dev-1",
+      direct: [LAN.origin],
+      account: { signedIn: true },
+    };
+    serverMock.readProxyConfig.mockResolvedValue(cloud);
+    serverMock.refreshProxy.mockResolvedValue(cloud);
+    serverMock.readMachineIdentity.mockResolvedValue({ machine: "Mac-A" });
+    vi.mocked(door.openDoor).mockResolvedValue({ ok: true });
+
+    await mount();
+    fake.refresh.mockResolvedValue(false);
+    fake.current.reach = { kind: "unauthorized" };
+
+    act(() => latest?.noteNetwork(status({ networkKey: "w2" }), true));
+    await flush();
+    await flush();
+
+    const kinds = vi.mocked(door.openDoor).mock.calls.map(([entry]) => entry.kind);
+    expect(kinds).toContain("cloud");
+    expect(latest?.state.mode).not.toBe("lan");
   });
 });

@@ -98,6 +98,30 @@ describe("loadStatus", () => {
     await expect(loadStatus("/rt/r1")).resolves.toEqual({ ok: false, code: "session.unknown" });
   });
 
+  it("reads the cache split from the ledger, and from the counters without one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          sessionUsage: { requests: 3, cacheHit: 300, cacheMiss: 120, cacheUnknown: 20 },
+          cacheHit: 999,
+          cacheMiss: 1,
+        }),
+      ),
+    );
+    const withLedger = await loadStatus("/rt/r1");
+    expect(withLedger.ok && withLedger.status.cache).toEqual({ hit: 300, miss: 120, unknown: 20 });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ cacheHit: 40, cacheMiss: 60 })));
+    const withoutLedger = await loadStatus("/rt/r1");
+    expect(withoutLedger.ok && withoutLedger.status.cache).toEqual({ hit: 40, miss: 60, unknown: 0 });
+
+    // Nothing measured: no rate can be claimed, so the meter has nothing to draw.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ running: false })));
+    const empty = await loadStatus("/rt/r1");
+    expect(empty.ok && empty.status.cache).toBeUndefined();
+  });
+
   it("reports being offline", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
     await expect(loadStatus("/rt/r1")).resolves.toEqual({ ok: false, code: "client.offline" });

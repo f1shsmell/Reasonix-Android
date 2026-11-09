@@ -12,8 +12,10 @@ final class LanRoute {
      * The route a kernel connection takes: "system", "direct" or "no-proxy".
      *
      * "auto" only avoids the system HTTP proxy when the target is a private
-     * address a VPN might otherwise swallow. "bypass" forces that path for
-     * phones where the automatic guess is wrong. "system" leaves both alone.
+     * address a VPN might otherwise swallow. "bypass" skips the system HTTP
+     * proxy for every private target, VPN or not — it never changes which
+     * interface carries the socket, so a mesh address still rides its tunnel.
+     * "system" leaves both alone.
      *
      * `onLink` comes from the proxy's LAN network lookup, which only answers
      * while a VPN owns the default route; without one the default route
@@ -24,6 +26,7 @@ final class LanRoute {
     static String routeFor(String policy, boolean onLink, boolean vpn) {
         if ("system".equals(policy)) return "system";
         if (onLink) return "direct";
+        if ("bypass".equals(policy)) return "no-proxy";
         if (!vpn) return "no-proxy";
         return "system";
     }

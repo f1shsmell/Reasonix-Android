@@ -19,8 +19,10 @@ import {
   probeDoor,
   probeUpstream,
   readMachineIdentity,
+  readProxyConfig,
   ProxyError,
 } from "./server";
+import type { ProxyConfig } from "./server";
 
 export interface Door {
   kind: "lan" | "cloud";
@@ -33,6 +35,81 @@ export interface Door {
 }
 
 export type DoorResult = { ok: true } | { ok: false; error: LinkError };
+
+/**
+ * Put the route back the way it was before a switch.
+ *
+ * A door cannot be verified until the proxy has been pointed at it: the LAN
+ * branch has to name the candidate upstream, and the cloud branch has to
+ * replace the relay before `/runtimes` can be read through it. When that
+ * verification fails the old route is already gone, and a person who asked
+ * for a switch would be left on a dead address with the relay disconnected —
+ * the app would look connected to nothing until the next walk.
+ *
+ * Restoring is best-effort and never replaces the caller's error: the switch
+ * failed, and saying so is the honest answer. The relay is tried first
+ * because it is the route a cloud link was on, and a LAN origin is the
+ * fallback for a shell that cannot reopen it.
+ */
+/**
+ * How long a failed switch may spend putting the previous route back.
+ *
+ * The relay's grant and socket handshake carry 20 s and 30 s timeouts of
+ * their own; awaiting both after a door already failed made the switch look
+ * like a hang. Six seconds covers a healthy wake and still reports the
+ * original error in bounded time.
+ */
+const RESTORE_BUDGET_MS = 6_000;
+
+async function restoreRoute(previous: ProxyConfig | null): Promise<void> {
+  if (previous === null) return;
+  if (previous.mode === "relay" && previous.relayDevice) {
+    const outcome = await restoreRelay(previous.relayDevice, RESTORE_BUDGET_MS);
+    if (outcome === "restored") return;
+    // A reopen that was abandoned is still running in the background;
+    // `clearRelayRouting` bumps the relay's connect sequence, so the late
+    // handshake can no longer install itself as the active route.
+    clearRelayRouting();
+    // A timeout already spent the budget; the origin fallback is another
+    // network write, so it is not started. A refusal is the old fast path.
+    if (outcome === "timeout") return;
+  }
+  if (!previous.origin) return;
+  try {
+    await configureProxy(previous.origin);
+  } catch {
+    // Nothing left to restore to. The original failure is still reported.
+  }
+}
+
+/** Reopen the relay, or give up after [budgetMs] without cancelling it. */
+async function restoreRelay(
+  deviceId: string,
+  budgetMs: number,
+): Promise<"restored" | "failed" | "timeout"> {
+  const reopen = (async () => {
+    await ensureRelay(deviceId);
+    await markRelay(deviceId);
+  })();
+  // The race below observes it; this keeps a late rejection from surfacing
+  // as an unhandled one once the timeout has already won.
+  reopen.catch(() => {});
+  let timer: number | null = null;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = window.setTimeout(() => resolve("timeout"), budgetMs);
+  });
+  try {
+    return await Promise.race([
+      reopen.then<"restored", "failed">(
+        () => "restored",
+        () => "failed",
+      ),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+  }
+}
 
 export async function openDoor(
   door: Door,
@@ -48,11 +125,15 @@ export async function openDoor(
       if (!pre.ok) {
         return { ok: false, error: linkFailure(pre.code, `origin ${door.target}`) };
       }
+      // What the proxy pointed at before this switch, so a door that answers
+      // its probe but not `/runtimes` can put it back.
+      const before = await readProxyConfig();
       await configureProxy(door.target);
       clearRelayRouting();
       onStep("verify");
       const reach = await probeUpstream();
       if (!reach.ok) {
+        await restoreRoute(before);
         return { ok: false, error: linkFailure(reach.code, `origin ${door.target}`) };
       }
       rememberConnection("lan", door.target, door.name, door.machine);
@@ -70,9 +151,11 @@ export async function openDoor(
 
     onStep("switch");
     let linked = false;
+    let before: ProxyConfig | null = null;
     try {
       // Reuse a live link to the same computer; a different one replaces it
       // only after its handshake succeeds.
+      before = await readProxyConfig();
       await ensureRelay(door.target);
       linked = true;
       await markRelay(door.target);
@@ -80,6 +163,7 @@ export async function openDoor(
       const reach = await probeUpstream();
       if (!reach.ok) {
         clearRelayRouting();
+        await restoreRoute(before);
         return { ok: false, error: linkFailure(reach.code, `device ${door.target}`) };
       }
       rememberConnection("cloud", door.target, door.name, door.machine);
@@ -87,8 +171,11 @@ export async function openDoor(
       return { ok: true };
     } catch (error) {
       // The relay replaced the old route before the rest failed; do not leave
-      // a half-open link behind.
-      if (linked) clearRelayRouting();
+      // a half-open link behind, and do not leave the old route unreachable.
+      if (linked) {
+        clearRelayRouting();
+        await restoreRoute(before);
+      }
       throw error;
     }
   } catch (error) {

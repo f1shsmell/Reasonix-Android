@@ -578,3 +578,39 @@ describe("the landing clock stamp", () => {
     expect(answer && "finishedAt" in answer && typeof answer.finishedAt === "number").toBe(false);
   });
 });
+
+describe("turn receipt", () => {
+  beforeEach(() => resetIds());
+
+  it("closes a finished turn with its run time", () => {
+    const result = feed([
+      { kind: "turn_started", text: "问" },
+      { kind: "text", text: "答" },
+      { kind: "turn_done", workDurationMs: 2_275_000 },
+    ]);
+
+    const worked = result.rows[result.rows.length - 1];
+    expect(worked?.kind).toBe("worked");
+    if (worked?.kind === "worked") expect(worked.ms).toBe(2_275_000);
+  });
+
+  it("leaves a turn under half a second without a receipt", () => {
+    const result = feed([
+      { kind: "turn_started", text: "问" },
+      { kind: "text", text: "答" },
+      { kind: "turn_done", workDurationMs: 200 },
+    ]);
+
+    expect(result.rows.some((row) => row.kind === "worked")).toBe(false);
+  });
+
+  it("stamps a message with the moment it landed", () => {
+    const before = Date.now();
+    const result = feed([
+      { kind: "turn_started", text: "问" },
+      { kind: "turn_done" },
+    ]);
+    const user = result.rows.find((row) => row.kind === "user");
+    expect(user?.kind === "user" && typeof user.at === "number" && user.at >= before).toBe(true);
+  });
+});

@@ -92,8 +92,15 @@ export async function loadCheckpoints(base: string): Promise<Checkpoint[] | null
   }
 }
 
-export function prepareRewind(base: string, turn: number): Promise<RewindReply<RewindPlan>> {
-  return post<RewindPlan>(`${base}/rewind/prepare`, { turn, scope: "both" });
+/** What a rewind touches: the conversation, the files, or both. */
+export type RewindScope = "code" | "conversation" | "both";
+
+export function prepareRewind(
+  base: string,
+  turn: number,
+  scope: RewindScope = "both",
+): Promise<RewindReply<RewindPlan>> {
+  return post<RewindPlan>(`${base}/rewind/prepare`, { turn, scope });
 }
 
 export function commitRewind(base: string, planId: string): Promise<RewindReply<RewindResult>> {

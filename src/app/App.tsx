@@ -9,7 +9,7 @@ import type { ConnectionSnapshot } from "../net/connection";
 import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
-import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
+import { configureProxy, firstAnswering, reachReport, readProxyConfig } from "../net/server";
 import { openStudio } from "./openStudio";
 import { devPreview } from "./devPreview";
 import { submit } from "../net/submit";
@@ -189,7 +189,7 @@ export function App() {
   }, []);
   const [chatFocusAsk, setChatFocusAsk] = useState(false);
   const buildDiagnosticsText = useCallback(
-    () => buildDiagnostics({ link: link.state, snapshot, cloudWatch }),
+    () => buildDiagnostics({ link: link.state, snapshot, cloudWatch, reach: reachReport() }),
     [link.state, snapshot, cloudWatch],
   );
 
@@ -911,8 +911,31 @@ export function App() {
         mode={link.state.mode}
         focusAsk={chatFocusAsk}
         onFocusConsumed={() => setChatFocusAsk(false)}
-        {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
-        {...(preview?.native || Capacitor.isNativePlatform() ? { onOpenStudio: openStudio } : {})}
+        {...(chatRoot
+          ? {
+              onNewSession: () => void newSessionInProject(chatRoot),
+              // A fork is a new session file on the host; opening it is the
+              // same read-and-open the session list does for a stored path.
+              // The fork's own name titles the pane, so forking it again
+              // carries the title forward instead of collapsing to "分支".
+              onOpenBranch: async (path: string, name: string) => {
+                const opened = await openRuntimeOn(chatRoot, path);
+                if (!opened.ok) return false;
+                await openedRuntime(opened.runtime.id, chatRoot, name || "分支");
+                return true;
+              },
+            }
+          : {})}
+        {...(preview?.native || Capacitor.isNativePlatform()
+          ? {
+              onOpenStudio: () =>
+                openStudio({
+                  // A configured LAN origin is not a working one: report the
+                  // route the link machine actually has.
+                  preferRelay: link.state.phase !== "connected" || link.state.mode === "cloud",
+                }),
+            }
+          : {})}
       />
     );
   } else if (project !== null) {

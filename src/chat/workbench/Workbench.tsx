@@ -15,6 +15,7 @@ import type { DiffSlot } from "./ChangesTree";
 import { CommitCard } from "./CommitCard";
 import { HistorySection } from "./HistorySection";
 import { FileBrowser } from "./FileBrowser";
+import { StudioIcon } from "../../app/StudioIcon";
 
 /** One visible refresh signal, from any of the four sources that say the tree
  *  may have moved: the mount itself, a `workspace_changed` frame on the pane's
@@ -318,6 +319,7 @@ export function Workbench({
 
           {gitView !== null && gitView.repo && (
             <div className="wb-branch">
+              <StudioIcon name="branch" />
               {gitView.detached ? (
                 <span className="wb-branch-name" title={`游离头 · ${gitView.branch}`}>
                   {`游离头 · ${gitView.branch.slice(0, 7)}`}
@@ -370,7 +372,7 @@ export function Workbench({
                       disabled={busy}
                       onClick={() => applyStage({ all: true, unstage: all })}
                     >
-                      {all ? "全部取消暂存" : "全部暂存"}
+                      {all ? "取消全部暂存" : "暂存全部"}
                     </button>
                   )}
                   {changes !== null && changes.repo && !readOnly && (
@@ -405,7 +407,7 @@ export function Workbench({
                 <p className="wb-wait">这里不是 git 仓库，变更和历史都需要 git。</p>
               )}
               {changes !== null && changes.repo && changes.changes.length === 0 && (
-                <p className="wb-wait">没有变更。</p>
+                <p className="wb-wait">没有改动</p>
               )}
               {changes !== null && changes.repo && changes.changes.length > 0 && (
                 <ChangesTree

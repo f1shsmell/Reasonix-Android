@@ -2,6 +2,7 @@ import { readNetworkStatus } from "../native/networkWatch";
 import { readNativeDiagnostics } from "../native/turn";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { LinkState } from "../net/link";
+import type { ReachRow } from "../net/server";
 
 /**
  * The text the About page copies.
@@ -13,6 +14,8 @@ export interface DiagnosticInput {
   link: LinkState;
   snapshot: ConnectionSnapshot;
   cloudWatch: boolean;
+  /** The last reach batch, so the text can show which doors the proxy could see. */
+  reach: readonly ReachRow[];
 }
 
 function reachText(snapshot: ConnectionSnapshot): string {
@@ -20,12 +23,26 @@ function reachText(snapshot: ConnectionSnapshot): string {
   return reach.kind === "unreachable" ? `${reach.kind} · ${reach.detail}` : reach.kind;
 }
 
+/** The last batch in one line: which doors answered, and how slowly. */
+function reachSweepText(rows: readonly ReachRow[]): string {
+  if (rows.length === 0) return "none";
+  const text = rows
+    .slice(0, 6)
+    .map((row) => {
+      const host = row.origin.replace(/^https?:\/\//, "");
+      const state = row.status > 0 ? "ok" : "down";
+      return row.ms >= 0 ? `${host} ${state} ${row.ms}ms` : `${host} ${state}`;
+    })
+    .join(" · ");
+  return text.length > 240 ? `${text.slice(0, 237)}…` : text;
+}
+
 export async function buildDiagnostics(input: DiagnosticInput): Promise<string> {
   const [native, network] = await Promise.all([
     readNativeDiagnostics(),
     readNetworkStatus(),
   ]);
-  const { link, snapshot, cloudWatch } = input;
+  const { link, snapshot, cloudWatch, reach } = input;
   const cloud = native?.cloud;
   const error = link.error;
   const route = [link.phase, link.mode, link.target, link.name]
@@ -44,6 +61,7 @@ export async function buildDiagnostics(input: DiagnosticInput): Promise<string> 
     `Link: ${route || "none"}`,
     `Link error: ${error ? `${error.code}${error.detail ? ` · ${error.detail}` : ""}` : "none"}`,
     `Reach: ${reachText(snapshot)}`,
+    `Reach sweep: ${reachSweepText(reach)}`,
     `Stream: ${snapshot.stream.kind}`,
     `Runtimes: ${snapshot.runtimes.length}`,
     `Network: ${

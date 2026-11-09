@@ -23,11 +23,19 @@ const PATHS = {
   refresh: ["M21 12a9 9 0 1 1-2.64-6.36", "M21 3v6h-6"],
   list: ["M4 6h16", "M4 12h16", "M4 18h10"],
   grid: ["M4 5h6v6H4z", "M14 5h6v6h-6z", "M4 15h6v4H4z", "M14 15h6v4h-6z"],
+  branch:
+    "M6 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 0v12m12-8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 0a6 6 0 0 1-6 6H6m0 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z",
   panel: [
     "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     "M9 3v18",
   ],
   down: "m6 9 6 6 6-6",
+  copy: "M8 8h13v13H8V8zM16 8V3H3v13h5",
+  quote: "M7 7H3v6h6V9m0-2v8a2 2 0 0 1-2 2H5m16-10h-4v6h6V9m0-2v8a2 2 0 0 1-2 2h-2",
+  fork: "M3 12h5c2 0 3-1 4-2l8-7m-6 0h6v6M8 12c2 0 3 1 4 2l8 7m-6 0h6v-6",
+  edit: "m4 16 12-12 4 4L8 20H4v-4zM13 7l4 4",
+  rewind: "M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-4",
+  check: "m5 12 4 4L19 6",
 } as const;
 
 export type StudioIconName = keyof typeof PATHS;

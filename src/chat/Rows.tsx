@@ -8,13 +8,35 @@
 
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
-import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow } from "./transcript";
+import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow, WorkedRow } from "./transcript";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { SurfaceCard } from "./SurfaceCard";
 import { approvalPlanSteps } from "./planApproval";
-import { clockText } from "../app/format";
+import { clockText, elapsedText } from "../app/format";
+import { StudioIcon } from "../app/StudioIcon";
 import { kernelTransport } from "../net/transport";
+
+/**
+ * What a row's actions can do to the turn it belongs to. `turn` is the
+ * checkpoint number the kernel listed for that turn; a row whose turn has no
+ * checkpoint (queued, injected, or a kernel that listed none) gets only the
+ * actions that do not need one.
+ */
+export interface RowActions {
+  /** Quote an answer into the composer. */
+  quote: (text: string) => void;
+  /** Rewind to this turn and send `text` in its place. */
+  resend: (turn: number, text: string) => void;
+  /** Fork the conversation at this turn into a new one. */
+  branch: (turn: number) => void;
+  /** Rewrite this message and send it again. */
+  edit: (row: UserRow, turn: number) => void;
+  /** Ask how far back to go for this turn. */
+  rewind: (turn: number) => void;
+  /** Which turn a message index opens, when the kernel listed a checkpoint. */
+  turnOf: (msgIndex: number | undefined) => number | undefined;
+}
 
 const IMAGE_REF = /@([^\s@]+\.(?:png|jpe?g|gif|webp|bmp|heic|heif))/gi;
 
@@ -66,7 +88,18 @@ function MessageImage({ base, path }: { base: string; path: string }) {
   return url ? <img className="message-image" src={url} alt="图片附件" loading="lazy" /> : null;
 }
 
-export function UserBubble({ row, base }: { row: UserRow; base?: string }) {
+export function UserBubble({
+  row,
+  base,
+  actions,
+  turn,
+}: {
+  row: UserRow;
+  base?: string;
+  actions?: RowActions;
+  /** The checkpoint turn this message opened, when the kernel listed one. */
+  turn?: number;
+}) {
   const refs = base ? imageRefs(row.text) : [];
   const text = refs.length > 0 ? withoutImageRefs(row.text) : row.text;
   return (
@@ -81,11 +114,54 @@ export function UserBubble({ row, base }: { row: UserRow; base?: string }) {
           </div>
         ) : null}
       </div>
+      {actions && !row.local ? (
+        <div className="user-acts">
+          {row.at ? <span className="user-time">{clockText(row.at)}</span> : null}
+          <CopyButton text={row.text} icon label="复制" />
+          {turn !== undefined ? (
+            <>
+              <button
+                type="button"
+                className="row-act"
+                aria-label="编辑并重发"
+                title="编辑并重发"
+                onClick={() => actions.edit(row, turn)}
+              >
+                <StudioIcon name="edit" />
+              </button>
+              <button
+                type="button"
+                className="row-act"
+                aria-label="回到这条消息之前"
+                title="回到这条消息之前"
+                onClick={() => actions.rewind(turn)}
+              >
+                <StudioIcon name="rewind" />
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-export function AssistantBubble({ row }: { row: AssistantRow }) {
+export function AssistantBubble({
+  row,
+  actions,
+  turn,
+  branchTurn,
+  question,
+}: {
+  row: AssistantRow;
+  actions?: RowActions;
+  /** The checkpoint turn that asked for this answer, when there is one. */
+  turn?: number;
+  /** Where a fork of this answer cuts; kept while another turn runs. */
+  branchTurn?: number;
+  /** The words that asked for it, for regenerating the same request. */
+  question?: string;
+}) {
   // Markdown renders while the answer streams, the way xiaoban does it:
   // useDeferredValue lets React skip re-parsing the growing text when a
   // delta lands mid-input or mid-scroll, so formatting forms progressively
@@ -99,11 +175,56 @@ export function AssistantBubble({ row }: { row: AssistantRow }) {
         <Markdown text={row.streaming ? deferredText : row.text} />
         {!row.streaming ? (
           <div className="bubble-actions">
-            <CopyButton text={row.text} label="复制回答" />
+            <CopyButton text={row.text} icon label="复制回答" />
+            {actions ? (
+              <button
+                type="button"
+                className="row-act"
+                aria-label="引用到输入框"
+                title="引用到输入框"
+                onClick={() => actions.quote(row.text)}
+              >
+                <StudioIcon name="quote" />
+              </button>
+            ) : null}
+            {actions && branchTurn !== undefined ? (
+              <button
+                type="button"
+                className="row-act"
+                aria-label="新建分支"
+                title="新建分支"
+                onClick={() => actions.branch(branchTurn)}
+              >
+                <StudioIcon name="fork" />
+              </button>
+            ) : null}
+            {actions && turn !== undefined && question ? (
+              <button
+                type="button"
+                className="row-act"
+                aria-label="重新生成"
+                title="重新生成"
+                onClick={() => actions.resend(turn, question)}
+              >
+                <StudioIcon name="refresh" />
+              </button>
+            ) : null}
             {row.finishedAt ? <span className="bubble-at">{clockText(row.finishedAt)}</span> : null}
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** The turn's close, as Studio draws it: a tick and how long it ran. */
+export function WorkedLine({ row }: { row: WorkedRow }) {
+  return (
+    <div className="worked">
+      <span className="worked-ok">
+        <StudioIcon name="check" className="worked-tick" />
+        <span>已完成 · {elapsedText(row.ms)}</span>
+      </span>
     </div>
   );
 }

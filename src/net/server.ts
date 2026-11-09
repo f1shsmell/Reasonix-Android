@@ -271,10 +271,15 @@ export interface MachineIdentity {
  * `127.0.0.1`, the origin is another host, and a VPN that owns the default
  * route must still leave a neighbour reachable. `null` when the origin cannot
  * answer or has no identity to give — the identity is a hint, not a gate.
+ *
+ * The deadline is longer than the proxy's own connect budget would suggest
+ * because the proxy allows itself 4 s to connect and 4 s to read; a shorter
+ * client deadline would turn a slow-but-live door into "no identity", and a
+ * handover that reads no identity declines to move at all.
  */
 export async function readMachineIdentity(
   origin: string,
-  timeoutMs = 6_000,
+  timeoutMs = 10_000,
 ): Promise<MachineIdentity | null> {
   try {
     const body = await request<{ machine?: unknown }>(
@@ -299,10 +304,15 @@ export async function readMachineIdentity(
  *
  * `ok` means the origin answered and authorized this phone. A kernel that
  * names no machine still qualifies: it is an older build, not a broken door.
+ *
+ * The client deadline must outlast the proxy's own budget — it allows 4 s to
+ * connect and 4 s to read — or a slow door is reported as `client.timeout`
+ * before the proxy has finished deciding, and a switch that would have
+ * succeeded is refused.
  */
 export type DoorProbe = { ok: true; machine: string } | { ok: false; code: string };
 
-export async function probeDoor(origin: string, timeoutMs = 4_000): Promise<DoorProbe> {
+export async function probeDoor(origin: string, timeoutMs = 10_000): Promise<DoorProbe> {
   try {
     const body = await request<{ machine?: unknown } | null>(
       "/__reasonix/device",
@@ -400,6 +410,12 @@ export async function fleetRead(path: string, timeoutMs = 8_000): Promise<FleetR
  * kernel's answer, which the proxy checks once the upstream is switched. The
  * short deadline is what keeps an address left behind on another Wi-Fi from
  * holding up the fallback to the account relay.
+ *
+ * It is a direct read from the page, so it inherits the phone's default route.
+ * With a VPN owning that route the private address is probed through the
+ * tunnel — the very path the loopback proxy exists to avoid — which is why a
+ * LAN door can look dead here and answer fine through the proxy. That is why
+ * `answeringOrigins` asks the proxy first and only falls back to this.
  */
 export async function originAnswers(origin: string, timeoutMs = 2_500): Promise<boolean> {
   const target = origin.trim().replace(/\/+$/, "");
@@ -456,29 +472,110 @@ export async function probeUpstream(timeoutMs = 12_000): Promise<UpstreamReach> 
  * The probes run together: a phone away from home should not spend a second
  * per remembered computer before letting the account relay have its turn.
  */
-export async function firstAnswering(origins: string[], timeoutMs = 2_500): Promise<string | null> {
-  const answers = await Promise.all(
-    origins.map(async (origin) => ({ origin, ok: await originAnswers(origin, timeoutMs) })),
-  );
-  return answers.find((entry) => entry.ok)?.origin ?? null;
+/**
+ * The doors among `origins` that answer, asked through the proxy.
+ *
+ * The proxy probes each one natively, so the request is bound to the Wi-Fi a
+ * switch would itself use; a page-level fetch follows the default route and
+ * lets a VPN carry a LAN address into the tunnel, where a neighbour answers
+ * as dead. One round trip carries the whole batch, which is what keeps a long
+ * list from costing a timeout each.
+ *
+ * A shell without the route — or a browser, where there is no proxy — falls
+ * back to the page sweep. That reader is the only one left there, and being
+ * less honest beats having no answer at all.
+ */
+export interface ReachRow {
+  origin: string;
+  /** The kernel status the proxy saw; -1 when the door did not answer. */
+  status: number;
+  /** How long the probe took; -1 when the reader could not time it. */
+  ms: number;
 }
 
-/**
- * Which of these addresses answer, probed together.
- *
- * The same one-shot sweep as `firstAnswering`, but it keeps the whole answer:
- * the link machine walks its doors in the person's own order, and it needs to
- * know which ones are worth an attempt rather than only the first. Probing in
- * parallel is what keeps a long list from costing a timeout each.
- */
+/** The most recent batch any reader answered, for the diagnostics text. */
+let lastReach: ReachRow[] = [];
+
+export function reachReport(): readonly ReachRow[] {
+  return lastReach;
+}
+
 export async function answeringOrigins(
   origins: string[],
-  timeoutMs = 2_500,
+  timeoutMs = 8_000,
 ): Promise<string[]> {
+  const asked = origins.map((origin) => origin.trim()).filter(Boolean);
+  if (asked.length === 0) return [];
+  try {
+    const body = await request<{
+      origins?: Array<{ origin?: unknown; ok?: unknown; status?: unknown; ms?: unknown }>;
+    }>(
+      "/__reasonix/reach",
+      { method: "POST", body: JSON.stringify({ origins: asked }) },
+      timeoutMs,
+    );
+    const rows = Array.isArray(body?.origins) ? body.origins : [];
+    if (!Array.isArray(body?.origins)) {
+      // A 200 with no rows is not "nothing answered": it is a shell that does
+      // not know this route, and trusting it would filter out every door.
+      throw new ProxyError(200, "proxy.bad_response");
+    }
+    lastReach = rows.flatMap((row) => {
+      if (row === null || typeof row !== "object" || typeof row.origin !== "string") return [];
+      const status =
+        typeof row.status === "number" && Number.isFinite(row.status)
+          ? row.status
+          : row.ok === true
+            ? 1
+            : -1;
+      const ms = typeof row.ms === "number" && Number.isFinite(row.ms) ? Math.max(0, row.ms) : -1;
+      return [{ origin: row.origin, status, ms }];
+    });
+    const answered = new Set(
+      rows
+        .filter(
+          (row) =>
+            row !== null &&
+            typeof row === "object" &&
+            row.ok === true &&
+            typeof row.origin === "string",
+        )
+        .map((row) => row.origin as string),
+    );
+    return asked.filter((origin) => answered.has(origin));
+  } catch {
+    const answered = await pageAnswers(asked, Math.min(timeoutMs, 2_500));
+    // The page reader has no timing of its own; keep the row so a diagnosis
+    // can still say which doors the fallback found.
+    lastReach = asked.map((origin) => ({
+      origin,
+      status: answered.includes(origin) ? 1 : -1,
+      ms: -1,
+    }));
+    return answered;
+  }
+}
+
+/** The old reader: one `no-cors` GET per address, from the page. */
+async function pageAnswers(origins: string[], timeoutMs: number): Promise<string[]> {
   const answers = await Promise.all(
     origins.map(async (origin) => ({ origin, ok: await originAnswers(origin, timeoutMs) })),
   );
   return answers.filter((entry) => entry.ok).map((entry) => entry.origin);
+}
+
+/**
+ * The first remembered LAN address that answers, in preference order.
+ *
+ * The same reader as `answeringOrigins`, kept under its own name because a
+ * boot check wants one address rather than a list.
+ */
+export async function firstAnswering(
+  origins: string[],
+  timeoutMs = 8_000,
+): Promise<string | null> {
+  const answered = await answeringOrigins(origins, timeoutMs);
+  return answered[0] ?? null;
 }
 
 export type ServerLink =
@@ -492,13 +589,17 @@ export type ServerLink =
  * carries the device id. Empty when there is nothing to open — the caller
  * hides the entry instead of shipping a dead link.
  */
+export function studioRemoteUrl(device: string | null | undefined): string {
+  const id = device?.trim();
+  return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
+}
+
 export function studioWebUrl(
   config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice"> | null,
   fallbackDevice?: string | null,
 ): string {
   if (config?.mode === "relay") {
-    const device = config.relayDevice?.trim() || fallbackDevice?.trim();
-    return device ? `https://reasonix.io/remote/?device=${encodeURIComponent(device)}` : "";
+    return studioRemoteUrl(config.relayDevice?.trim() || fallbackDevice);
   }
   return config?.origin?.trim() || "";
 }

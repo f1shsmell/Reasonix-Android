@@ -186,9 +186,9 @@ describe("Workbench", () => {
     fixture = [{ path: "a.ts", status: "M", staged: true }];
     mount();
     await flush();
-    expect(container.textContent).toContain("全部取消暂存");
+    expect(container.textContent).toContain("取消全部暂存");
     const flip = [...container.querySelectorAll<HTMLButtonElement>(".wb-section-actions button")].find(
-      (button) => button.textContent?.includes("取消暂存"),
+      (button) => button.textContent?.includes("取消全部暂存"),
     );
     act(() => flip?.click());
     await flush();

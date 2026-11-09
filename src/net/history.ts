@@ -97,7 +97,13 @@ export function foldHistory(
       if (message.hostAuthored) continue;
       const text = clean(message.content);
       if (!text) continue;
-      rows.push({ kind: "user", id: historyId(index, 0), text, msgIndex: index });
+      rows.push({
+        kind: "user",
+        id: historyId(index, 0),
+        text,
+        msgIndex: index,
+        ...(typeof message.createdAt === "number" ? { at: message.createdAt } : {}),
+      });
       continue;
     }
 
@@ -129,6 +135,11 @@ export function foldHistory(
         // in the same message share it; repeating it on each would be noise.
         if (ordinal === 0 && reasoning && text === "") row.reasoning = reasoning;
         rows.push(row);
+      }
+      // The message that closed the turn carries its run time; the receipt the
+      // live stream appends is rebuilt from it so a reload reads the same.
+      if (typeof message.workDurationMs === "number" && message.workDurationMs >= 500) {
+        rows.push({ kind: "worked", id: historyId(index, 0, ":worked"), ms: message.workDurationMs });
       }
       continue;
     }

@@ -24,6 +24,7 @@ html[data-chat-font="xl"] {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
   /* See shell.css: the top inset is measured natively into `--rx-inset-top`,
      because `env()` reports the bar's height whether or not the window already
      cleared it, and Capacitor's own variable was measured never to arrive. The
@@ -198,14 +199,16 @@ html[data-chat-font="xl"] {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 12px 4px;
+  /* `--chat-dock` is measured from the floating chrome; the padding is what
+     lets the last row scroll clear of it. */
+  padding: 12px 12px calc(var(--chat-dock, 92px) + 10px);
   display: flex;
   flex-direction: column;
   gap: 10px;
   /* The keyboard resizes the viewport; this keeps the newest row visible
      instead of letting the scroll position drift upward. */
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: 12px;
+  scroll-padding-bottom: calc(var(--chat-dock, 92px) + 10px);
 }
 
 /* ---- rows ---- */
@@ -539,28 +542,63 @@ html[data-chat-font="xl"] {
   animation: process-pulse 1.4s ease-in-out infinite;
 }
 
+/* The transcript keeps the screen's height; this chrome rides above it. The
+   gaps between its pieces stay transparent to touch, so a drag started there
+   still scrolls the record underneath. */
+.chat-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* The injected inset knows whether Capacitor already cleared the gesture
+     bar; `env()` never does, so it must not sit inside max() here either. */
+  padding-bottom: calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  pointer-events: none;
+}
+
+.chat-dock > :not(.jump-latest-wrap) {
+  pointer-events: auto;
+}
+
 /* Reading back through a long answer must not trap the person there: the
-   control sits over the transcript's lower edge and disappears at the bottom. */
+   pair rides the record's lower edge, right-aligned with the composer, and
+   each half disappears at the end it no longer serves. */
 .jump-latest-wrap {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
   flex: none;
-  padding: 4px 0 2px;
-  position: relative;
-  z-index: 3;
+  padding-right: 12px;
+  pointer-events: none;
 }
 
 .jump-latest {
-  min-height: 32px;
-  padding: 0 12px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--bg-raised);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+  color: var(--fg-dim);
+  box-shadow: 0 2px 8px -3px rgba(0, 0, 0, 0.18);
   animation: rx-rise var(--dur-2) var(--ease-out) both;
+  pointer-events: auto;
+}
+
+.jump-latest svg {
+  width: 16px;
+  height: 16px;
+}
+
+.jump-latest[data-value="up"] svg {
+  rotate: 180deg;
 }
 
 @keyframes process-pulse {
@@ -1090,7 +1128,7 @@ html[data-chat-font="xl"] {
 .bubble-actions {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
   margin-top: 4px;
 }
@@ -1110,6 +1148,115 @@ html[data-chat-font="xl"] {
   opacity: 0.75;
 }
 
+/* The icon actions Studio puts under a row: copy, quote, fork, regenerate on
+   an answer; time, copy, edit, rewind on a person's words. */
+.row-act {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+
+.row-act:active {
+  background: rgba(var(--fg-rgb), 0.06);
+  @supports (color: color-mix(in srgb, red, blue)) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  }
+}
+
+.row-act .studio-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.copy.icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+
+.copy.icon .studio-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.user-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  padding: 0 2px;
+}
+
+.user-time {
+  color: var(--fg-dim);
+  font-size: 11px;
+  opacity: 0.8;
+  margin-right: 2px;
+}
+
+/* The turn's close, right-aligned under the answer like Studio's tick line. */
+.worked {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 0 0;
+}
+
+.worked-ok {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.worked-tick {
+  width: 13px;
+  height: 13px;
+  color: var(--ok);
+}
+
+/* Rewriting a message before it is sent again. */
+.edit-message-text {
+  width: 100%;
+  min-height: 96px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.edit-message-note {
+  margin: 8px 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.edit-message-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 .prompt .confirm:disabled {
   opacity: 0.5;
 }
@@ -1120,16 +1267,15 @@ html[data-chat-font="xl"] {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* The injected inset knows whether Capacitor already cleared the gesture
-     bar; `env()` never does, so it must not sit inside max() here either. */
-  margin: 0 12px
-    calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  margin: 0 12px;
   padding: 8px 10px 6px;
   border: 1px solid var(--line);
   border-radius: 22px;
-  background: rgba(var(--bg-raised-rgb), 0.88);
+  /* Rows now scroll behind the card; at 88% their blur read as a smudge
+     under the draft. */
+  background: rgba(var(--bg-raised-rgb), 0.96);
   @supports (color: color-mix(in srgb, red, blue)) {
-  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-raised) 96%, transparent);
   }
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
@@ -1377,6 +1523,22 @@ html[data-chat-font="xl"] {
 }
 
 .head-menu .sheet-actions button small {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+/* A reading, not an action: the cache split sits with the session's numbers
+   without pretending to be a switch. */
+.head-menu .sheet-actions .head-menu-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 6px;
+  font-size: 15px;
+}
+
+.head-menu .sheet-actions .head-menu-note small {
   color: var(--fg-dim);
   font-size: 12px;
 }

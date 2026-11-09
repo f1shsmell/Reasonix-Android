@@ -90,8 +90,16 @@
 .wb-branch {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 2px;
+  gap: 6px;
+  padding: 6px 2px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.wb-branch .studio-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--fg-dim);
 }
 
 .wb-branch-name {
@@ -230,6 +238,11 @@
 
 .wb-row-name > em[data-status="warn"] {
   color: var(--warn);
+}
+
+.wb-row[data-node="file"] .wb-row-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 
 .wb-row-name,

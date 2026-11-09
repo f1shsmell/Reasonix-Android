@@ -59,6 +59,7 @@ describe("buildDiagnostics", () => {
       link: { ...link, error: { code: "client.offline", message: "offline", retryable: true } },
       snapshot,
       cloudWatch: true,
+      reach: [],
     });
 
     expect(text).toContain("Reasonix For Android");
@@ -75,6 +76,28 @@ describe("buildDiagnostics", () => {
     expect(text).not.toContain("cookie");
   });
 
+  it("lists the last reach batch with its timing", async () => {
+    const text = await buildDiagnostics({
+      link,
+      snapshot,
+      cloudWatch: false,
+      reach: [
+        { origin: "http://192.168.5.3:57074", status: 200, ms: 120 },
+        { origin: "http://172.16.2.59:57074", status: -1, ms: 6_000 },
+      ],
+    });
+
+    expect(text).toContain(
+      "Reach sweep: 192.168.5.3:57074 ok 120ms · 172.16.2.59:57074 down 6000ms",
+    );
+  });
+
+  it("says so when no batch was taken", async () => {
+    const text = await buildDiagnostics({ link, snapshot, cloudWatch: false, reach: [] });
+
+    expect(text).toContain("Reach sweep: none");
+  });
+
   it("keeps an unreachable detail for the report", async () => {
     const text = await buildDiagnostics({
       link,
@@ -83,6 +106,7 @@ describe("buildDiagnostics", () => {
         reach: { kind: "unreachable", detail: "connection refused" },
       },
       cloudWatch: false,
+      reach: [],
     });
 
     expect(text).toContain("Reach: unreachable · connection refused");

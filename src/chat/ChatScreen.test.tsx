@@ -133,10 +133,36 @@ function stubKernel(
     todosStatus?: number;
     status?: unknown;
     statusStatus?: number;
+    /** The kernel's checkpoint list, pairing a turn with its message index. */
+    checkpoints?: unknown;
+    /** Where a fork lands; the screen hands the path to its opener. */
+    branchPath?: string;
   } = {},
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.endsWith("/checkpoints")) {
+      return Promise.resolve(json(options.checkpoints ?? []));
+    }
+    if (url.endsWith("/rewind/prepare")) {
+      return Promise.resolve(
+        json({
+          planId: "plan-1",
+          turn: 1,
+          coverage: "all",
+          canFiles: true,
+          canConversation: true,
+          fileCount: 0,
+          requiresConfirmation: false,
+        }),
+      );
+    }
+    if (url.endsWith("/rewind/commit")) {
+      return Promise.resolve(json({ ok: true }));
+    }
+    if (url.endsWith("/branch/at")) {
+      return Promise.resolve(json({ path: options.branchPath ?? "/w/sessions/fork.jsonl" }));
+    }
     if (url.endsWith("/todos")) {
       return Promise.resolve(json(options.todos ?? [], options.todosStatus));
     }
@@ -595,6 +621,39 @@ describe("ChatScreen todos", () => {
     await flush();
     expect(container.textContent).toContain("0/1");
 
+    list = [
+      { content: "第一步", status: "completed" },
+      { content: "第二步", status: "in_progress" },
+    ];
+    render(
+      snapshot({
+        kind: "todo_progress",
+        todoProgress: { kind: "advance", progressRevision: 1 },
+      }),
+    );
+    await flush();
+
+    expect(container.textContent).toContain("1/2");
+    expect(container.textContent).toContain("第二步");
+  });
+
+  it("drops a finished checklist the way Studio does", async () => {
+    // Studio empties a plan whose every step is done: struck through above the
+    // next turn it reads as if that turn already has one.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.querySelector(".todos")).not.toBeNull();
+
     list = [{ content: "第一步", status: "completed" }];
     render(
       snapshot({
@@ -604,8 +663,90 @@ describe("ChatScreen todos", () => {
     );
     await flush();
 
-    expect(container.textContent).toContain("1/1");
-    expect(container.textContent).toContain("全部完成");
+    expect(container.querySelector(".todos")).toBeNull();
+  });
+
+  it("drops the list when a turn ends with no progress frame", async () => {
+    // A cancel rebuilds the canonical list from the truncated transcript and
+    // writes no todo_progress. Without a read on the turn end, the checklist
+    // outlives the turn that owned it — the phone kept showing a plan the
+    // kernel had already cleared.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [];
+    const done: EventPayload = { kind: "turn_done", cancelled: true };
+    render(snapshot(done));
+    await flush();
+
+    expect(container.querySelector(".todos")).toBeNull();
+  });
+
+  it("reads the turn end even when a later frame shares its burst", async () => {
+    // One relay poll delivers the whole backlog as one commit; `lastEvent`
+    // keeps the newest frame, which may be anything. The turn end still has
+    // to be seen or a cancelled list stays on screen.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [];
+    const done: EventPayload = { kind: "turn_done", cancelled: true };
+    const text: EventPayload = { kind: "text", text: "已取消" };
+    nextEventSeq += 1;
+    const first = { seq: nextEventSeq, event: done };
+    nextEventSeq += 1;
+    const second = { seq: nextEventSeq, event: text };
+    render({
+      ...snapshot(),
+      events: [first, second],
+      eventSeq: nextEventSeq,
+      lastEvent: text,
+    });
+    await flush();
+
+    expect(container.querySelector(".todos")).toBeNull();
+  });
+
+  it("reads once per turn end, not once per render", async () => {
+    const fetchMock = stubKernel({
+      todos: [{ content: "第一步", status: "in_progress" }],
+    });
+    render(snapshot());
+    await flush();
+
+    const done: EventPayload = { kind: "turn_done" };
+    render(snapshot(done));
+    await flush();
+    const afterFirst = todoCalls(fetchMock);
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // The same payload object is what the snapshot holds until the next
+    // frame; re-rendering must not read again.
+    render({ ...snapshot(done), eventSeq: nextEventSeq });
+    await flush();
+    expect(todoCalls(fetchMock)).toBe(afterFirst);
   });
 
   it("does not re-read on a frame whose clocks did not move", async () => {
@@ -643,7 +784,10 @@ describe("ChatScreen todos", () => {
     // `lastEvent` keeps only the newest, which is the text — reading the
     // checklist from there missed the progress entirely and left it lagging
     // until the next frame.
-    let list = [{ content: "第一步", status: "in_progress" }];
+    let list = [
+      { content: "第一步", status: "in_progress" },
+      { content: "第二步", status: "pending" },
+    ];
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -655,9 +799,12 @@ describe("ChatScreen todos", () => {
 
     render(snapshot());
     await flush();
-    expect(container.textContent).toContain("0/1");
+    expect(container.textContent).toContain("0/2");
 
-    list = [{ content: "第一步", status: "completed" }];
+    list = [
+      { content: "第一步", status: "completed" },
+      { content: "第二步", status: "in_progress" },
+    ];
     const progress: EventPayload = {
       kind: "todo_progress",
       todoProgress: { kind: "advance", progressRevision: 1 },
@@ -677,7 +824,8 @@ describe("ChatScreen todos", () => {
 
     // The list was re-read and moved on, even though the newest frame in the
     // burst says nothing about todos.
-    expect(container.textContent).toContain("1/1");
+    expect(container.textContent).toContain("1/2");
+    expect(container.textContent).toContain("第二步");
   });
 
   it("keeps the conversation when the list cannot be read", async () => {
@@ -828,6 +976,195 @@ describe("ChatScreen todos", () => {
 
     expect(container.textContent).not.toContain("旧会话的任务");
     expect(container.textContent).toContain("新会话的任务");
+  });
+});
+
+describe("ChatScreen cache reading", () => {
+  function openMenu(): void {
+    act(() => (container.querySelector('button[aria-label="更多"]') as HTMLButtonElement).click());
+  }
+
+  it("states the session's cache hit rate in the head menu", async () => {
+    stubKernel({
+      history: [{ role: "user", content: "你好", msgIndex: 1 }],
+      status: {
+        running: false,
+        busy: false,
+        decisions: [],
+        sessionUsage: { requests: 2, cacheHit: 750, cacheMiss: 250, cacheUnknown: 0 },
+      },
+    });
+
+    render(snapshot());
+    await flush();
+    openMenu();
+
+    const note = container.querySelector(".head-menu-note");
+    expect(note?.textContent).toContain("缓存命中率");
+    expect(note?.textContent).toContain("75%");
+    expect(note?.textContent).toContain("命中 750");
+    expect(note?.textContent).toContain("未命中 250");
+  });
+
+  it("says nothing was measured before a prompt is split", async () => {
+    stubKernel({
+      history: [{ role: "user", content: "你好", msgIndex: 1 }],
+      status: { running: false, busy: false, decisions: [] },
+    });
+
+    render(snapshot());
+    await flush();
+    openMenu();
+
+    expect(container.querySelector(".head-menu-note")?.textContent).toContain("还没有可统计的请求");
+  });
+});
+
+describe("ChatScreen message actions", () => {
+  const checkpoints = [{ turn: 1, prompt: "问", files: 0, msgIndex: 1 }];
+  const history = [
+    { role: "user", content: "问", msgIndex: 1, createdAt: Date.UTC(2026, 9, 9, 12, 51) },
+    { role: "assistant", content: "答", msgIndex: 2 },
+  ];
+
+  it("closes a turn with a tick and how long it ran", async () => {
+    stubKernel({ history: [] });
+
+    render(snapshot({ kind: "turn_done", workDurationMs: 2_275_000 } as EventPayload));
+    await flush();
+
+    expect(container.querySelector(".worked")?.textContent).toContain("已完成 · 37m 55s");
+  });
+
+  it("puts the person's time and actions under their words", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".user-time")?.textContent).not.toBe("");
+    expect(container.querySelector('[aria-label="编辑并重发"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="回到这条消息之前"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="新建分支"]')).toBeTruthy();
+  });
+
+  it("quotes an answer back into the composer", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("> 答");
+  });
+
+  it("regenerates by rewinding the conversation and sending the question again", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="重新生成"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    const calls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(calls).toContain("/rt/r1/rewind/prepare");
+    expect(calls).toContain("/rt/r1/rewind/commit");
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问" });
+  });
+
+  it("forks at the turn and hands the new session to the opener", async () => {
+    stubKernel({ history, checkpoints, branchPath: "/w/sessions/fork.jsonl" });
+    const onOpenBranch = vi.fn(async () => true);
+
+    render(snapshot(), "r1", { onOpenBranch, title: "我的会话" });
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="新建分支"]') as HTMLButtonElement).click());
+    await flush();
+
+    expect(onOpenBranch).toHaveBeenCalledWith("/w/sessions/fork.jsonl", "我的会话 · 分支");
+  });
+
+  it("says the fork exists when this phone cannot open it", async () => {
+    stubKernel({ history, checkpoints });
+    const onOpenBranch = vi.fn(async () => false);
+
+    render(snapshot(), "r1", { onOpenBranch });
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="新建分支"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".sendfail")?.textContent).toContain("分支已经建好");
+  });
+
+  it("keeps the fork on a closed turn while the next one runs", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeTruthy();
+
+    render(snapshot({ kind: "turn_started", text: "下一问", msgIndex: 3 } as EventPayload));
+    await flush();
+
+    expect(container.querySelector('[aria-label="新建分支"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeNull();
+  });
+
+  it("rewrites a message in place through the rewind", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="编辑并重发"]') as HTMLButtonElement).click());
+    const box = container.querySelector(".edit-message-text") as HTMLTextAreaElement;
+    expect(box.value).toBe("问");
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(box, "问（改）");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const send = Array.from(container.querySelectorAll(".edit-message-acts button")).find(
+      (button) => button.textContent?.includes("发送"),
+    ) as HTMLButtonElement;
+    act(() => send.click());
+    await flush();
+    await flush();
+
+    const calls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(calls).toContain("/rt/r1/rewind/prepare");
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问（改）" });
+  });
+
+  it("prepares the plan for the turn a row asks to rewind to", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="回到这条消息之前"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".rewind-plan")?.textContent).toContain("回到第 1 轮之前");
   });
 });
 
@@ -2090,9 +2427,32 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(240);
-      expect(container.querySelector(".jump-latest")).toBeTruthy();
+      // Studio's pair: up once there is more above, down once there is more
+      // below. Both ride over the record with the composer, so the last row
+      // can pass under them; the chevron is the whole control, named for
+      // speech.
+      act(() => (container.querySelector(".transcript") as HTMLElement).dispatchEvent(new Event("scroll")));
+      const transcript = container.querySelector(".transcript") as HTMLElement;
+      const up = container.querySelector('[aria-label="回到会话顶部"]') as HTMLButtonElement;
+      const down = container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement;
+      expect(up).toBeTruthy();
+      expect(down.closest(".chat-dock")).toBeTruthy();
+      expect(down.textContent?.trim()).toBe("");
 
-      act(() => (container.querySelector(".jump-latest") as HTMLButtonElement).click());
+      // The up half goes first; the down half stays because the end is still
+      // out of view.
+      act(() => up.click());
+      expect(container.querySelector('[aria-label="回到会话顶部"]')).toBeNull();
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
+
+      // The control goes when the scroller reports the end; a jump that could
+      // not reach it keeps its way back.
+      act(() => (container.querySelector('[aria-label="跳到最新"]') as HTMLButtonElement).click());
+      expect(container.querySelector('[aria-label="跳到最新"]')).toBeTruthy();
+      act(() => {
+        transcript.scrollTop = 600;
+        transcript.dispatchEvent(new Event("scroll"));
+      });
       expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();
@@ -2115,6 +2475,8 @@ describe("ChatScreen reading position", () => {
       await flush();
 
       expect(scroll.top()).toBe(1000);
+      // The pair marks being away from the end; at the end there is nothing to
+      // offer, in either direction.
       expect(container.querySelector(".jump-latest")).toBeNull();
     } finally {
       scroll.restore();

@@ -92,6 +92,10 @@ public class LoopbackProxyTest {
         assertTrue(ProxyPaths.controlMethodAllowed("/__reasonix/fleet", "POST"));
         assertFalse(ProxyPaths.controlMethodAllowed("/__reasonix/account", "POST"));
         assertTrue(ProxyPaths.controlMethodAllowed("/__reasonix/account", "GET"));
+        // A batch probe reads, but the list travels in a body: a GET with a
+        // query would have to be assembled by every caller.
+        assertTrue(ProxyPaths.controlMethodAllowed("/__reasonix/reach", "POST"));
+        assertFalse(ProxyPaths.controlMethodAllowed("/__reasonix/reach", "GET"));
     }
 
     // ---- fleet route parsing -------------------------------------------
@@ -371,11 +375,18 @@ public class LoopbackProxyTest {
     }
 
     @Test
-    public void aMeshVpnAddressStaysOnTheTunnel() {
+    public void autoLeavesAMeshAddressOnTheTunnel() {
         // Private is not the same as a neighbour: only a local link can carry
         // a 172.16.x mesh address, and this phone is not on one.
         assertEquals("system", LanRoute.routeFor("auto", false, true));
-        assertEquals("system", LanRoute.routeFor("bypass", false, true));
+    }
+
+    @Test
+    public void bypassSkipsTheHttpProxyEvenUnderAVpn() {
+        // "no-proxy" removes the system HTTP proxy, not the socket's route:
+        // a mesh address still rides the tunnel that owns it.
+        assertEquals("no-proxy", LanRoute.routeFor("bypass", false, true));
+        assertEquals("direct", LanRoute.routeFor("bypass", true, true));
     }
 
     @Test

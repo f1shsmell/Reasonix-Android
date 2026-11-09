@@ -7,6 +7,7 @@
  */
 
 import { memo, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
 import { loadStatus, setPlanMode } from "../net/status";
@@ -19,6 +20,7 @@ import {
 } from "../net/approval";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
+import { cachePercent } from "./cacheRate";
 import { MAX_FILE_MB, MAX_IMAGE_MB, isolateImageRefs, uploadFile, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
@@ -30,6 +32,7 @@ import { StudioIcon } from "../app/StudioIcon";
 import type { StudioOpenResult } from "../app/openStudio";
 import { loadEnterPref } from "../app/enterPref";
 import type { EnterPref } from "../app/enterPref";
+import { compactCount } from "../app/format";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
 import { speechSupported } from "../native/speech";
@@ -38,10 +41,10 @@ import { MicButton, VoiceLive } from "./MicButton";
 import type { WireTodo } from "../wire/todos";
 import type { EventPayload, WireAskAnswer } from "../wire/events";
 import { closeApproval, emptyTranscript, markAnswered, markAnsweredSurface, optimisticUser, reduce, removeLocalUser } from "./transcript";
-import type { Row, Transcript } from "./transcript";
+import type { Row, Transcript, UserRow } from "./transcript";
 import { dropCachedRows, loadCachedRows, scheduleSaveRows } from "./transcriptCache";
-import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble } from "./Rows";
-import type { PromptHandlers } from "./Rows";
+import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble, WorkedLine } from "./Rows";
+import type { PromptHandlers, RowActions } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
 import { buildDisplay } from "./process";
 import { loadFoldMode } from "./folding";
@@ -50,8 +53,12 @@ import { TodoPanel } from "./TodoPanel";
 import type { TodosState } from "./TodoPanel";
 import { ModelSheet } from "./ModelSheet";
 import { CheckpointsSheet } from "./CheckpointsSheet";
+import { EditMessageSheet } from "./EditMessageSheet";
 import { QueueSheet } from "./QueueSheet";
 import { ContextSheet } from "./ContextSheet";
+import { loadCheckpoints, prepareRewind, commitRewind, rewindMessage } from "../net/rewind";
+import type { Checkpoint } from "../net/rewind";
+import { branchAt, branchMessage } from "../net/branch";
 
 export interface ChatScreenProps {
   connection: Connection;
@@ -69,6 +76,8 @@ export interface ChatScreenProps {
   onFocusConsumed?: () => void;
   /** Open the paired computer's Studio page; absent where there is no native shell. */
   onOpenStudio?: () => Promise<StudioOpenResult>;
+  /** Open a conversation the kernel just forked; false when the open failed. */
+  onOpenBranch?: (path: string, name: string) => Promise<boolean>;
 }
 
 /**
@@ -249,6 +258,7 @@ function AttachSheet({
 function HeadMenu({
   model,
   approval,
+  cache,
   onClose,
   onReload,
   onModel,
@@ -260,6 +270,7 @@ function HeadMenu({
 }: {
   model: string;
   approval: string;
+  cache: { hit: number; miss: number; unknown: number } | null;
   onClose: () => void;
   onReload: () => void;
   onModel: () => void;
@@ -323,6 +334,12 @@ function HeadMenu({
             </button>
           </li>
           <li>
+            <div className="head-menu-note">
+              <span>缓存命中率</span>
+              <small>{cacheNote(cache)}</small>
+            </div>
+          </li>
+          <li>
             <button type="button" onClick={onWorkbench}>
               <span>工作台</span>
               <small>变更、diff 与提交</small>
@@ -332,6 +349,18 @@ function HeadMenu({
       </section>
     </div>
   );
+}
+
+/**
+ * The cache split as one line: the rate first, then the counts it came from.
+ * Unsplit prompt is left out of the rate by `cachePercent`, so the counts are
+ * the ledger's own and need no adjustment.
+ */
+function cacheNote(cache: { hit: number; miss: number; unknown: number } | null): string {
+  if (!cache) return "还没有可统计的请求";
+  const percent = cachePercent(cache.hit, cache.miss, cache.unknown);
+  if (percent === null) return "还没有可统计的请求";
+  return `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
 }
 
 /**
@@ -416,22 +445,50 @@ const RowView = memo(function RowView({
   row,
   base,
   handlers,
+  actions,
+  turn,
+  branchTurn,
+  question,
 }: {
   row: Row;
   base: string;
   handlers: PromptHandlers;
+  actions: RowActions;
+  /** The checkpoint turn this row's turn opened, when there is one. */
+  turn?: number;
+  /** Where a fork would cut, when this row's turn is closed (it may be running). */
+  branchTurn?: number;
+  /** The words that asked for this answer, for regenerating the same request. */
+  question?: string;
 }) {
   switch (row.kind) {
     case "user":
-      return <UserBubble row={row} base={base} />;
+      return (
+        <UserBubble
+          row={row}
+          base={base}
+          actions={actions}
+          {...(turn !== undefined ? { turn } : {})}
+        />
+      );
     case "assistant":
-      return <AssistantBubble row={row} />;
+      return (
+        <AssistantBubble
+          row={row}
+          actions={actions}
+          {...(turn !== undefined ? { turn } : {})}
+          {...(branchTurn !== undefined ? { branchTurn } : {})}
+          {...(question ? { question } : {})}
+        />
+      );
     case "notice":
       return <NoticeCard row={row} />;
     case "ask":
       return <AskCard row={row} handlers={handlers} />;
     case "approval":
       return <ApprovalCard row={row} handlers={handlers} />;
+    case "worked":
+      return <WorkedLine row={row} />;
     default:
       return null;
   }
@@ -575,6 +632,8 @@ function useTranscript(
   loadOlder: () => void;
   /** The newest page's cursor state: whether older messages exist to read. */
   cursor: { hasMoreBefore: boolean; nextCursor?: string };
+  /** Bumped by a manual history reload; the checklist reads again with it. */
+  reloadToken: number;
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
   const [history, setHistory] = useState<HistoryState>({ kind: "loading" });
@@ -860,7 +919,7 @@ function useTranscript(
       });
   }, [base]);
 
-  return { transcript, history, reload, setTranscript, loadOlder, cursor };
+  return { transcript, history, reload, reloadToken, setTranscript, loadOlder, cursor };
 }
 
 /**
@@ -883,16 +942,38 @@ interface TodoList {
   state: TodosState;
 }
 
+/**
+ * Studio's rule: a list whose every step is done is spent. The kernel keeps
+ * it, and the desktop drops it rather than leaving a finished checklist struck
+ * through above the next turn's composer.
+ */
+function liveTodos(todos: WireTodo[]): WireTodo[] {
+  return todos.length > 0 && todos.every((todo) => todo.status === "completed") ? [] : todos;
+}
+
 function useTodos(
   base: string | undefined,
   events: readonly QueuedEvent[],
   lastEvent: EventPayload | undefined,
+  turnEnd: EventPayload | null,
+  reloadToken: number,
 ): { todos: WireTodo[]; state: TodosState } {
   const [list, setList] = useState<TodoList | null>(null);
   const loadedBase = useRef<string | null>(null);
   const seenRevision = useRef("");
   const failed = useRef(false);
   const request = useRef(0);
+  /**
+   * The turn-end frame is a second reason to read.
+   *
+   * A cancel rebuilds the canonical list from the truncated transcript and
+   * writes no `todo_progress`; without this read a checklist whose turn was
+   * cancelled outlives it on the phone. Identity, not a revision: every
+   * `turn_done` is a new payload, and the last one must not cause a read on
+   * every render that happens to still be looking at it.
+   */
+  const seenBoundary = useRef<EventPayload | null>(null);
+  const seenReload = useRef(reloadToken);
   /**
    * The newest `todo_progress` in the queue, not in `lastEvent`.
    *
@@ -912,6 +993,11 @@ function useTodos(
 
   useEffect(() => {
     if (!base) return;
+    // The turn end is scanned from the whole burst by the caller: a burst keeps
+    // only its newest frame in `lastEvent`, which may be anything.
+    const boundary = turnEnd;
+    const forced =
+      (boundary !== null && boundary !== seenBoundary.current) || reloadToken !== seenReload.current;
     const switched = base !== loadedBase.current;
     if (switched) {
       // Another pane's checklist is not this pane's. This records the new
@@ -919,13 +1005,17 @@ function useTodos(
       // because an effect runs after paint.
       loadedBase.current = base;
       seenRevision.current = "";
+      seenBoundary.current = null;
+      seenReload.current = reloadToken;
       failed.current = false;
       setList({ base, todos: [], state: "loading" });
-    } else if (!progress || (revision === seenRevision.current && !failed.current)) {
-      // Not a todo_progress frame, or a repeat whose clocks have not moved
-      // and whose last read succeeded.
+    } else if (!forced && (!progress || (revision === seenRevision.current && !failed.current))) {
+      // Not a reason to read: no turn end, no reload, and either no
+      // todo_progress frame or a repeat whose clocks have not moved.
       return;
     }
+    seenBoundary.current = boundary;
+    seenReload.current = reloadToken;
     if (revision !== "") seenRevision.current = revision;
 
     // A newer read wins outright. Two can overlap — the screen's first load
@@ -947,9 +1037,9 @@ function useTodos(
         return;
       }
       failed.current = false;
-      setList({ base, todos: result.items, state: "loaded" });
+      setList({ base, todos: liveTodos(result.items), state: "loaded" });
     });
-  }, [base, lastEvent, progress, revision]);
+  }, [base, events, lastEvent, turnEnd, progress, revision, reloadToken]);
 
   // The first render after a base change still holds the old list — the effect
   // that clears it runs after paint. Hiding a mismatched list here is what
@@ -969,6 +1059,7 @@ export function ChatScreen({
   focusAsk,
   onFocusConsumed,
   onOpenStudio,
+  onOpenBranch,
 }: ChatScreenProps) {
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   /**
@@ -994,7 +1085,7 @@ export function ChatScreen({
    * A ref rather than state: the fold loop reads it to vouch for frames.
    */
   const runStartedAtRef = useRef<number | null>(null);
-  const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
+  const { transcript, history, reload, reloadToken, setTranscript, loadOlder, cursor } = useTranscript(
     connection,
     snapshot,
     runtimeId,
@@ -1002,10 +1093,24 @@ export function ChatScreen({
     runtime?.sessionPath,
     runStartedAtRef,
   );
+  /**
+   * The newest turn end in the poll, whichever frame follows it. The checklist
+   * and the cache meter both re-read on it, and a burst keeps only its newest
+   * payload in `lastEvent`, so the queue is scanned here once.
+   */
+  const turnEnd = useMemo(() => {
+    for (let at = snapshot.events.length - 1; at >= 0; at -= 1) {
+      const event = snapshot.events[at]?.event;
+      if (event?.kind === "turn_done") return event;
+    }
+    return snapshot.lastEvent?.kind === "turn_done" ? snapshot.lastEvent : null;
+  }, [snapshot.events, snapshot.lastEvent]);
   const { todos, state: todosState } = useTodos(
     runtime?.base,
     snapshot.events,
     snapshot.lastEvent,
+    turnEnd,
+    reloadToken,
   );
   /** The stored transcript's identity; a pane id is only the fallback. */
   const readingId = readingKey(runtime?.sessionPath, runtimeId);
@@ -1028,6 +1133,10 @@ export function ChatScreen({
   const [atBottom, setAtBottom] = useState(
     () => loadReading(readingId)?.atBottom ?? true,
   );
+  /** False once the record sits below its top edge; the up control appears then. */
+  const [atTop, setAtTop] = useState(true);
+  /** The session's cache split, as the kernel last reported it. */
+  const [cache, setCache] = useState<{ hit: number; miss: number; unknown: number } | null>(null);
   /** The model the catalog last confirmed, shown until the transcript reports one. */
   const [pickedModel, setPickedModel] = useState("");
   const [modelSheet, setModelSheet] = useState(false);
@@ -1091,9 +1200,6 @@ export function ChatScreen({
   /** Prompt decisions in flight, by ask/approval id: a second tap on the same
       card while its POST is a round trip away would fire the call twice. */
   const deciding = useRef(new Set<string>());
-  /** Set while a jump button's smooth glide is in motion, so the follow
-      effect below skips the one run that would cancel it. */
-  const jumpGlide = useRef(false);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -1116,7 +1222,8 @@ export function ChatScreen({
   // running when the screen opened has no `turn_started` to flip the composer
   // into its stop state. The kernel's own status is the only place that says
   // so, and without this read the phone offers no way to stop work it can see
-  // is happening.
+  // is happening. The same read carries the session's cache split, so mount, a
+  // turn end and a manual reload are its only moments.
   useEffect(() => {
     const base = runtime?.base;
     if (!base) return;
@@ -1125,6 +1232,7 @@ export function ChatScreen({
       if (cancelled || !result.ok) return;
       setPlan(result.status.plan);
       setApproval(result.status.toolApprovalMode ?? "");
+      setCache(result.status.cache ?? null);
       if (result.status.modelRef) setStatusModel(result.status.modelRef);
       if (result.status.effort) setStatusEffort(result.status.effort);
       if (!result.status.running) return;
@@ -1133,7 +1241,58 @@ export function ChatScreen({
     return () => {
       cancelled = true;
     };
-  }, [runtime?.base, setTranscript]);
+  }, [runtime?.base, turnEnd, reloadToken, setTranscript]);
+
+  // The kernel's checkpoints pair a turn with the message index that opened
+  // it, which is what lets a row say "this is the turn to go back to". Read on
+  // the same moments the status is: mount, a turn end, a manual reload.
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  useEffect(() => {
+    const base = runtime?.base;
+    if (!base) return;
+    let cancelled = false;
+    void loadCheckpoints(base).then((next) => {
+      if (!cancelled && next) setCheckpoints(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtime?.base, turnEnd, reloadToken]);
+
+  const turnOf = useCallback(
+    (msgIndex: number | undefined) =>
+      msgIndex === undefined
+        ? undefined
+        : checkpoints.find((checkpoint) => checkpoint.msgIndex === msgIndex)?.turn,
+    [checkpoints],
+  );
+
+  /**
+   * Which turn each row belongs to: a user row opens its turn, and the answers
+   * and receipts under it belong to the same one.
+   */
+  const rowTurns = useMemo(() => {
+    const byRow = new Map<string, { turn?: number; question?: string }>();
+    let turn: number | undefined;
+    let question: string | undefined;
+    // The newest turn's number lets a fork tell a closed turn from the one
+    // still running; a checkpoint list that has not caught up leaves it unset.
+    let lastTurn: number | undefined;
+    for (const row of transcript.rows) {
+      if (row.kind === "user" && row.local !== true) {
+        question = row.text;
+        turn = turnOf(row.msgIndex);
+        lastTurn = turn;
+      }
+      if (row.kind === "user" || row.kind === "assistant") {
+        byRow.set(row.id, {
+          ...(turn !== undefined ? { turn } : {}),
+          ...(question ? { question } : {}),
+        });
+      }
+    }
+    return { byRow, lastTurn };
+  }, [transcript.rows, turnOf]);
 
   // A running turn is exactly the window where the phone may be locked. The
   // The native watcher discovers every open pane; a turn starting here is
@@ -1263,18 +1422,56 @@ export function ChatScreen({
     list.scrollTo({ top: list.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
+  /** Studio's up control goes straight to the start of the conversation. */
+  const scrollToTop = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    setAtTop(true);
+    list.scrollTop = 0;
+  }, []);
+
+  /**
+   * The lower chrome floats over the record so its rows can scroll behind it;
+   * the transcript ends with that height as padding, which is why it is
+   * measured. The dock grows with a checklist, a notice and a long draft, and
+   * a fixed guess would leave the last row behind the composer.
+   */
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const measure = () => setDockHeight(Math.round(dock.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(dock);
+    return () => watch.disconnect();
+  }, [runtime?.base, workbenchOpen]);
+
+  /**
+   * A dock that changed height moved the end of the record by the same
+   * amount. Pin only a reader who was already at the bottom: the true
+   * pre-change gap is the measured gap minus that delta, and sliding past it
+   * is what a jump glide looks like from here — it must not be cut short into
+   * an instant scroll.
+   */
+  const lastDockHeight = useRef(0);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const delta = dockHeight - lastDockHeight.current;
+    lastDockHeight.current = dockHeight;
+    if (!list || delta === 0) return;
+    const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (gap - delta >= 48) return;
+    list.scrollTop = list.scrollHeight;
+  }, [dockHeight]);
+
   // Follow the newest row only while the person is already at the bottom.
   // Yanking the view down while they read back is the single worst thing a
   // streaming transcript can do.
   useLayoutEffect(() => {
     if (!atBottom) return;
-    // The jump button's glide is already heading here, and setting atBottom
-    // re-renders straight into this effect — an instant scroll now would
-    // cancel the smooth animation mid-flight. Skip exactly that one run.
-    if (jumpGlide.current) {
-      jumpGlide.current = false;
-      return;
-    }
     scrollToBottom(false);
   }, [transcript.rows, atBottom, scrollToBottom]);
 
@@ -1289,9 +1486,11 @@ export function ChatScreen({
     if (saved && !saved.atBottom) {
       list.scrollTop = saved.top;
       setAtBottom(false);
+      setAtTop(saved.top < 48);
     } else {
       list.scrollTop = list.scrollHeight;
       setAtBottom(true);
+      setAtTop(list.scrollTop < 48);
     }
   }, [history, readingId]);
 
@@ -1301,6 +1500,7 @@ export function ChatScreen({
     if (!focusAsk || history.kind !== "loaded") return;
     scrollToBottom(false);
     setAtBottom(true);
+    setAtTop(listRef.current ? listRef.current.scrollTop < 48 : true);
     onFocusConsumed?.();
   }, [focusAsk, history.kind, scrollToBottom, onFocusConsumed]);
 
@@ -1320,6 +1520,7 @@ export function ChatScreen({
     if (!list) return;
     const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
     setAtBottom(gap < 48);
+    setAtTop(list.scrollTop < 48);
     // Near the top with more above the window: widen it. The 400px lead is
     // enough that the widen lands before the reader hits the spacer.
     if (list.scrollTop < 400) growWindow();
@@ -1613,6 +1814,107 @@ export function ChatScreen({
     [runtime, scrollToBottom, attachments, forgetDraft, setTranscript],
   );
 
+  const [editMessage, setEditMessage] = useState<{ row: UserRow; turn: number } | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [rewindTurn, setRewindTurn] = useState<number | null>(null);
+
+  const quoteIntoComposer = useCallback((text: string) => {
+    const quoted = text
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    setDraft((current) => (current.trim() ? `${current}\n\n${quoted}\n\n` : `${quoted}\n\n`));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  /**
+   * Rewind to this turn and send new words in its place — Studio's rewrite and
+   * regenerate are the same act. Conversation only: the files the turn changed
+   * stay, so the words run again against the work that was already done.
+   */
+  const resendTurn = useCallback(
+    async (turn: number, text: string, fromSheet: boolean) => {
+      const base = runtime?.base;
+      if (!base) return;
+      const fail = (message: string) => {
+        if (fromSheet) setEditError(message);
+        else setPromptError(message);
+      };
+      if (fromSheet) {
+        setEditError("");
+        setEditBusy(true);
+      }
+      const prepared = await prepareRewind(base, turn, "conversation");
+      if (!prepared.ok) {
+        if (fromSheet) setEditBusy(false);
+        fail(rewindMessage(prepared.code));
+        return;
+      }
+      if (!prepared.value.canConversation) {
+        if (fromSheet) setEditBusy(false);
+        fail(prepared.value.disabledReason ?? "这一轮不能重新生成。");
+        return;
+      }
+      const committed = await commitRewind(base, prepared.value.planId);
+      if (fromSheet) setEditBusy(false);
+      if (!committed.ok) {
+        fail(rewindMessage(committed.code));
+        return;
+      }
+      if (committed.value.ok === false) {
+        fail(committed.value.error ?? "内核没有完成这次回退。");
+        return;
+      }
+      if (fromSheet) {
+        setEditMessage(null);
+        setEditError("");
+      }
+      await reload();
+      await doSend(text);
+    },
+    [runtime?.base, reload, doSend, setEditError, setEditBusy, setEditMessage, setPromptError],
+  );
+
+  const branchFromTurn = useCallback(
+    async (turn: number) => {
+      const base = runtime?.base;
+      if (!base) return;
+      const name = title ? `${title} · 分支` : "";
+      const result = await branchAt(base, turn, name);
+      if (!result.ok) {
+        setPromptError(branchMessage(result.code));
+        return;
+      }
+      if (!onOpenBranch) {
+        setPromptError("这个入口打不开新分支，请在电脑上打开它。");
+        return;
+      }
+      // The fork exists on the host even when the pane cannot be opened here;
+      // saying so is better than a tap that appears to do nothing.
+      if (!(await onOpenBranch(result.path, name))) {
+        setPromptError("分支已经建好，但在手机上打不开它；它就在会话列表里。");
+      }
+    },
+    [runtime?.base, title, onOpenBranch, setPromptError],
+  );
+
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      quote: quoteIntoComposer,
+      resend: (turn, text) => void resendTurn(turn, text, false),
+      branch: (turn) => void branchFromTurn(turn),
+      edit: (row, turn) => {
+        setEditError("");
+        setEditMessage({ row, turn });
+      },
+      rewind: (turn) => setRewindTurn(turn),
+      turnOf,
+    }),
+    [quoteIntoComposer, resendTurn, branchFromTurn, turnOf, setEditError, setEditMessage, setRewindTurn],
+  );
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Enter breaks the line, Ctrl/⌘+Enter sends — the default, and the
@@ -1819,8 +2121,9 @@ export function ChatScreen({
     });
   };
 
+
   return (
-    <div className="chat">
+    <div className="chat" style={{ "--chat-dock": `${dockHeight}px` } as CSSProperties}>
       <div className="chat-head">
         <button type="button" className="iconbtn back" onClick={onBack} aria-label="返回">
           ←
@@ -1924,9 +2227,9 @@ export function ChatScreen({
                 aria-hidden="true"
               />
             ) : null}
-            {visible.map((entry) =>
-              entry.kind === "steps" ? (
-                entry.live ? (
+            {visible.map((entry) => {
+              if (entry.kind === "steps") {
+                return entry.live ? (
                   entry.steps.map((step) => (
                     <ActivityRow
                       key={step.id}
@@ -1942,11 +2245,32 @@ export function ChatScreen({
                     compact={entry.compact === true}
                     onOpen={() => openProcess(entry)}
                   />
-                )
-              ) : (
-                <RowView key={entry.id} row={entry.row} base={runtime.base} handlers={handlers} />
-              ),
-            )}
+                );
+              }
+              // Rewinding and regenerating are refused while any turn runs, so
+              // those actions wait for the end. A fork is not: a turn that has
+              // already closed can be branched mid-run, which is the one action
+              // the running turn's rows lose and the earlier ones keep.
+              const context = rowTurns.byRow.get(entry.row.id);
+              const turn = transcript.running ? undefined : context?.turn;
+              const branchTurn =
+                context?.turn !== undefined &&
+                (!transcript.running || context.turn !== rowTurns.lastTurn)
+                  ? context.turn
+                  : undefined;
+              return (
+                <RowView
+                  key={entry.id}
+                  row={entry.row}
+                  base={runtime.base}
+                  handlers={handlers}
+                  actions={rowActions}
+                  {...(turn !== undefined ? { turn } : {})}
+                  {...(branchTurn !== undefined ? { branchTurn } : {})}
+                  {...(context?.question ? { question: context.question } : {})}
+                />
+              );
+            })}
           </>
         )}
         {transcript.ended && !transcript.ended.cancelled && transcript.ended.error ? (
@@ -1960,223 +2284,254 @@ export function ChatScreen({
         ) : null}
       </div>
 
-      {!atBottom && transcript.rows.length > 0 ? (
-        <div className="jump-latest-wrap">
-          <button
-            type="button"
-            className="jump-latest"
-            onClick={() => {
-              // The flag must go up before setAtBottom: that state change is
-              // what triggers the follow effect run the glide has to skip.
-              jumpGlide.current = true;
-              scrollToBottom(true);
-              setAtBottom(true);
-            }}
-          >
-            ↓ 最新
-          </button>
-        </div>
-      ) : null}
-
-      <TodoPanel todos={todos} state={todosState} />
-
-      {/* One strip, highest priority first. Four bars stacked over the
-          composer is noise; a person can only act on one thing at a time. */}
-      {send.kind === "failed" ? (
-        <div className="sendfail" role="alert">
-          <span>
-            {send.unconfirmed
-              ? "不确定这一轮有没有发出去。先刷新确认，别直接重发；原文还在输入框里。"
-              : `没发出去：${sendErrorText(send.detail)}`}
-          </span>
-          {send.unconfirmed ? (
+      {/* The lower chrome rides above the record instead of shortening it, so
+          a row scrolled to the edge can pass under it rather than end at it. */}
+      <div className="chat-dock" ref={dockRef}>
+        {transcript.rows.length > 0 && !atBottom ? (
+          <div className="jump-latest-wrap">
+            {!atTop ? (
+              <button
+                type="button"
+                className="jump-latest"
+                data-value="up"
+                aria-label="回到会话顶部"
+                title="回到会话顶部"
+                onClick={scrollToTop}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M6 9l6 6 6-6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => {
-                setSend({ kind: "idle" });
-                reload();
-              }}
+              className="jump-latest"
+              data-value="down"
+              aria-label="跳到最新"
+              title="跳到最新"
+              onClick={() => scrollToBottom(false)}
             >
-              刷新确认
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M6 9l6 6 6-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
-          ) : send.retryable && lastRetry.current ? (
-            <button type="button" onClick={() => void doSend(lastRetry.current)}>
-              重试
-            </button>
-          ) : (
-            <button type="button" onClick={() => setSend({ kind: "idle" })}>
-              知道了
-            </button>
-          )}
-        </div>
-      ) : promptError ? (
-        <div className="sendfail" role="alert">
-          <span>{promptError}</span>
-          <button type="button" onClick={() => setPromptError("")}>
-            知道了
-          </button>
-        </div>
-      ) : attachError ? (
-        <div className="sendfail" role="alert">
-          <span>{attachError}</span>
-          <button type="button" onClick={() => setAttachError("")}>
-            知道了
-          </button>
-        </div>
-      ) : inboxNote ? (
-        <div className="inbox-note" role="status">
-          <button
-            type="button"
-            className="inbox-note-open"
-            onClick={() => setQueueSheet(true)}
-            aria-label="查看排队列表"
-          >
-            {inboxNote}
-          </button>
-          <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
-            ×
-          </button>
-        </div>
-      ) : null}
-
-      {/* While a turn runs, the composer's send button is the stop control, so
-          a message typed now needs its own way out. Two buttons rather than
-          one: queuing leaves the turn alone, steering joins it. */}
-      {streaming && draft.trim() && runtime.readOnly !== true ? (
-        <div className="interject" role="group" aria-label="发送到运行中的回合">
-          <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
-            排队
-          </button>
-          <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
-            插话
-          </button>
-        </div>
-      ) : null}
-
-      <div className="composer">
-        <input
-          ref={imageRef}
-          className="file-input"
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(event) => void onImage(event)}
-        />
-        <input
-          ref={cameraRef}
-          className="file-input"
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(event) => void onImage(event)}
-        />
-        <input
-          ref={fileRef}
-          className="file-input"
-          type="file"
-          multiple
-          onChange={(event) => void onFile(event)}
-        />
-        {attachments.length > 0 ? (
-          <div className="composer-images">
-            {attachments.map((entry, index) => (
-              <div className="attachment" key={entry.ref}>
-                {entry.url ? (
-                  <img src={entry.url} alt="已选择的图片" />
-                ) : (
-                  <span className="attachment-file" aria-hidden="true">
-                    {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
-                  </span>
-                )}
-                <span className="attachment-index" aria-hidden="true">
-                  {index + 1}
-                </span>
-                <span className="attachment-name">{entry.name}</span>
-                <button
-                  type="button"
-                  aria-label={`移除附件 ${entry.name}`}
-                  onClick={() => removeAttachment(entry.ref)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
           </div>
         ) : null}
-        <VoiceLive session={voice} onCancel={cancelVoice} />
-        <textarea
-          ref={inputRef}
-          value={draft}
-          placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
-          disabled={runtime.readOnly === true}
-          rows={1}
-          // The soft keyboard's return key says what it does. Off "send" it
-          // would keep showing a send arrow while Enter inserts a line break.
-          enterKeyHint={enterPref === "send" ? "send" : "enter"}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            grow();
-          }}
-          onKeyDown={onKeyDown}
-        />
-        <div className="composer-bar">
-          <button
-            type="button"
-            className="iconbtn attach"
-            aria-label="添加图片或计划"
-            onClick={openAttach}
-            disabled={runtime.readOnly === true || attaching}
-          >
-            {attaching ? "…" : "＋"}
-          </button>
-          {runtime.readOnly ? (
-            <span className="composer-model">只读</span>
-          ) : (
+  
+        <TodoPanel todos={todos} state={todosState} />
+  
+        {/* One strip, highest priority first. Four bars stacked over the
+            composer is noise; a person can only act on one thing at a time. */}
+        {send.kind === "failed" ? (
+          <div className="sendfail" role="alert">
+            <span>
+              {send.unconfirmed
+                ? "不确定这一轮有没有发出去。先刷新确认，别直接重发；原文还在输入框里。"
+                : `没发出去：${sendErrorText(send.detail)}`}
+            </span>
+            {send.unconfirmed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSend({ kind: "idle" });
+                  reload();
+                }}
+              >
+                刷新确认
+              </button>
+            ) : send.retryable && lastRetry.current ? (
+              <button type="button" onClick={() => void doSend(lastRetry.current)}>
+                重试
+              </button>
+            ) : (
+              <button type="button" onClick={() => setSend({ kind: "idle" })}>
+                知道了
+              </button>
+            )}
+          </div>
+        ) : promptError ? (
+          <div className="sendfail" role="alert">
+            <span>{promptError}</span>
+            <button type="button" onClick={() => setPromptError("")}>
+              知道了
+            </button>
+          </div>
+        ) : attachError ? (
+          <div className="sendfail" role="alert">
+            <span>{attachError}</span>
+            <button type="button" onClick={() => setAttachError("")}>
+              知道了
+            </button>
+          </div>
+        ) : inboxNote ? (
+          <div className="inbox-note" role="status">
             <button
               type="button"
-              className="modelchip"
-              onClick={() => setModelSheet(true)}
-              aria-label="切换模型"
-              title="切换模型"
+              className="inbox-note-open"
+              onClick={() => setQueueSheet(true)}
+              aria-label="查看排队列表"
             >
-              {`${shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}${
-                statusEffort ? ` · ${effortDisplayName(statusEffort)}` : ""
-              }`}
+              {inboxNote}
             </button>
-          )}
-          {speechSupported() ? (
-            <MicButton
-              session={voice}
-              disabled={runtime.readOnly === true}
-              down={voiceDown}
-              move={voiceMove}
-              up={voiceUp}
-            />
+            <button type="button" onClick={() => setInboxNote("")} aria-label="关闭提示">
+              ×
+            </button>
+          </div>
+        ) : null}
+  
+        {/* While a turn runs, the composer's send button is the stop control, so
+            a message typed now needs its own way out. Two buttons rather than
+            one: queuing leaves the turn alone, steering joins it. */}
+        {streaming && draft.trim() && runtime.readOnly !== true ? (
+          <div className="interject" role="group" aria-label="发送到运行中的回合">
+            <button type="button" className="chip" onClick={() => void sendWhileRunning("followup")}>
+              排队
+            </button>
+            <button type="button" className="chip accent" onClick={() => void sendWhileRunning("steer")}>
+              插话
+            </button>
+          </div>
+        ) : null}
+  
+        <div className="composer">
+          <input
+            ref={imageRef}
+            className="file-input"
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => void onImage(event)}
+          />
+          <input
+            ref={cameraRef}
+            className="file-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => void onImage(event)}
+          />
+          <input
+            ref={fileRef}
+            className="file-input"
+            type="file"
+            multiple
+            onChange={(event) => void onFile(event)}
+          />
+          {attachments.length > 0 ? (
+            <div className="composer-images">
+              {attachments.map((entry, index) => (
+                <div className="attachment" key={entry.ref}>
+                  {entry.url ? (
+                    <img src={entry.url} alt="已选择的图片" />
+                  ) : (
+                    <span className="attachment-file" aria-hidden="true">
+                      {entry.name.split(".").pop()?.slice(0, 4).toUpperCase() || "FILE"}
+                    </span>
+                  )}
+                  <span className="attachment-index" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <span className="attachment-name">{entry.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`移除附件 ${entry.name}`}
+                    onClick={() => removeAttachment(entry.ref)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           ) : null}
-          {streaming ? (
+          <VoiceLive session={voice} onCancel={cancelVoice} />
+          <textarea
+            ref={inputRef}
+            value={draft}
+            placeholder={runtime.readOnly ? "这个会话是只读的" : "描述你的任务"}
+            disabled={runtime.readOnly === true}
+            rows={1}
+            // The soft keyboard's return key says what it does. Off "send" it
+            // would keep showing a send arrow while Enter inserts a line break.
+            enterKeyHint={enterPref === "send" ? "send" : "enter"}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              grow();
+            }}
+            onKeyDown={onKeyDown}
+          />
+          <div className="composer-bar">
             <button
               type="button"
-              className="send stop"
-              aria-label="停止"
-              onClick={() => {
-                void cancel(runtime.base).then((result) => {
-                  if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
-                });
-              }}
+              className="iconbtn attach"
+              aria-label="添加图片或计划"
+              onClick={openAttach}
+              disabled={runtime.readOnly === true || attaching}
             >
-              停止
+              {attaching ? "…" : "＋"}
             </button>
-          ) : (
-            <button
-              type="button"
-              className="send"
-              aria-label="发送"
-              disabled={!draft.trim() || send.kind === "sending" || attaching}
-              onClick={() => void doSend(draft)}
-            >
-              ↑
-            </button>
-          )}
+            {runtime.readOnly ? (
+              <span className="composer-model">只读</span>
+            ) : (
+              <button
+                type="button"
+                className="modelchip"
+                onClick={() => setModelSheet(true)}
+                aria-label="切换模型"
+                title="切换模型"
+              >
+                {`${shortRef(pickedModel || transcript.modelRef || statusModel || "") || "模型"}${
+                  statusEffort ? ` · ${effortDisplayName(statusEffort)}` : ""
+                }`}
+              </button>
+            )}
+            {speechSupported() ? (
+              <MicButton
+                session={voice}
+                disabled={runtime.readOnly === true}
+                down={voiceDown}
+                move={voiceMove}
+                up={voiceUp}
+              />
+            ) : null}
+            {streaming ? (
+              <button
+                type="button"
+                className="send stop"
+                aria-label="停止"
+                onClick={() => {
+                  void cancel(runtime.base).then((result) => {
+                    if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
+                  });
+                }}
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="send"
+                aria-label="发送"
+                disabled={!draft.trim() || send.kind === "sending" || attaching}
+                onClick={() => void doSend(draft)}
+              >
+                ↑
+              </button>
+            )}
+          </div>
         </div>
       </div>
         </>
@@ -2223,6 +2578,7 @@ export function ChatScreen({
         <HeadMenu
           model={shortRef(pickedModel || transcript.modelRef || statusModel || "")}
           approval={approval}
+          cache={cache}
           onClose={() => setHeadMenu(false)}
           onReload={() => {
             setHeadMenu(false);
@@ -2275,6 +2631,31 @@ export function ChatScreen({
           base={runtime.base}
           onClose={() => setCheckpointsSheet(false)}
           onRewound={() => reload()}
+        />
+      ) : null}
+
+      {rewindTurn !== null && runtime ? (
+        <CheckpointsSheet
+          base={runtime.base}
+          turn={rewindTurn}
+          onClose={() => setRewindTurn(null)}
+          onRewound={() => {
+            setRewindTurn(null);
+            void reload();
+          }}
+        />
+      ) : null}
+
+      {editMessage ? (
+        <EditMessageSheet
+          text={editMessage.row.text}
+          busy={editBusy}
+          error={editError}
+          onCancel={() => {
+            setEditMessage(null);
+            setEditError("");
+          }}
+          onSend={(text) => void resendTurn(editMessage.turn, text, true)}
         />
       ) : null}
 

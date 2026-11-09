@@ -38,6 +38,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -130,6 +131,19 @@ public final class LoopbackProxy {
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
             "te", "trailers", "transfer-encoding", "upgrade"));
 
+    /** The most origins one reach request may name; the app keeps far fewer. */
+    private static final int MAX_REACH = 32;
+    /** How many probes run at once: a batch up to this size is one wave. */
+    private static final int REACH_PARALLEL = 8;
+    /**
+     * The deadline for one batch. The probes run together on their own pool,
+     * so this bounds the whole answer rather than each row; a row still
+     * pending when it passes is reported as unreachable. Kept below the app's
+     * client deadline so a slow door does not make the caller time out and
+     * fall back to the page sweep this route exists to replace.
+     */
+    private static final int REACH_DEADLINE_MS = 6_000;
+
     @SuppressLint("StaticFieldLeak") // Holds the application context for the process lifetime.
     private static volatile LoopbackProxy instance;
 
@@ -175,6 +189,19 @@ public final class LoopbackProxy {
     private final String secret;
     private final AccountFlow account;
     private final FleetRoutes fleet;
+    /**
+     * Probes for `/__reasonix/reach`, apart from the request pool.
+     *
+     * A batch submits one probe per origin and waits for them; running that on
+     * the pool that serves requests would let a slow batch occupy the threads
+     * the WebView needs. One thread per origin means a batch is one wave, so
+     * the deadline above bounds the answer instead of each row.
+     */
+    private final ExecutorService probes = Executors.newFixedThreadPool(REACH_PARALLEL, runnable -> {
+        Thread thread = new Thread(runnable, "reasonix-probe");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private LoopbackProxy(Context context) throws IOException {
         this.context = context;
@@ -354,6 +381,9 @@ public final class LoopbackProxy {
                 case "/__reasonix/device":
                     deviceSelf(socket, body);
                     return;
+                case "/__reasonix/reach":
+                    reach(socket, body);
+                    return;
                 case "/__reasonix/disconnect":
                     disconnect(socket, body);
                     return;
@@ -526,6 +556,63 @@ public final class LoopbackProxy {
         }
     }
 
+    /**
+     * Whether a set of remembered LAN doors answers, probed together.
+     *
+     * The app needs this before it walks its door list: one address per probe
+     * is a deadline each, and the page cannot ask the question honestly —
+     * a fetch from the WebView follows the default route, so a VPN carries it
+     * into the tunnel and a neighbour on the Wi-Fi answers as dead. Here the
+     * probes go through `openKernelConnection`, which binds to the local link,
+     * so the answer is the one the switch itself will get.
+     *
+     * Read-only: nothing here writes the upstream or the saved list. The
+     * caller decides what to do with the answer.
+     */
+    private void reach(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        JSONArray asked = request.optJSONArray("origins");
+        if (request.has("origins") && asked == null) {
+            // A body that names `origins` but is not an array is a client bug.
+            // Probing everything instead would answer a question nobody asked
+            // and could point a caller at a door it never named.
+            ProxyWire.writeJson(socket, 400, "{\"code\":\"proxy.bad_origins\"}");
+            return;
+        }
+        if (asked != null && asked.length() > MAX_REACH) {
+            ProxyWire.writeJson(socket, 400, "{\"code\":\"proxy.too_many_origins\"}");
+            return;
+        }
+        List<String> raw = new ArrayList<>();
+        if (asked != null) {
+            for (int i = 0; i < asked.length(); i++) raw.add(asked.optString(i, ""));
+        } else {
+            // No list means "everything you remember", which is what a boot
+            // check wants and what the page would otherwise have to repeat.
+            JSONArray saved;
+            try {
+                saved = new JSONArray(prefs.getString(KEY_CANDIDATES, "[]"));
+            } catch (JSONException e) {
+                saved = new JSONArray();
+            }
+            for (int i = 0; i < saved.length(); i++) raw.add(saved.optString(i, ""));
+        }
+        List<ReachBatch.Row> results = ReachBatch.run(
+                ReachBatch.canonical(raw, MAX_REACH), probes, this::probeStatus, REACH_DEADLINE_MS);
+        JSONArray rows = new JSONArray();
+        for (ReachBatch.Row result : results) {
+            JSONObject row = new JSONObject();
+            row.put("origin", result.origin);
+            row.put("ok", result.status > 0);
+            row.put("status", result.status);
+            row.put("ms", result.ms);
+            rows.put(row);
+        }
+        JSONObject answer = new JSONObject();
+        answer.put("origins", rows);
+        ProxyWire.writeJson(socket, 200, answer.toString());
+    }
+
     /** The machine name in a `GET /device` body, or "" when it has none. */
     static String machineOf(String body) {
         try {
@@ -551,10 +638,11 @@ public final class LoopbackProxy {
      * have carried it sits idle. Deciding by subnet rather than by "is this
      * address private" is what keeps the two apart.
      *
-     * The net policy setting narrows or widens that behaviour: "bypass" keeps
-     * the private-route path even without a VPN, "system" leaves every
-     * connection on the default route so a chosen proxy sees LAN traffic too.
-     * "auto" — the default — is the paragraph above.
+     * The net policy setting narrows or widens that behaviour: "bypass" skips
+     * the system HTTP proxy for private targets even with a VPN (the socket
+     * still follows the tunnel or the link, whichever owns the route),
+     * "system" leaves every connection on the default route so a chosen proxy
+     * sees LAN traffic too. "auto" — the default — is the paragraph above.
      */
     private HttpURLConnection openKernelConnection(URI uri) throws IOException {
         String policy = prefs.getString(KEY_NET_POLICY, "auto");
@@ -752,6 +840,17 @@ public final class LoopbackProxy {
 
 
     private boolean probe(String origin) {
+        return probeStatus(origin) > 0;
+    }
+
+    /**
+     * Ask a kernel's `/runtimes`, and report the status that proves a door.
+     *
+     * 200 is a working door, 401/403 a door that answers but refuses this
+     * phone — both are the kernel talking. Anything else, including a socket
+     * that never opened, is -1: no door.
+     */
+    private int probeStatus(String origin) {
         HttpURLConnection conn = null;
         try {
             URI uri = URI.create(origin + "/runtimes");
@@ -766,9 +865,9 @@ public final class LoopbackProxy {
                 cookies.apply(conn, uri);
             }
             int status = conn.getResponseCode();
-            return status == 200 || status == 401 || status == 403;
+            return status == 200 || status == 401 || status == 403 ? status : -1;
         } catch (Exception e) {
-            return false;
+            return -1;
         } finally {
             if (conn != null) conn.disconnect();
         }

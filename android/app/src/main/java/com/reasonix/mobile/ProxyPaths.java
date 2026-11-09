@@ -43,6 +43,7 @@ final class ProxyPaths {
             case "/__reasonix/relay":
             case "/__reasonix/net-policy":
             case "/__reasonix/device":
+            case "/__reasonix/reach":
             case "/__reasonix/disconnect":
             case "/__reasonix/relay/clear":
                 return "POST".equals(method);
