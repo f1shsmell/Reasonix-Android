@@ -1194,6 +1194,20 @@ describe("ConnectScreen full Studio", () => {
     expect(WebMode.open).not.toHaveBeenCalled();
   });
 
+  it("says no address is known when the proxy cannot be read", async () => {
+    await renderScreen();
+    // The row is drawn from the config read at mount; the click reads again,
+    // and that second read is the one that finds nothing.
+    vi.mocked(readProxyConfig).mockResolvedValue(null);
+    await pressRow("在应用内打开");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("读不到这台电脑的 Studio 地址。");
+  });
+
   it("falls back to the real address when no native WebView exists", async () => {
     vi.mocked(WebMode.open).mockRejectedValueOnce(new Error("no activity"));
     await renderScreen();

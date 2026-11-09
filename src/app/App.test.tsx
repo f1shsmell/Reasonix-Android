@@ -114,7 +114,11 @@ vi.mock("../net/connection", async (importOriginal) => ({
     wakeStream = connectionMock.wakeStream;
   },
 }));
-vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: vi.fn(() => true) } }));
+vi.mock("@capacitor/core", () => ({
+  Capacitor: { isNativePlatform: vi.fn(() => true) },
+  // `openStudio` reaches the WebMode/Browser plugins at import time.
+  registerPlugin: vi.fn(() => ({ open: vi.fn(async () => {}) })),
+}));
 vi.mock("../native/speech", () => ({
   speechSupported: () => false,
   beginSpeechHold: vi.fn(),

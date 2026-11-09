@@ -18,3 +18,4 @@ keystore.properties
 *.jks
 *.keystore
 $TMPDIR/
+/shots/

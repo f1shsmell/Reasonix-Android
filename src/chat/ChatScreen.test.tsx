@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatScreen } from "./ChatScreen";
+import type { ChatScreenProps } from "./ChatScreen";
 import type { Connection, ConnectionSnapshot } from "../net/connection";
 import type { EventPayload } from "../wire/events";
 import type { RuntimeView } from "../wire/runtime";
@@ -180,13 +181,18 @@ async function flush(): Promise<void> {
  * Reusing the root matters: a new root is a new component with new state, so
  * it could never show that a later event landed below an earlier history read.
  */
-function render(snap: ConnectionSnapshot, runtimeId = "r1"): void {
+function render(
+  snap: ConnectionSnapshot,
+  runtimeId = "r1",
+  extra: Partial<ChatScreenProps> = {},
+): void {
   const element = (
     <ChatScreen
       connection={connection}
       snapshot={snap}
       runtimeId={runtimeId}
       onBack={() => {}}
+      {...extra}
     />
   );
   if (!root) {
@@ -2358,5 +2364,78 @@ describe("ChatScreen transcript windowing", () => {
     // The spacer is gone with the window covering everything, and no cursor
     // request was ever made: /history/page without hasMoreBefore is terminal.
     expect(container.querySelector(".window-gap")).toBeNull();
+  });
+});
+
+describe("ChatScreen studio entry", () => {
+  it("opens Studio from the header", async () => {
+    const openStudio = vi.fn(async () => ({ kind: "native" as const }));
+    render(snapshot(), "r1", { onOpenStudio: openStudio });
+    await flush();
+
+    const button = container.querySelector(
+      'button[aria-label="打开 Studio"]',
+    ) as HTMLButtonElement | null;
+    expect(button).toBeTruthy();
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(openStudio).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the entry available on a read-only conversation", async () => {
+    const openStudio = vi.fn(async () => ({ kind: "native" as const }));
+    render(snapshot(undefined, [{ ...runtime, readOnly: true }]), "r1", {
+      onOpenStudio: openStudio,
+    });
+    await flush();
+
+    const button = container.querySelector(
+      'button[aria-label="打开 Studio"]',
+    ) as HTMLButtonElement | null;
+    expect(button?.disabled).toBe(false);
+  });
+
+  it("renders no entry where the shell cannot carry one", async () => {
+    render(snapshot());
+    await flush();
+
+    expect(container.querySelector('button[aria-label="打开 Studio"]')).toBeNull();
+  });
+
+  it("says so when there is no Studio address", async () => {
+    const openStudio = vi.fn(async () => ({ kind: "none" as const }));
+    render(snapshot(), "r1", { onOpenStudio: openStudio });
+    await flush();
+
+    const button = container.querySelector(
+      'button[aria-label="打开 Studio"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("读不到这台电脑的 Studio 地址。");
+  });
+
+  it("says so when Studio cannot be opened", async () => {
+    const openStudio = vi.fn(async () => ({ kind: "failed" as const, error: new Error("x") }));
+    render(snapshot(), "r1", { onOpenStudio: openStudio });
+    await flush();
+
+    const button = container.querySelector(
+      'button[aria-label="打开 Studio"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("打不开 Studio。");
   });
 });
