@@ -22,10 +22,7 @@ import {
 import type { DeviceGrant, ProxyConfig, RemoteDevice } from "../net/server";
 import { RequestTimeout } from "../net/http";
 import { WebMode } from "../native/webmode";
-import {
-  studioAppUrl,
-  studioWebUrl,
-} from "../net/server";
+import { studioAppUrl, studioWebUrl } from "../net/server";
 import { forgetFleetPeer } from "../net/fleet";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
@@ -80,6 +77,7 @@ vi.mock("../net/fleet", () => ({ forgetFleetPeer: vi.fn(async () => {}) }));
 vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
   connectRelay: vi.fn(),
+  relayAlive: vi.fn(() => false),
   prefetchGrant: vi.fn(),
   RelayError: class MockRelayError extends Error {
     readonly kind: string;
@@ -105,6 +103,10 @@ vi.mock("../net/server", () => ({
   parseServerLink: vi.fn(),
   studioWebUrl: vi.fn(() => ""),
   studioAppUrl: vi.fn(() => ""),
+  studioRemoteUrl: (device: string | null | undefined) => {
+    const id = (device ?? "").trim();
+    return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
+  },
   probeUpstream: vi.fn(),
   probeDoor: vi.fn(async () => ({ ok: true as const, machine: "" })),
   readMachineIdentity: vi.fn(async () => null),

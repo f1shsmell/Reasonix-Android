@@ -575,6 +575,8 @@ function useTranscript(
   loadOlder: () => void;
   /** The newest page's cursor state: whether older messages exist to read. */
   cursor: { hasMoreBefore: boolean; nextCursor?: string };
+  /** Bumped by a manual history reload; the checklist reads again with it. */
+  reloadToken: number;
 } {
   const [transcript, setTranscript] = useState<Transcript>(emptyTranscript);
   const [history, setHistory] = useState<HistoryState>({ kind: "loading" });
@@ -860,7 +862,7 @@ function useTranscript(
       });
   }, [base]);
 
-  return { transcript, history, reload, setTranscript, loadOlder, cursor };
+  return { transcript, history, reload, reloadToken, setTranscript, loadOlder, cursor };
 }
 
 /**
@@ -887,12 +889,24 @@ function useTodos(
   base: string | undefined,
   events: readonly QueuedEvent[],
   lastEvent: EventPayload | undefined,
+  reloadToken: number,
 ): { todos: WireTodo[]; state: TodosState } {
   const [list, setList] = useState<TodoList | null>(null);
   const loadedBase = useRef<string | null>(null);
   const seenRevision = useRef("");
   const failed = useRef(false);
   const request = useRef(0);
+  /**
+   * The turn-end frame is a second reason to read.
+   *
+   * A cancel rebuilds the canonical list from the truncated transcript and
+   * writes no `todo_progress`; without this read a checklist whose turn was
+   * cancelled outlives it on the phone. Identity, not a revision: every
+   * `turn_done` is a new payload, and the last one must not cause a read on
+   * every render that happens to still be looking at it.
+   */
+  const seenBoundary = useRef<EventPayload | null>(null);
+  const seenReload = useRef(reloadToken);
   /**
    * The newest `todo_progress` in the queue, not in `lastEvent`.
    *
@@ -912,6 +926,18 @@ function useTodos(
 
   useEffect(() => {
     if (!base) return;
+    // The same burst rule as `progress`: a turn end followed by any other frame
+    // in one poll keeps only the newer payload in `lastEvent`, so scan the
+    // queue for it.
+    const boundary = (() => {
+      for (let at = events.length - 1; at >= 0; at -= 1) {
+        const event = events[at]?.event;
+        if (event?.kind === "turn_done") return event;
+      }
+      return lastEvent?.kind === "turn_done" ? lastEvent : null;
+    })();
+    const forced =
+      (boundary !== null && boundary !== seenBoundary.current) || reloadToken !== seenReload.current;
     const switched = base !== loadedBase.current;
     if (switched) {
       // Another pane's checklist is not this pane's. This records the new
@@ -919,13 +945,17 @@ function useTodos(
       // because an effect runs after paint.
       loadedBase.current = base;
       seenRevision.current = "";
+      seenBoundary.current = null;
+      seenReload.current = reloadToken;
       failed.current = false;
       setList({ base, todos: [], state: "loading" });
-    } else if (!progress || (revision === seenRevision.current && !failed.current)) {
-      // Not a todo_progress frame, or a repeat whose clocks have not moved
-      // and whose last read succeeded.
+    } else if (!forced && (!progress || (revision === seenRevision.current && !failed.current))) {
+      // Not a reason to read: no turn end, no reload, and either no
+      // todo_progress frame or a repeat whose clocks have not moved.
       return;
     }
+    seenBoundary.current = boundary;
+    seenReload.current = reloadToken;
     if (revision !== "") seenRevision.current = revision;
 
     // A newer read wins outright. Two can overlap — the screen's first load
@@ -949,7 +979,7 @@ function useTodos(
       failed.current = false;
       setList({ base, todos: result.items, state: "loaded" });
     });
-  }, [base, lastEvent, progress, revision]);
+  }, [base, events, lastEvent, progress, revision, reloadToken]);
 
   // The first render after a base change still holds the old list — the effect
   // that clears it runs after paint. Hiding a mismatched list here is what
@@ -994,7 +1024,7 @@ export function ChatScreen({
    * A ref rather than state: the fold loop reads it to vouch for frames.
    */
   const runStartedAtRef = useRef<number | null>(null);
-  const { transcript, history, reload, setTranscript, loadOlder, cursor } = useTranscript(
+  const { transcript, history, reload, reloadToken, setTranscript, loadOlder, cursor } = useTranscript(
     connection,
     snapshot,
     runtimeId,
@@ -1006,6 +1036,7 @@ export function ChatScreen({
     runtime?.base,
     snapshot.events,
     snapshot.lastEvent,
+    reloadToken,
   );
   /** The stored transcript's identity; a pane id is only the fallback. */
   const readingId = readingKey(runtime?.sessionPath, runtimeId);

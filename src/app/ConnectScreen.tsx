@@ -875,7 +875,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       );
     };
     if (Capacitor.isNativePlatform()) {
-      void NativeLogin.open({ url }).catch(() => Browser.open({ url }).catch(failed));
+      // The account cookie this flow stores is what the proxy sends to
+      // /me/remote-grants; a system-browser login lands in a cookie jar the
+      // app cannot read, so there is no fallback here on purpose.
+      void NativeLogin.open({ url }).catch(failed);
     } else {
       void Browser.open({ url }).catch(failed);
     }
@@ -1236,7 +1239,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const studioNeedsUpgrade = needsStudioUpgrade(webViewMajor);
   const openWebUrl = () => {
     setError("");
-    void openStudio().then((result) => {
+    // The page follows the route the link machine has, not the origin the
+    // proxy still remembers: a phone that left Wi-Fi keeps a LAN address.
+    void openStudio({
+      preferRelay: link?.phase !== "connected" || link?.mode === "cloud",
+    }).then((result) => {
       if (result.kind === "none") setError("读不到这台电脑的 Studio 地址。");
       else if (result.kind === "failed") setError("打不开完整界面。");
     });

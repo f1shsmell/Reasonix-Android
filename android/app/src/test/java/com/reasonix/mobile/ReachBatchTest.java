@@ -71,6 +71,8 @@ public class ReachBatchTest {
                     50);
             assertEquals(1, rows.size());
             assertEquals(-1, rows.get(0).status);
+            // The row reports the wait it actually spent, not zero.
+            assertTrue(rows.get(0).ms >= 40);
             assertTrue(System.currentTimeMillis() - started < 800);
         } finally {
             pool.shutdownNow();
@@ -87,6 +89,8 @@ public class ReachBatchTest {
         assertEquals(2, rows.size());
         assertEquals(-1, rows.get(0).status);
         assertEquals(-1, rows.get(1).status);
+        // Never submitted: no timing to report.
+        assertEquals(-1, rows.get(0).ms);
     }
 
     @Test

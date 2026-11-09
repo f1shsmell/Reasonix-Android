@@ -2,6 +2,7 @@ package com.reasonix.mobile;
 
 import android.content.Intent;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -21,6 +22,12 @@ public class WebModePlugin extends Plugin {
         intent.putExtra("viaProxy", Boolean.TRUE.equals(call.getBoolean("viaProxy")));
         String origin = call.getString("origin");
         intent.putExtra("origin", origin == null ? "" : origin);
+        JSArray allow = call.getArray("allowHosts");
+        if (allow != null) {
+            String[] hosts = new String[allow.length()];
+            for (int i = 0; i < allow.length(); i++) hosts[i] = allow.optString(i, "");
+            intent.putExtra("allowHosts", hosts);
+        }
         try {
             getActivity().startActivity(intent);
         } catch (RuntimeException e) {

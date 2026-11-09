@@ -589,13 +589,17 @@ export type ServerLink =
  * carries the device id. Empty when there is nothing to open — the caller
  * hides the entry instead of shipping a dead link.
  */
+export function studioRemoteUrl(device: string | null | undefined): string {
+  const id = device?.trim();
+  return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
+}
+
 export function studioWebUrl(
   config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice"> | null,
   fallbackDevice?: string | null,
 ): string {
   if (config?.mode === "relay") {
-    const device = config.relayDevice?.trim() || fallbackDevice?.trim();
-    return device ? `https://reasonix.io/remote/?device=${encodeURIComponent(device)}` : "";
+    return studioRemoteUrl(config.relayDevice?.trim() || fallbackDevice);
   }
   return config?.origin?.trim() || "";
 }

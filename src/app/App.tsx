@@ -912,7 +912,16 @@ export function App() {
         focusAsk={chatFocusAsk}
         onFocusConsumed={() => setChatFocusAsk(false)}
         {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
-        {...(preview?.native || Capacitor.isNativePlatform() ? { onOpenStudio: openStudio } : {})}
+        {...(preview?.native || Capacitor.isNativePlatform()
+          ? {
+              onOpenStudio: () =>
+                openStudio({
+                  // A configured LAN origin is not a working one: report the
+                  // route the link machine actually has.
+                  preferRelay: link.state.phase !== "connected" || link.state.mode === "cloud",
+                }),
+            }
+          : {})}
       />
     );
   } else if (project !== null) {

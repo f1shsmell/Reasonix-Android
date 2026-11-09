@@ -18,7 +18,7 @@ export function WorkbenchDiff({
   onOpenFile?: () => void;
 }) {
   const lines = diffLines(diff);
-  if (lines.length === 0) return <p className="wb-wait">没有变更。</p>;
+  if (lines.length === 0) return <p className="wb-wait">没有改动</p>;
   return (
     <div className="wb-diff" role="table" aria-label={label}>
       {lines.map((line, index) => (

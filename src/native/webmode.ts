@@ -18,6 +18,15 @@ export interface WebModePlugin {
     viaProxy?: boolean;
     /** The real kernel origin, so absolute self-links can be rewritten. */
     origin?: string;
+    /**
+     * Hosts the page may navigate to and keep running here.
+     *
+     * The cloud Studio redirects its own page from reasonix.io to
+     * studio.reasonix.io; that is the same page, not an external link.
+     * Matched by exact host over https; anything else still goes to the
+     * system browser.
+     */
+    allowHosts?: string[];
   }): Promise<void>;
 }
 

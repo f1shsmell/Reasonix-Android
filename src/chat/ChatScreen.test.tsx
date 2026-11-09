@@ -608,6 +608,89 @@ describe("ChatScreen todos", () => {
     expect(container.textContent).toContain("全部完成");
   });
 
+  it("drops the list when a turn ends with no progress frame", async () => {
+    // A cancel rebuilds the canonical list from the truncated transcript and
+    // writes no todo_progress. Without a read on the turn end, the checklist
+    // outlives the turn that owned it — the phone kept showing a plan the
+    // kernel had already cleared.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [];
+    const done: EventPayload = { kind: "turn_done", cancelled: true };
+    render(snapshot(done));
+    await flush();
+
+    expect(container.querySelector(".todos")).toBeNull();
+  });
+
+  it("reads the turn end even when a later frame shares its burst", async () => {
+    // One relay poll delivers the whole backlog as one commit; `lastEvent`
+    // keeps the newest frame, which may be anything. The turn end still has
+    // to be seen or a cancelled list stays on screen.
+    let list = [{ content: "第一步", status: "in_progress" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/todos")) return Promise.resolve(json(list));
+        return Promise.resolve(json([]));
+      }),
+    );
+
+    render(snapshot());
+    await flush();
+    expect(container.textContent).toContain("0/1");
+
+    list = [];
+    const done: EventPayload = { kind: "turn_done", cancelled: true };
+    const text: EventPayload = { kind: "text", text: "已取消" };
+    nextEventSeq += 1;
+    const first = { seq: nextEventSeq, event: done };
+    nextEventSeq += 1;
+    const second = { seq: nextEventSeq, event: text };
+    render({
+      ...snapshot(),
+      events: [first, second],
+      eventSeq: nextEventSeq,
+      lastEvent: text,
+    });
+    await flush();
+
+    expect(container.querySelector(".todos")).toBeNull();
+  });
+
+  it("reads once per turn end, not once per render", async () => {
+    const fetchMock = stubKernel({
+      todos: [{ content: "第一步", status: "in_progress" }],
+    });
+    render(snapshot());
+    await flush();
+
+    const done: EventPayload = { kind: "turn_done" };
+    render(snapshot(done));
+    await flush();
+    const afterFirst = todoCalls(fetchMock);
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // The same payload object is what the snapshot holds until the next
+    // frame; re-rendering must not read again.
+    render({ ...snapshot(done), eventSeq: nextEventSeq });
+    await flush();
+    expect(todoCalls(fetchMock)).toBe(afterFirst);
+  });
+
   it("does not re-read on a frame whose clocks did not move", async () => {
     const fetchMock = stubKernel({
       todos: [{ content: "第一步", status: "in_progress" }],

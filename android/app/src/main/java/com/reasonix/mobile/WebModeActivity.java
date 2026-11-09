@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.View;
@@ -24,6 +25,11 @@ import android.widget.TextView;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * The paired computer's own Studio page, full screen.
@@ -48,11 +54,15 @@ import androidx.activity.OnBackPressedCallback;
  */
 @SuppressLint("SetJavaScriptEnabled")
 public class WebModeActivity extends ComponentActivity {
+    private static final String TAG = "WebMode";
     private WebView web;
     private TextView errorCard;
     private Button retryButton;
     private ProgressBar progress;
-    private String origin;
+    /** The host the Studio page was opened on; navigations stay inside it. */
+    private String originHost;
+    /** Hosts the cloud page moves within itself; exact, lower-case, https only. */
+    private Set<String> allowedHosts = Collections.emptySet();
     private boolean viaProxy;
     /** The real kernel origin, when viaProxy; absolute self-links are rewritten. */
     private String kernelOrigin;
@@ -78,7 +88,16 @@ public class WebModeActivity extends ComponentActivity {
             finish();
             return;
         }
-        origin = originOf(url);
+        originHost = Uri.parse(url).getHost();
+        String[] declared = source.getStringArrayExtra("allowHosts");
+        if (declared != null && declared.length > 0) {
+            Set<String> hosts = new HashSet<>();
+            for (String host : declared) {
+                String folded = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+                if (!folded.isEmpty()) hosts.add(folded);
+            }
+            allowedHosts = hosts;
+        }
         viaProxy = source.getBooleanExtra("viaProxy", false);
         kernelOrigin = source.getStringExtra("origin");
         if (viaProxy) {
@@ -122,16 +141,7 @@ public class WebModeActivity extends ComponentActivity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String target = uri.toString();
-                // Another host is not ours to swallow: the account sign-in and
-                // shared links go to the browser, like a tap in Chrome would.
-                // A non-web scheme (mailto:, intent:, a deep link) belongs to
-                // whichever app handles it; swallowing it silently left a tap
-                // that did nothing at all.
-                if (!Urls.isWebUrl(target)) {
-                    handNonWebSchemeToSystem(uri);
-                    return true;
-                }
-                if (viaProxy && kernelOrigin != null && !kernelOrigin.isEmpty()) {
+                if (viaProxy && kernelOrigin != null && !kernelOrigin.isEmpty() && Urls.isWebUrl(target)) {
                     // The SPA can name its own host absolutely. Loaded as-is
                     // that would put the WebView back on the LAN address and
                     // lose the proxy's VPN detour; keep it on loopback. The
@@ -145,8 +155,22 @@ public class WebModeActivity extends ComponentActivity {
                         return true;
                     }
                 }
-                String host = originOf(target);
-                if (host.equals(origin)) return false;
+                WebModeLinks.Verdict verdict =
+                        WebModeLinks.decide(target, request.isForMainFrame(), originHost, allowedHosts);
+                if (verdict == WebModeLinks.Verdict.LOAD) return false;
+                if (verdict == WebModeLinks.Verdict.HAND_OFF) {
+                    // A non-web scheme (mailto:, intent:, a deep link) belongs
+                    // to whichever app handles it; swallowing it silently left
+                    // a tap that did nothing at all.
+                    handNonWebSchemeToSystem(uri);
+                    return true;
+                }
+                // Another host is not ours to swallow: shared links and the
+                // account page go to the browser, like a tap in Chrome would.
+                // Logged because a navigation that lands here is the only way
+                // to see which host the cloud page actually crosses to.
+                Log.i(TAG, "handing " + target + " to the browser (frame="
+                        + request.isForMainFrame() + ", redirect=" + request.isRedirect() + ")");
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 } catch (ActivityNotFoundException e) {
@@ -278,17 +302,6 @@ public class WebModeActivity extends ComponentActivity {
         errorCard.setVisibility(shown ? View.VISIBLE : View.GONE);
         retryButton.setVisibility(shown ? View.VISIBLE : View.GONE);
         progress.setVisibility(shown ? View.GONE : View.VISIBLE);
-    }
-
-    /** The scheme-and-authority half of a URL, which is what "same origin" means here. */
-    private static String originOf(String url) {
-        try {
-            Uri uri = Uri.parse(url);
-            return uri.getScheme() + "://" + uri.getHost()
-                    + (uri.getPort() > 0 ? ":" + uri.getPort() : "");
-        } catch (RuntimeException e) {
-            return url == null ? "" : url;
-        }
     }
 
     @Override

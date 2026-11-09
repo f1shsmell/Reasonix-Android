@@ -545,7 +545,9 @@ html[data-chat-font="xl"] {
   display: flex;
   justify-content: center;
   flex: none;
-  padding: 4px 0 2px;
+  /* The button's shadow reaches above its top edge; the padding keeps it
+     from darkening the line at the scroll edge. */
+  padding: 8px 0 2px;
   position: relative;
   z-index: 3;
 }

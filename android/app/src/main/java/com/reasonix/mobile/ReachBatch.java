@@ -67,7 +67,8 @@ final class ReachBatch {
                 pending.add(null);
             }
         }
-        long deadline = System.currentTimeMillis() + Math.max(1, deadlineMs);
+        long started = System.currentTimeMillis();
+        long deadline = started + Math.max(1, deadlineMs);
         List<Row> rows = new ArrayList<>(count);
         for (int index = 0; index < count; index += 1) {
             String origin = origins.get(index);
@@ -81,7 +82,13 @@ final class ReachBatch {
                     future.cancel(true);
                 }
             }
-            rows.add(row != null ? row : new Row(origin, -1, Math.max(0, deadline - System.currentTimeMillis())));
+            if (row != null) {
+                rows.add(row);
+            } else {
+                // A probe that ran out of time still spent the wait; one that
+                // was never submitted has no timing to report.
+                rows.add(new Row(origin, -1, future == null ? -1 : Math.max(0, System.currentTimeMillis() - started)));
+            }
         }
         return rows;
     }
