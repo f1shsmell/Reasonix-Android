@@ -11,6 +11,7 @@ import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/f
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
 import { openStudio } from "./openStudio";
+import { devPreview } from "./devPreview";
 import { submit } from "../net/submit";
 import { switchEffort, switchModel } from "../net/models";
 import type { SubmitResult } from "../net/submit";
@@ -386,6 +387,18 @@ export function App() {
     await connection.refresh();
     setOpenRuntime(id);
   }, []);
+
+  // The screenshot harness lands on a chat without clicking through Home.
+  // Dev-only: `devPreview()` answers null in a production build.
+  const preview = devPreview();
+  const previewSession = preview?.session ?? null;
+  useEffect(() => {
+    if (previewSession === null) return;
+    const timer = window.setTimeout(() => {
+      void openedRuntime(previewSession, "/demo", "周末出行计划");
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [previewSession, openedRuntime]);
 
   const openProject = useCallback(
     (root: string) => {
@@ -899,7 +912,7 @@ export function App() {
         focusAsk={chatFocusAsk}
         onFocusConsumed={() => setChatFocusAsk(false)}
         {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
-        {...(Capacitor.isNativePlatform() ? { onOpenStudio: openStudio } : {})}
+        {...(preview?.native || Capacitor.isNativePlatform() ? { onOpenStudio: openStudio } : {})}
       />
     );
   } else if (project !== null) {

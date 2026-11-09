@@ -63,6 +63,22 @@ cd android
 - 用真机截图；用 WebView/无头浏览器渲染代替时，在 PR 里注明。
 - 列出移动过、隐藏或删除的可见控件；隐藏/删除一个可见控件需要关联 issue 和一条 release note。
 
+### 无真机时（无头浏览器）
+
+`npm run shots` 用 mock 内核 + 本机 Chrome/Edge，在 390 px 的 light/dark 下截图：
+
+```bash
+npm run shots -- --out=shots/studio
+npm run shots -- --out=shots/studio-before --prefix=before --hide='[aria-label="打开 Studio"]'
+```
+
+- `?native=1` 会画出只在原生壳出现的控件，`?session=demo` 直接打开 mock 会话；
+  两者只在 `vite` dev 构建生效（`import.meta.env.DEV`），生产包不受影响。
+- 只渲染浏览器里画得出的界面（按钮、间距、空态）；原生 Activity、系统浏览器回退等
+  行为仍需真机冒烟。
+- 需要本机 Chrome 或 Edge（或 `SHOT_BROWSER` 指向的 Chromium）；脚本不进 CI。
+- PR 里注明 "headless render of the web build"。
+
 ## 提交与评审
 
 - 提交信息用 Conventional Commits：`feat(scope): …`、`fix(scope): …`、`chore(release): …`。

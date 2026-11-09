@@ -15,6 +15,7 @@
     "test:coverage": "vitest run --coverage",
     "manifest": "node scripts/latest-json.mjs",
     "fixtures": "node scripts/record-wire-fixtures.mjs",
+    "shots": "node scripts/ui-shots.mjs",
     "check:wire": "node scripts/check-wire.mjs"
   },
   "dependencies": {
