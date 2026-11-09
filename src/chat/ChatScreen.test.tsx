@@ -1082,7 +1082,7 @@ describe("ChatScreen message actions", () => {
 
   it("forks at the turn and hands the new session to the opener", async () => {
     stubKernel({ history, checkpoints, branchPath: "/w/sessions/fork.jsonl" });
-    const onOpenBranch = vi.fn();
+    const onOpenBranch = vi.fn(async () => true);
 
     render(snapshot(), "r1", { onOpenBranch, title: "我的会话" });
     await flush();
@@ -1092,6 +1092,21 @@ describe("ChatScreen message actions", () => {
     await flush();
 
     expect(onOpenBranch).toHaveBeenCalledWith("/w/sessions/fork.jsonl", "我的会话 · 分支");
+  });
+
+  it("says the fork exists when this phone cannot open it", async () => {
+    stubKernel({ history, checkpoints });
+    const onOpenBranch = vi.fn(async () => false);
+
+    render(snapshot(), "r1", { onOpenBranch });
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="新建分支"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".sendfail")?.textContent).toContain("分支已经建好");
   });
 
   it("keeps the fork on a closed turn while the next one runs", async () => {

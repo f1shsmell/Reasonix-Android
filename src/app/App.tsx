@@ -918,10 +918,11 @@ export function App() {
               // same read-and-open the session list does for a stored path.
               // The fork's own name titles the pane, so forking it again
               // carries the title forward instead of collapsing to "分支".
-              onOpenBranch: (path: string, name: string) => {
-                void openRuntimeOn(chatRoot, path).then((opened) => {
-                  if (opened.ok) void openedRuntime(opened.runtime.id, chatRoot, name || "分支");
-                });
+              onOpenBranch: async (path: string, name: string) => {
+                const opened = await openRuntimeOn(chatRoot, path);
+                if (!opened.ok) return false;
+                await openedRuntime(opened.runtime.id, chatRoot, name || "分支");
+                return true;
               },
             }
           : {})}

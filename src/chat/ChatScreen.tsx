@@ -76,8 +76,8 @@ export interface ChatScreenProps {
   onFocusConsumed?: () => void;
   /** Open the paired computer's Studio page; absent where there is no native shell. */
   onOpenStudio?: () => Promise<StudioOpenResult>;
-  /** Open a conversation the kernel just forked: its path and the name it was given. */
-  onOpenBranch?: (path: string, name: string) => void;
+  /** Open a conversation the kernel just forked; false when the open failed. */
+  onOpenBranch?: (path: string, name: string) => Promise<boolean>;
 }
 
 /**
@@ -1887,8 +1887,15 @@ export function ChatScreen({
         setPromptError(branchMessage(result.code));
         return;
       }
-      if (onOpenBranch) onOpenBranch(result.path, name);
-      else setPromptError("这个入口打不开新分支，请在电脑上打开它。");
+      if (!onOpenBranch) {
+        setPromptError("这个入口打不开新分支，请在电脑上打开它。");
+        return;
+      }
+      // The fork exists on the host even when the pane cannot be opened here;
+      // saying so is better than a tap that appears to do nothing.
+      if (!(await onOpenBranch(result.path, name))) {
+        setPromptError("分支已经建好，但在手机上打不开它；它就在会话列表里。");
+      }
     },
     [runtime?.base, title, onOpenBranch, setPromptError],
   );
