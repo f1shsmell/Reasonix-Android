@@ -1107,6 +1107,24 @@ describe("ChatScreen message actions", () => {
     expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问" });
   });
 
+  it("replays a message without taking the chips above the box", async () => {
+    const fetchMock = stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+
+    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[aria-label="重新生成"]') as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    const submit = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/submit"));
+    expect(JSON.parse(String(submit?.[1]?.body))).toEqual({ input: "问" });
+    // The chip is for the next message; the replayed turn is not the composer's.
+    expect(container.querySelector(".quote-chip")?.textContent).toContain("引用第 1 轮回复");
+  });
+
   it("forks at the turn and hands the new session to the opener", async () => {
     stubKernel({ history, checkpoints, branchPath: "/w/sessions/fork.jsonl" });
     const onOpenBranch = vi.fn(async () => true);

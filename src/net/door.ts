@@ -37,6 +37,16 @@ export interface Door {
 export type DoorResult = { ok: true } | { ok: false; error: LinkError };
 
 /**
+ * How long a failed switch may spend putting the previous route back.
+ *
+ * The relay's grant and socket handshake carry 20 s and 30 s timeouts of
+ * their own; awaiting both after a door already failed made the switch look
+ * like a hang. Six seconds covers a healthy wake and still reports the
+ * original error in bounded time.
+ */
+const RESTORE_BUDGET_MS = 6_000;
+
+/**
  * Put the route back the way it was before a switch.
  *
  * A door cannot be verified until the proxy has been pointed at it: the LAN
@@ -51,16 +61,6 @@ export type DoorResult = { ok: true } | { ok: false; error: LinkError };
  * because it is the route a cloud link was on, and a LAN origin is the
  * fallback for a shell that cannot reopen it.
  */
-/**
- * How long a failed switch may spend putting the previous route back.
- *
- * The relay's grant and socket handshake carry 20 s and 30 s timeouts of
- * their own; awaiting both after a door already failed made the switch look
- * like a hang. Six seconds covers a healthy wake and still reports the
- * original error in bounded time.
- */
-const RESTORE_BUDGET_MS = 6_000;
-
 async function restoreRoute(previous: ProxyConfig | null): Promise<void> {
   if (previous === null) return;
   if (previous.mode === "relay" && previous.relayDevice) {
