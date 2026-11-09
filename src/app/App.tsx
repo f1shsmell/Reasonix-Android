@@ -10,6 +10,7 @@ import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
+import { openStudio } from "./openStudio";
 import { submit } from "../net/submit";
 import { switchEffort, switchModel } from "../net/models";
 import type { SubmitResult } from "../net/submit";
@@ -898,6 +899,7 @@ export function App() {
         focusAsk={chatFocusAsk}
         onFocusConsumed={() => setChatFocusAsk(false)}
         {...(chatRoot ? { onNewSession: () => void newSessionInProject(chatRoot) } : {})}
+        {...(Capacitor.isNativePlatform() ? { onOpenStudio: openStudio } : {})}
       />
     );
   } else if (project !== null) {

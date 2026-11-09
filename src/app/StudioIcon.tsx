@@ -23,6 +23,10 @@ const PATHS = {
   refresh: ["M21 12a9 9 0 1 1-2.64-6.36", "M21 3v6h-6"],
   list: ["M4 6h16", "M4 12h16", "M4 18h10"],
   grid: ["M4 5h6v6H4z", "M14 5h6v6h-6z", "M4 15h6v4H4z", "M14 15h6v4h-6z"],
+  panel: [
+    "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+    "M9 3v18",
+  ],
   down: "m6 9 6 6 6-6",
 } as const;
 
