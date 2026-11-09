@@ -9,7 +9,7 @@ import type { ConnectionSnapshot } from "../net/connection";
 import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
-import { configureProxy, firstAnswering, readProxyConfig } from "../net/server";
+import { configureProxy, firstAnswering, reachReport, readProxyConfig } from "../net/server";
 import { openStudio } from "./openStudio";
 import { devPreview } from "./devPreview";
 import { submit } from "../net/submit";
@@ -189,7 +189,7 @@ export function App() {
   }, []);
   const [chatFocusAsk, setChatFocusAsk] = useState(false);
   const buildDiagnosticsText = useCallback(
-    () => buildDiagnostics({ link: link.state, snapshot, cloudWatch }),
+    () => buildDiagnostics({ link: link.state, snapshot, cloudWatch, reach: reachReport() }),
     [link.state, snapshot, cloudWatch],
   );
 

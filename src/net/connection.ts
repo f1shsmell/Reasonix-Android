@@ -77,6 +77,18 @@ function absolute(base: string): string {
   return new URL(base, window.location.origin).toString();
 }
 
+/**
+ * What a read said about the route, as opposed to about the read.
+ *
+ * `refresh` answers "did this request succeed", which is not the same
+ * question and was read as if it were: a caller that had just switched doors
+ * treated its `false` as "the new door is dead" and rolled back, when the
+ * failure was the first one in a row on a route that was still up. A phone
+ * changing networks drops exactly that packet, so the two meanings have to be
+ * separated at the source rather than at each call site.
+ */
+export type RouteVerdict = "up" | "hiccup" | "down";
+
 export class Connection {
   private listeners = new Set<Listener>();
   private snapshot: ConnectionSnapshot = {
@@ -286,6 +298,30 @@ export class Connection {
       });
       return false;
     }
+  }
+
+  /**
+   * Refresh, and answer what the route is — not what this read was.
+   *
+   * Three outcomes, because the two-question boolean was misused:
+   *
+   * - `up`     the read answered; the route serves requests.
+   * - `hiccup` the read did not answer, but nothing published a verdict: this
+   *            is the first transport failure in a row, a read superseded by
+   *            a newer one, or a relay that is healing itself. The route may
+   *            well be fine.
+   * - `down`   the route answered with a refusal (401/403), with something
+   *            that is not a runtime list, or it failed twice in a row.
+   *
+   * A caller deciding whether a door it has just opened is usable must accept
+   * `up` and `hiccup`; only `down` is a reason to move on. A caller deciding
+   * whether to leave a route it is already on should treat `hiccup` as "no
+   * evidence yet" and let the watch timer decide.
+   */
+  async probeRoute(): Promise<RouteVerdict> {
+    const reached = await this.refresh();
+    if (reached) return "up";
+    return this.snapshot.reach.kind === "ok" ? "hiccup" : "down";
   }
 
   /**

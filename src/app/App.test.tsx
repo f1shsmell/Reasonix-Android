@@ -108,6 +108,11 @@ vi.mock("../net/connection", async (importOriginal) => ({
     };
     subscribe = connectionMock.subscribe;
     refresh = connectionMock.refresh;
+    /** Mirrors the real contract: the verdict follows the read and `reach`. */
+    probeRoute = async (): Promise<"up" | "hiccup" | "down"> => {
+      if (await connectionMock.refresh()) return "up";
+      return connectionMock.current.reach.kind === "ok" ? "hiccup" : "down";
+    };
     attach = connectionMock.attach;
     detach = connectionMock.detach;
     quickCheck = connectionMock.quickCheck;

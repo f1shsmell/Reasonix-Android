@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   answeringOrigins,
+  reachReport,
   configureProxy,
   firstAnswering,
   originAnswers,
@@ -229,11 +230,16 @@ describe("probeUpstream", () => {
 });
 
 describe("firstAnswering", () => {
-  it("answers the first remembered address that replies", async () => {
+  it("answers the first remembered address the proxy says replies", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) =>
-        String(input).startsWith("http://down") ? Promise.reject(new TypeError("network")) : Promise.resolve(new Response(null)),
+      vi.fn().mockResolvedValue(
+        json({
+          origins: [
+            { origin: "http://down:1", ok: false, status: -1 },
+            { origin: "http://up:2", ok: true, status: 200 },
+          ],
+        }),
       ),
     );
 
@@ -241,7 +247,12 @@ describe("firstAnswering", () => {
   });
 
   it("answers null when none replies", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({ origins: [{ origin: "http://a:1", ok: false, status: -1 }] }),
+      ),
+    );
     await expect(firstAnswering(["http://a:1", "http://b:2"])).resolves.toBeNull();
   });
 
@@ -254,26 +265,98 @@ describe("firstAnswering", () => {
 });
 
 describe("answeringOrigins", () => {
-  it("keeps every address that replies, not only the first", async () => {
-    // The walk needs the whole answer: a door later in the list may be the one
-    // that actually opens, and `firstAnswering` would have hidden it.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) =>
-        String(input).startsWith("http://down")
-          ? Promise.reject(new TypeError("network"))
-          : Promise.resolve(new Response(null)),
-      ),
+  it("asks the proxy to probe the whole batch in one round trip", async () => {
+    // The proxy binds each probe to the local link, which is the answer the
+    // switch itself will get; the page cannot ask that question honestly.
+    const fetchMock = vi.fn().mockResolvedValue(
+      json({
+        origins: [
+          { origin: "http://down:1", ok: false, status: -1 },
+          { origin: "http://up:2", ok: true, status: 200 },
+          { origin: "http://also:3", ok: true, status: 401 },
+        ],
+      }),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       answeringOrigins(["http://down:1", "http://up:2", "http://also:3"]),
     ).resolves.toEqual(["http://up:2", "http://also:3"]);
+
+    const call = fetchMock.mock.calls[0] ?? [];
+    const init = (call[1] ?? {}) as RequestInit;
+    expect(call[0]).toBe("/__reasonix/reach");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      origins: ["http://down:1", "http://up:2", "http://also:3"],
+    });
   });
 
-  it("answers an empty list when nothing replies", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
-    await expect(answeringOrigins(["http://a:1"])).resolves.toEqual([]);
+  it("keeps the batch for the diagnostics text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          origins: [
+            { origin: "http://down:1", ok: false, status: -1, ms: 3001 },
+            { origin: "http://up:2", ok: true, status: 200, ms: 42 },
+          ],
+        }),
+      ),
+    );
+
+    await answeringOrigins(["http://down:1", "http://up:2"]);
+
+    expect(reachReport()).toEqual([
+      { origin: "http://down:1", status: -1, ms: 3001 },
+      { origin: "http://up:2", status: 200, ms: 42 },
+    ]);
+  });
+
+  it("keeps the caller's order, not the answer's", async () => {
+    // The walk is the person's own order; the proxy is free to answer in any.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          origins: [
+            { origin: "http://b:2", ok: true, status: 200 },
+            { origin: "http://a:1", ok: true, status: 200 },
+          ],
+        }),
+      ),
+    );
+
+    await expect(answeringOrigins(["http://a:1", "http://b:2"])).resolves.toEqual([
+      "http://a:1",
+      "http://b:2",
+    ]);
+  });
+
+  it("falls back to the page sweep on a shell without the route", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: "proxy.unknown_path" }, 404))
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(answeringOrigins(["http://a:1"])).resolves.toEqual(["http://a:1"]);
+    // The fallback reads the address itself, as the page used to.
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("http://a:1/");
+    // It cannot time the read, but it still says which door answered.
+    expect(reachReport()).toEqual([{ origin: "http://a:1", status: 1, ms: -1 }]);
+  });
+
+  it("does not read a malformed answer as 'nothing answers'", async () => {
+    // A 200 without rows is a shell that does not know the route; trusting it
+    // would filter out every door and send the walk straight to the account.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({}))
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(answeringOrigins(["http://a:1"])).resolves.toEqual(["http://a:1"]);
   });
 
   it("probes nothing for an empty list", async () => {

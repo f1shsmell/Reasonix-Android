@@ -4,9 +4,10 @@
  * The native proxy already re-routes private addresses over the non-VPN
  * Wi-Fi and bypasses system HTTP proxies for them; "auto" is that behaviour.
  * The other two answers exist for the phones where the automatic guess is
- * wrong: "bypass" forces the private-route path even when the active network
- * does not look like a VPN, "system" leaves every connection on the default
- * route for people whose proxy must see LAN traffic too.
+ * wrong: "bypass" never puts a private address through the system HTTP proxy,
+ * VPN or not (the socket still follows whichever route owns it), and "system"
+ * leaves every connection on the default route for people whose proxy must
+ * see LAN traffic too.
  *
  * The choice lives on this phone, like the theme: the proxy reads its own
  * preference store, and the value here keeps the segmented control honest
@@ -32,7 +33,7 @@ export const NET_POLICY_CHOICES: ReadonlyArray<{ value: NetPolicy; label: string
 ];
 
 export const NET_POLICY_NOTE =
-  "自动：连局域网电脑时优先绕开 VPN；绕过代理：始终直连；跟随系统：按系统路由走。";
+  "自动：连局域网电脑时优先绕开 VPN；绕过代理：私有地址不走系统 HTTP 代理（开着 VPN 也一样）；跟随系统：按系统路由走。";
 
 export function isNetPolicy(value: unknown): value is NetPolicy {
   return value === "auto" || value === "bypass" || value === "system";

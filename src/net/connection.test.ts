@@ -592,4 +592,52 @@ describe("Connection", () => {
     expect(connection.current.eventSeq).toBe(1);
     expect(notified).toBe(1); // subscribe's own immediate call, nothing more
   });
+
+  /**
+   * The verdict a caller acts on. `refresh` answers "did this read succeed",
+   * and a caller that has just switched doors needs "is this route still the
+   * one to be on" — the two differ on the first lost packet.
+   */
+  describe("probeRoute", () => {
+    const runtimes = () =>
+      new Response(JSON.stringify([{ id: "r1", base: "/rt/r1", root: "/w", name: "w" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    it("is up when the read answers", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(runtimes()));
+      const connection = new Connection();
+      expect(await connection.probeRoute()).toBe("up");
+    });
+
+    it("is a hiccup after one lost request on a live route", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(runtimes());
+      vi.stubGlobal("fetch", fetchMock);
+      const connection = new Connection();
+      await connection.refresh();
+
+      fetchMock.mockRejectedValueOnce(new Error("connection reset"));
+      expect(await connection.probeRoute()).toBe("hiccup");
+      // The chip keeps the last good answer; only the verdict is quieter.
+      expect(connection.current.reach.kind).toBe("ok");
+    });
+
+    it("is down once a refusal answers", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+      const connection = new Connection();
+      expect(await connection.probeRoute()).toBe("down");
+    });
+
+    it("is down once two requests in a row are lost", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(runtimes());
+      vi.stubGlobal("fetch", fetchMock);
+      const connection = new Connection();
+      await connection.refresh();
+
+      fetchMock.mockRejectedValue(new Error("connection reset"));
+      await connection.refresh();
+      expect(await connection.probeRoute()).toBe("down");
+    });
+  });
 });

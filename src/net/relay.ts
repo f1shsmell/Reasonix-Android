@@ -414,8 +414,15 @@ function nextMessage(socket: SocketLike, timeout = HANDSHAKE_TIMEOUT_MS): Promis
   });
 }
 
-async function openConnection(deviceId: string, confirm?: ConfirmTrust): Promise<Connection> {
+async function openConnection(
+  deviceId: string,
+  confirm?: ConfirmTrust,
+  guard?: () => void,
+): Promise<Connection> {
   const grant = await requestGrant(deviceId);
+  // A caller that was cleared while the grant was in flight must not ask the
+  // person to trust a key for a connection nobody wants any more.
+  guard?.();
   if (grant.device.id !== deviceId || grant.device.revokedAt || !grant.device.capabilities.includes("desktop")) {
     throw new RelayError("ended", "这台电脑没有开启远程桌面，或已被移除。");
   }
@@ -424,6 +431,7 @@ async function openConnection(deviceId: string, confirm?: ConfirmTrust): Promise
   // that the key is the one it spoke to last.
   const trust = await checkDeviceTrust(grant.device, confirm);
   if (!trust.ok) throw trustError(trust);
+  guard?.();
   const socket = createSocket(`${relay}/v1/sessions/connect`, [
     "reasonix.remote.v1",
     `reasonix.auth.${grant.ticket}`,
@@ -862,6 +870,15 @@ export function isKernelPath(pathname: string): boolean {
 
 let wrapped = false;
 let activeLink: RelayLink | null = null;
+/**
+ * Bumped by every connect attempt and by `clearRelayRouting`.
+ *
+ * A handshake outlives a timeout: without this, a connect that was abandoned
+ * while its grant or socket was in flight could finish later and install
+ * itself as the active route — after the caller had already put the proxy
+ * back or moved on. Only the attempt that still owns the sequence may adopt.
+ */
+let connectSeq = 0;
 let nativeEventSource: typeof EventSource | null = null;
 
 function install(): void {
@@ -898,7 +915,23 @@ export async function connectRelay(
   deviceId: string,
   options: { confirm?: ConfirmTrust } = {},
 ): Promise<RelayLink> {
-  const first = await openConnection(deviceId, options.confirm);
+  const mine = ++connectSeq;
+  const guard = () => {
+    if (mine !== connectSeq) {
+      throw new RelayError("transient", "连接已被更新的尝试取代。");
+    }
+  };
+  const first = await openConnection(deviceId, options.confirm, guard);
+  // The handshake is long; a clear or a newer attempt may have happened while
+  // it ran. Adopting now would strand the caller on a route it already left.
+  if (mine !== connectSeq) {
+    try {
+      first.socket.close(1000, "superseded");
+    } catch {
+      // The socket was never open.
+    }
+    throw new RelayError("transient", "连接已被更新的尝试取代。");
+  }
   const link = new RelayLink(deviceId, first);
   const previous = activeLink;
   install();
@@ -941,6 +974,7 @@ export function relayDevice(): string | null {
 
 /** Stop routing kernel requests through the relay (a LAN connection took over). */
 export function clearRelayRouting(): void {
+  connectSeq += 1;
   const link = activeLink;
   activeLink = null;
   link?.close("relay routing cleared");
