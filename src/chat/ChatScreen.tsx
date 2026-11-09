@@ -173,6 +173,14 @@ interface QuotedReply {
   turn?: number;
 }
 
+/** A file or picture waiting above the box, carried by the next send. */
+interface Attachment {
+  ref: string;
+  name: string;
+  url?: string;
+  image?: boolean;
+}
+
 function quoteLineCount(text: string): number {
   return text === "" ? 0 : text.split("\n").length;
 }
@@ -1160,9 +1168,7 @@ export function ChatScreen({
   const draftKey = useRef(readingId);
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [promptError, setPromptError] = useState("");
-  const [attachments, setAttachments] = useState<
-    { ref: string; name: string; url?: string; image?: boolean }[]
-  >([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   /** Replies quoted into this message, held as chips above the box. */
   const [quotes, setQuotes] = useState<QuotedReply[]>([]);
   const quoteSeq = useRef(0);
@@ -1799,12 +1805,14 @@ export function ChatScreen({
   }, []);
 
   const doSend = useCallback(
-    async (text: string) => {
+    async (text: string, carried?: { quotes: QuotedReply[]; attachments: Attachment[] }) => {
       if (!runtime) return;
       // A snapshot, so a send clears exactly what it carried and leaves a chip
-      // picked while the POST was in flight for the next thought.
-      const sentQuotes = quotes;
-      const sentAttachments = attachments;
+      // picked while the POST was in flight for the next thought. A rewrite or
+      // a regenerate replays its own message, so it carries nothing: the chips
+      // above the box are the next thought, not part of that one.
+      const sentQuotes = carried ? carried.quotes : quotes;
+      const sentAttachments = carried ? carried.attachments : attachments;
       const outgoing = isolateImageRefs(
         composeMessage(sentQuotes, sentAttachments.map((entry) => entry.ref), text),
       ).trim();
@@ -1931,7 +1939,7 @@ export function ChatScreen({
         setEditError("");
       }
       await reload();
-      await doSend(text);
+      await doSend(text, { quotes: [], attachments: [] });
     },
     [runtime?.base, reload, doSend, setEditError, setEditBusy, setEditMessage, setPromptError],
   );

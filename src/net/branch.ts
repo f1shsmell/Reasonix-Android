@@ -7,7 +7,7 @@
  * with its own code rather than leaving this side to guess.
  */
 
-import { fetchWithTimeout } from "./http";
+import { RequestTimeout, fetchWithTimeout } from "./http";
 
 export type BranchWrite = { ok: true; path: string } | { ok: false; code: string };
 
@@ -37,8 +37,11 @@ export async function branchAt(base: string, turn: number, name: string): Promis
       // A refusal that is not JSON still has an HTTP status.
     }
     return { ok: false, code: `http.${response.status}` };
-  } catch {
-    return { ok: false, code: "client.offline" };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof RequestTimeout ? "client.timeout" : "client.offline",
+    };
   }
 }
 
