@@ -24,8 +24,8 @@ import { kernelTransport } from "../net/transport";
  * actions that do not need one.
  */
 export interface RowActions {
-  /** Quote an answer into the composer. */
-  quote: (text: string) => void;
+  /** Quote an answer as a chip above the composer, by the row it came from. */
+  quote: (text: string, rowId: string) => void;
   /** Rewind to this turn and send `text` in its place. */
   resend: (turn: number, text: string) => void;
   /** Fork the conversation at this turn into a new one. */
@@ -107,7 +107,7 @@ export function UserBubble({
       <div className="bubble">
         {text || null}
         {base && refs.length > 0 ? (
-          <div className="message-images">
+          <div className={refs.length > 1 ? "message-images multi" : "message-images"}>
             {refs.map((ref) => (
               <MessageImage key={ref} base={base} path={ref} />
             ))}
@@ -182,7 +182,7 @@ export function AssistantBubble({
                 className="row-act"
                 aria-label="引用到输入框"
                 title="引用到输入框"
-                onClick={() => actions.quote(row.text)}
+                onClick={() => actions.quote(row.text, row.id)}
               >
                 <StudioIcon name="quote" />
               </button>
