@@ -150,12 +150,15 @@ export function AssistantBubble({
   row,
   actions,
   turn,
+  branchTurn,
   question,
 }: {
   row: AssistantRow;
   actions?: RowActions;
   /** The checkpoint turn that asked for this answer, when there is one. */
   turn?: number;
+  /** Where a fork of this answer cuts; kept while another turn runs. */
+  branchTurn?: number;
   /** The words that asked for it, for regenerating the same request. */
   question?: string;
 }) {
@@ -184,13 +187,13 @@ export function AssistantBubble({
                 <StudioIcon name="quote" />
               </button>
             ) : null}
-            {actions && turn !== undefined ? (
+            {actions && branchTurn !== undefined ? (
               <button
                 type="button"
                 className="row-act"
                 aria-label="新建分支"
                 title="新建分支"
-                onClick={() => actions.branch(turn)}
+                onClick={() => actions.branch(branchTurn)}
               >
                 <StudioIcon name="fork" />
               </button>

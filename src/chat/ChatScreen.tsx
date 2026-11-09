@@ -76,8 +76,8 @@ export interface ChatScreenProps {
   onFocusConsumed?: () => void;
   /** Open the paired computer's Studio page; absent where there is no native shell. */
   onOpenStudio?: () => Promise<StudioOpenResult>;
-  /** Open a conversation the kernel just forked, by its session path. */
-  onOpenBranch?: (path: string) => void;
+  /** Open a conversation the kernel just forked: its path and the name it was given. */
+  onOpenBranch?: (path: string, name: string) => void;
 }
 
 /**
@@ -447,6 +447,7 @@ const RowView = memo(function RowView({
   handlers,
   actions,
   turn,
+  branchTurn,
   question,
 }: {
   row: Row;
@@ -455,6 +456,8 @@ const RowView = memo(function RowView({
   actions: RowActions;
   /** The checkpoint turn this row's turn opened, when there is one. */
   turn?: number;
+  /** Where a fork would cut, when this row's turn is closed (it may be running). */
+  branchTurn?: number;
   /** The words that asked for this answer, for regenerating the same request. */
   question?: string;
 }) {
@@ -474,6 +477,7 @@ const RowView = memo(function RowView({
           row={row}
           actions={actions}
           {...(turn !== undefined ? { turn } : {})}
+          {...(branchTurn !== undefined ? { branchTurn } : {})}
           {...(question ? { question } : {})}
         />
       );
@@ -1268,22 +1272,26 @@ export function ChatScreen({
    * and receipts under it belong to the same one.
    */
   const rowTurns = useMemo(() => {
-    const out = new Map<string, { turn?: number; question?: string }>();
+    const byRow = new Map<string, { turn?: number; question?: string }>();
     let turn: number | undefined;
     let question: string | undefined;
+    // The newest turn's number lets a fork tell a closed turn from the one
+    // still running; a checkpoint list that has not caught up leaves it unset.
+    let lastTurn: number | undefined;
     for (const row of transcript.rows) {
       if (row.kind === "user" && row.local !== true) {
         question = row.text;
         turn = turnOf(row.msgIndex);
+        lastTurn = turn;
       }
       if (row.kind === "user" || row.kind === "assistant") {
-        out.set(row.id, {
+        byRow.set(row.id, {
           ...(turn !== undefined ? { turn } : {}),
           ...(question ? { question } : {}),
         });
       }
     }
-    return out;
+    return { byRow, lastTurn };
   }, [transcript.rows, turnOf]);
 
   // A running turn is exactly the window where the phone may be locked. The
@@ -1873,12 +1881,13 @@ export function ChatScreen({
     async (turn: number) => {
       const base = runtime?.base;
       if (!base) return;
-      const result = await branchAt(base, turn, title ? `${title} · 分支` : "");
+      const name = title ? `${title} · 分支` : "";
+      const result = await branchAt(base, turn, name);
       if (!result.ok) {
         setPromptError(branchMessage(result.code));
         return;
       }
-      if (onOpenBranch) onOpenBranch(result.path);
+      if (onOpenBranch) onOpenBranch(result.path, name);
       else setPromptError("这个入口打不开新分支，请在电脑上打开它。");
     },
     [runtime?.base, title, onOpenBranch, setPromptError],
@@ -2231,10 +2240,17 @@ export function ChatScreen({
                   />
                 );
               }
-              // A running turn has no stable cut point: branch, regenerate and
-              // rewind would all be refused by the kernel, so the row keeps only
-              // what does not need one until it ends.
-              const context = transcript.running ? undefined : rowTurns.get(entry.row.id);
+              // Rewinding and regenerating are refused while any turn runs, so
+              // those actions wait for the end. A fork is not: a turn that has
+              // already closed can be branched mid-run, which is the one action
+              // the running turn's rows lose and the earlier ones keep.
+              const context = rowTurns.byRow.get(entry.row.id);
+              const turn = transcript.running ? undefined : context?.turn;
+              const branchTurn =
+                context?.turn !== undefined &&
+                (!transcript.running || context.turn !== rowTurns.lastTurn)
+                  ? context.turn
+                  : undefined;
               return (
                 <RowView
                   key={entry.id}
@@ -2242,7 +2258,8 @@ export function ChatScreen({
                   base={runtime.base}
                   handlers={handlers}
                   actions={rowActions}
-                  {...(context?.turn !== undefined ? { turn: context.turn } : {})}
+                  {...(turn !== undefined ? { turn } : {})}
+                  {...(branchTurn !== undefined ? { branchTurn } : {})}
                   {...(context?.question ? { question: context.question } : {})}
                 />
               );

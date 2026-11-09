@@ -1084,14 +1084,29 @@ describe("ChatScreen message actions", () => {
     stubKernel({ history, checkpoints, branchPath: "/w/sessions/fork.jsonl" });
     const onOpenBranch = vi.fn();
 
-    render(snapshot(), "r1", { onOpenBranch });
+    render(snapshot(), "r1", { onOpenBranch, title: "我的会话" });
     await flush();
     await flush();
 
     act(() => (container.querySelector('[aria-label="新建分支"]') as HTMLButtonElement).click());
     await flush();
 
-    expect(onOpenBranch).toHaveBeenCalledWith("/w/sessions/fork.jsonl");
+    expect(onOpenBranch).toHaveBeenCalledWith("/w/sessions/fork.jsonl", "我的会话 · 分支");
+  });
+
+  it("keeps the fork on a closed turn while the next one runs", async () => {
+    stubKernel({ history, checkpoints });
+
+    render(snapshot());
+    await flush();
+    await flush();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeTruthy();
+
+    render(snapshot({ kind: "turn_started", text: "下一问", msgIndex: 3 } as EventPayload));
+    await flush();
+
+    expect(container.querySelector('[aria-label="新建分支"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="重新生成"]')).toBeNull();
   });
 
   it("rewrites a message in place through the rewind", async () => {
