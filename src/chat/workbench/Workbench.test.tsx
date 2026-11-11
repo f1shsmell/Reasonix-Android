@@ -443,6 +443,7 @@ describe("Workbench", () => {
     await flush();
     act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
     await flush();
+<<<<<<< HEAD
     const commitRow = container.querySelector<HTMLButtonElement>(".wb-history-row .wb-row-main");
     act(() => commitRow?.click());
     await flush();
@@ -505,5 +506,30 @@ describe("Workbench", () => {
     });
     expect(container.textContent).toContain("较新提交");
     expect(container.textContent).not.toContain("较旧提交");
+  });
+
+  it("offers a retry when a commit's files refuse to load", async () => {
+    net.loadCommitFiles
+      .mockResolvedValueOnce({ ok: false, code: "http.500" })
+      .mockResolvedValue({
+        ok: true,
+        value: { repo: true, files: [{ path: "a.ts", status: "M" }], truncated: false },
+      });
+    mount();
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>(".wb-history-row .wb-row-main")?.click());
+    await flush();
+    expect(container.textContent).toContain("没读出来：http.500");
+    const retry = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "重新读取",
+    );
+    expect(retry).toBeDefined();
+    act(() => retry?.click());
+    await flush();
+    expect(container.querySelector(".wb-history-files")).not.toBeNull();
+    expect(container.textContent).not.toContain("没读出来");
+  });
   });
 });

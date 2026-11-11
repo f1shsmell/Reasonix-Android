@@ -124,6 +124,8 @@ function CommitRow({
   /** The file whose diff request is in flight: a slow older answer must not
    *  overwrite the row the person tapped last. */
   const diffReq = useRef(0);
+  /** Same guard for the files read, so a retry supersedes a slow refusal. */
+  const filesReq = useRef(0);
   const refs = commit.refs.map(refShort).join(" · ");
 
   const expand = (): void => {
@@ -133,7 +135,20 @@ function CommitRow({
     }
     setExpanded(true);
     if (files !== null) return;
+    load();
+  };
+
+  /** A refused read names its own fix: retry in place, not a remount. */
+  const retry = (): void => {
+    setError("");
+    setFiles(null);
+    load();
+  };
+
+  const load = (): void => {
+    const mine = ++filesReq.current;
     void loadCommitFiles(base, commit.id, repo || undefined).then((reply) => {
+      if (mine !== filesReq.current) return;
       if (!reply.ok) {
         setError(reply.code);
         return;
@@ -178,7 +193,14 @@ function CommitRow({
           <span className="wb-age">{ageText(commit.at, now)}</span>
         </span>
       </button>
-      {error && <p className="wb-wait">{`没读出来：${error}`}</p>}
+      {error && (
+        <>
+          <p className="wb-wait">{`没读出来：${error}`}</p>
+          <button type="button" className="wb-more" onClick={retry}>
+            重新读取
+          </button>
+        </>
+      )}
       {expanded && files === null && !error && <p className="wb-wait">读取中…</p>}
       {expanded && files !== null && (
         <div className="wb-history-files">
