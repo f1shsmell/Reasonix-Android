@@ -2304,7 +2304,7 @@ describe("ChatScreen activity", () => {
     expect(sheet?.textContent).toContain("读取文件");
   });
 
-  it("summarises a running step in compact mode and hides thinking", async () => {
+  it("summarises a running step in compact mode and keeps thinking a fold away", async () => {
     localStorage.setItem("reasonix.folding.v1", "compact");
     stubKernel();
     render(snapshot({ kind: "turn_started" }));
@@ -2313,6 +2313,9 @@ describe("ChatScreen activity", () => {
     await flush();
 
     expect(container.querySelector(".activity-row")).toBeNull();
+    const thought = container.querySelector<HTMLButtonElement>(".thought-row");
+    expect(thought?.textContent).toContain("思考中");
+    expect(container.querySelector(".thought-body")).toBeNull();
 
     render(
       snapshot({
@@ -2326,6 +2329,30 @@ describe("ChatScreen activity", () => {
     const summary = container.querySelector(".process-row");
     expect(summary?.textContent).toContain("1 个操作");
     expect(container.querySelector(".activity-icon.running")).not.toBeNull();
+
+    // The small window opens in place, and the folded record carries the
+    // thought as a step of its own.
+    act(() => (container.querySelector(".thought-row") as HTMLButtonElement).click());
+    expect(container.querySelector(".thought-body")?.textContent).toContain("先看目录");
+    act(() => (summary as HTMLButtonElement).click());
+    expect(container.querySelector(".process-sheet")?.textContent).toContain("深度思考");
+  });
+
+  it("gives a compact answer its own thought fold", async () => {
+    localStorage.setItem("reasonix.folding.v1", "compact");
+    stubKernel();
+    render(snapshot({ kind: "turn_started" }));
+    await flush();
+    render(snapshot({ kind: "message", text: "答案", reasoning: "想过了", thoughtMs: 2400 }));
+    await flush();
+    render(snapshot({ kind: "turn_done" }));
+    await flush();
+
+    const thought = container.querySelector<HTMLButtonElement>(".thought-row");
+    expect(thought?.textContent).toContain("思考了 2 秒");
+    expect(container.querySelector(".thought-body")).toBeNull();
+    act(() => thought?.click());
+    expect(container.querySelector(".thought-body")?.textContent).toContain("想过了");
   });
 
   it("keeps each step in full mode after the turn ends", async () => {

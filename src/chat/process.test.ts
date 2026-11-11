@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDisplay, processCategories, processTitle } from "./process";
+import { buildDisplay, processCategories, processTitle, thoughtOf } from "./process";
 import type { AssistantRow, Row, ToolRow, UserRow } from "./transcript";
 
 function user(id: string): UserRow {
@@ -102,7 +102,7 @@ describe("buildDisplay", () => {
     expect(entry.steps).toHaveLength(2);
   });
 
-  it("leaves thinking out of a compact transcript", () => {
+  it("keeps thinking inside a compact run instead of dropping it", () => {
     const display = buildDisplay(
       [tool("t1", { reasoning: "看看目录" }), assistant("a1", "答案", "先想一下")],
       false,
@@ -111,7 +111,20 @@ describe("buildDisplay", () => {
     expect(display.map((entry) => entry.kind)).toEqual(["steps", "assistant"]);
     const steps = display[0];
     if (steps?.kind !== "steps") throw new Error("expected steps");
-    expect(steps.steps.map((step) => step.kind)).toEqual(["tool"]);
+    expect(steps.steps.map((step) => step.kind)).toEqual(["reasoning", "tool"]);
+    // The answer's own thought rides with its bubble, not with the run.
+    expect(thoughtOf(steps.steps)).toEqual({ text: "看看目录" });
+  });
+
+  it("joins a run's thoughts in order with their measured seconds", () => {
+    const joined = thoughtOf([
+      { kind: "reasoning", id: "r1", text: "先想", thoughtMs: 1500 },
+      { kind: "tool", id: "t1", row: tool("t1") },
+      { kind: "reasoning", id: "r2", text: "再想", thoughtMs: 2500 },
+    ]);
+    expect(joined).toEqual({ text: "先想\n\n再想", thoughtMs: 4000 });
+    expect(thoughtOf([{ kind: "tool", id: "t1", row: tool("t1") }])).toBeNull();
+    expect(thoughtOf([{ kind: "reasoning", id: "r1", text: "  " }])).toBeNull();
   });
 
   it("compact keeps only each turn's final message and folds the narration", () => {

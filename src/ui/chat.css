@@ -658,6 +658,102 @@ html[data-chat-font="xl"] {
   line-height: 1.65;
 }
 
+/* ---- thought window (compact fold) ---- */
+
+.thought {
+  margin: 0 0 6px;
+}
+
+.thought-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.thought-row:active {
+  opacity: 0.7;
+}
+
+.thought-label {
+  flex: none;
+  font-weight: 600;
+}
+
+.thought-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ghost);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.thought .chev {
+  flex: none;
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+
+.thought.open .chev {
+  transform: rotate(90deg);
+}
+
+/* Eight lines of thought, scrollable: enough to follow the reasoning without
+   handing the screen back to the wall the compact fold exists to avoid. */
+.thought-body {
+  max-height: calc(1.65em * 8);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-sunken);
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.thought-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thought-body::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 2px;
+}
+
+.thought-caret {
+  display: inline-block;
+  width: 5px;
+  height: 11px;
+  margin-left: 2px;
+  background: var(--fg-dim);
+  vertical-align: -1px;
+  animation: process-pulse 1s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thought-caret {
+    animation: none;
+  }
+}
+
 .process-title {
   flex: 1;
   min-width: 0;

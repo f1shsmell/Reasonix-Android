@@ -408,7 +408,7 @@ function wbListing(path: string, q: string): { files: string[]; directories: str
 function emitTurn(input: string): void {
   const events: Record<string, unknown>[] = [
     { kind: "turn_started" },
-    { kind: "reasoning", text: "先确认一下需求，再给出可以直接执行的安排。" },
+    { kind: "reasoning", reasoning: "先确认一下需求：两天、轻松、杭州。\n第一天围绕西湖走，但不要把行程排满——用户说了轻松一点。\n上午苏堤或白堤选一条，步行加拍照大约两小时。\n中午在湖滨一带吃饭，顺便避开正午的太阳。\n下午原本想安排游船，但要看天气：下雨就换室内。\n第二天灵隐寺早上去，人少；龙井村下午散步喝茶。\n交通以地铁加步行为主，打车作为雨天的备选。\n还要留一个室内备选：浙江省博物馆之江馆或武林馆。\n住宿建议西湖东侧，地铁方便，晚上也热闹。\n最后把节奏写松一点，每天只排两个主点。" },
     { kind: "text", text: `收到：“${input.slice(0, 80)}”。这是本地 fixture 的一条回答。` },
     { kind: "message" },
     { kind: "usage", usage: { promptTokens: 42, completionTokens: 18, totalTokens: 60 } },

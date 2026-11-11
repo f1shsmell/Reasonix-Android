@@ -6,7 +6,7 @@
  * file is testable without a browser.
  */
 
-import { memo, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { Connection, ConnectionSnapshot, QueuedEvent } from "../net/connection";
 import { cancel, submit } from "../net/submit";
@@ -46,7 +46,8 @@ import { dropCachedRows, loadCachedRows, scheduleSaveRows } from "./transcriptCa
 import { ApprovalCard, AskCard, AssistantBubble, NoticeCard, UserBubble, WorkedLine } from "./Rows";
 import type { PromptHandlers, RowActions } from "./Rows";
 import { ActivityRow, ProcessSheet, ProcessSummary } from "./Activity";
-import { buildDisplay } from "./process";
+import { ThoughtStrip } from "./ThoughtStrip";
+import { buildDisplay, thoughtOf } from "./process";
 import { loadFoldMode } from "./folding";
 import type { ProcessStep } from "./process";
 import { TodoPanel } from "./TodoPanel";
@@ -489,6 +490,7 @@ const RowView = memo(function RowView({
   branchTurn,
   question,
   onOpenImage,
+  compact,
 }: {
   row: Row;
   base: string;
@@ -502,6 +504,8 @@ const RowView = memo(function RowView({
   question?: string;
   /** Show one of this row's pictures at full size. */
   onOpenImage?: (src: string) => void;
+  /** Compact fold: the answer carries its own thought as a bounded window. */
+  compact?: boolean;
 }) {
   switch (row.kind) {
     case "user":
@@ -522,6 +526,7 @@ const RowView = memo(function RowView({
           {...(turn !== undefined ? { turn } : {})}
           {...(branchTurn !== undefined ? { branchTurn } : {})}
           {...(question ? { question } : {})}
+          {...(compact !== undefined ? { compact } : {})}
         />
       );
     case "notice":
@@ -2306,22 +2311,34 @@ export function ChatScreen({
             ) : null}
             {visible.map((entry) => {
               if (entry.kind === "steps") {
-                return entry.live ? (
-                  entry.steps.map((step) => (
+                if (entry.live) {
+                  return entry.steps.map((step) => (
                     <ActivityRow
                       key={step.id}
                       step={step}
                       onOpenSheet={(one) => setProcess({ title: "深度思考", steps: [one] })}
                     />
-                  ))
-                ) : (
-                  <ProcessSummary
-                    key={entry.id}
-                    steps={entry.steps}
-                    running={entry.running}
-                    compact={entry.compact === true}
-                    onOpen={() => openProcess(entry)}
-                  />
+                  ));
+                }
+                // Compact keeps the run to one summary line, with the run's
+                // thinking a fold away in a bounded window of its own.
+                const thought = entry.compact === true ? thoughtOf(entry.steps) : null;
+                return (
+                  <Fragment key={entry.id}>
+                    <ProcessSummary
+                      steps={entry.steps}
+                      running={entry.running}
+                      compact={entry.compact === true}
+                      onOpen={() => openProcess(entry)}
+                    />
+                    {thought !== null ? (
+                      <ThoughtStrip
+                        text={thought.text}
+                        {...(thought.thoughtMs !== undefined ? { thoughtMs: thought.thoughtMs } : {})}
+                        running={entry.running}
+                      />
+                    ) : null}
+                  </Fragment>
                 );
               }
               // Rewinding and regenerating are refused while any turn runs, so
@@ -2345,6 +2362,7 @@ export function ChatScreen({
                   {...(turn !== undefined ? { turn } : {})}
                   {...(branchTurn !== undefined ? { branchTurn } : {})}
                   {...(context?.question ? { question: context.question } : {})}
+                  compact={fold === "compact"}
                   onOpenImage={setViewingImage}
                 />
               );

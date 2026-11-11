@@ -10,6 +10,7 @@ import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { WireAskQuestion } from "../wire/events";
 import type { ApprovalRow, AskRow, AssistantRow, NoticeRow, ToolRow, UserRow, WorkedRow } from "./transcript";
 import { Markdown } from "./Markdown";
+import { ThoughtStrip } from "./ThoughtStrip";
 import { CopyButton } from "./CopyButton";
 import { SurfaceCard } from "./SurfaceCard";
 import { approvalPlanSteps } from "./planApproval";
@@ -181,6 +182,7 @@ export function AssistantBubble({
   turn,
   branchTurn,
   question,
+  compact = false,
 }: {
   row: AssistantRow;
   actions?: RowActions;
@@ -190,6 +192,9 @@ export function AssistantBubble({
   branchTurn?: number;
   /** The words that asked for it, for regenerating the same request. */
   question?: string;
+  /** Compact fold: the thought rides here as a bounded window, since the
+   *  compact run summary does not carry the answer's own thinking. */
+  compact?: boolean;
 }) {
   // Markdown renders while the answer streams, the way xiaoban does it:
   // useDeferredValue lets React skip re-parsing the growing text when a
@@ -201,6 +206,13 @@ export function AssistantBubble({
   return (
     <div className={`row assistant${row.streaming ? " streaming" : ""}`}>
       <div className="bubble">
+        {compact && row.reasoning.trim() ? (
+          <ThoughtStrip
+            text={row.reasoning}
+            {...(row.thoughtMs !== undefined ? { thoughtMs: row.thoughtMs } : {})}
+            running={row.streaming && row.thoughtMs === undefined}
+          />
+        ) : null}
         <Markdown text={row.streaming ? deferredText : row.text} />
         {!row.streaming ? (
           <div className="bubble-actions">
