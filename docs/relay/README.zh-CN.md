@@ -11,6 +11,9 @@
 只要服务器终结了 TLS，它就能读到每一段对话。`frpc.toml` 里的 `type = "tcp"`
 就是防这件事的；写成 `type = "http"` 会让 frps 解析请求，整套安排就白做了。
 
+从服务器到 Windows 到手机、两个阶段怎么走、合规上到底要求什么，见
+[DEPLOY.zh-CN.md](DEPLOY.zh-CN.md)。
+
 ## 三份文件
 
 | 文件 | 跑在哪 | 干什么 |

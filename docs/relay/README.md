@@ -13,6 +13,9 @@ If the server ever terminates TLS, it can read every conversation. `type = "tcp"
 in `frpc.toml` is what prevents that; `type = "http"` would parse the request and
 defeat the whole arrangement.
 
+A step-by-step walkthrough — server, Windows machine, phone, both stages, and
+what compliance actually requires — is in [DEPLOY.md](DEPLOY.md).
+
 ## Files
 
 | File | Runs on | Does |
