@@ -272,28 +272,30 @@ export function Workbench({
 
   return (
     <div className="wb">
-      <button type="button" className="wb-close" onClick={onClose}>
-        ‹ 返回会话
-      </button>
-      <div className="wb-tabs" role="tablist" aria-label="工作台">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "changes"}
-          className={tab === "changes" ? "on" : undefined}
-          onClick={() => setTab("changes")}
-        >
-          变更
+      <div className="wb-top">
+        <button type="button" className="wb-close" onClick={onClose}>
+          ‹ 返回会话
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "files"}
-          className={tab === "files" ? "on" : undefined}
-          onClick={() => setTab("files")}
-        >
-          文件
-        </button>
+        <div className="wb-tabs" role="tablist" aria-label="工作台">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "changes"}
+            className={tab === "changes" ? "on" : undefined}
+            onClick={() => setTab("changes")}
+          >
+            变更
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "files"}
+            className={tab === "files" ? "on" : undefined}
+            onClick={() => setTab("files")}
+          >
+            文件
+          </button>
+        </div>
       </div>
 
       {readOnly && <p className="wb-readonly">该会话只读：另一个程序持有写入租约。</p>}

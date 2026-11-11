@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fileMessage, listFiles, readFile } from "../../net/changes";
 import { highlightCode } from "../highlight";
+import { StudioIcon } from "../../app/StudioIcon";
 import type { WorkspaceFile, WorkspaceListing } from "../../wire/changes";
 
 /** The grammar a file extension maps to, for the read-only viewer. Unknown
@@ -32,6 +33,20 @@ function languageOf(name: string): string {
     yml: "yaml",
   };
   return ALIASES[extension] ?? extension;
+}
+
+/** A search answer is a whole workspace path: the directory side draws dim so
+ *  the file's own name is what the eye lands on. A folder listing already names
+ *  one folder, so there the base name is the whole label. */
+function PathLabel({ path, full, fallback }: { path: string; full: boolean; fallback: string }) {
+  const at = path.lastIndexOf("/");
+  if (!full || at < 0) return <span className="wb-row-text">{fallback}</span>;
+  return (
+    <span className="wb-row-text">
+      <span className="wb-files-dir">{path.slice(0, at + 1)}</span>
+      {path.slice(at + 1)}
+    </span>
+  );
 }
 
 /** The workspace's own files, read-only: one folder at a time, a search that
@@ -203,13 +218,16 @@ export function FileBrowser({
                 }}
               >
                 <span className="wb-row-main">
-                  <span className="wb-row-name">{search ? dir : name}</span>
+                  <span className="wb-row-name">
+                    <StudioIcon name="folder" className="wb-row-icon" />
+                    <PathLabel path={dir} full={Boolean(search)} fallback={name} />
+                  </span>
                 </span>
               </button>
             );
           })}
           {listing.files.map((name) => {
-            const short = search ? name : name.slice(name.lastIndexOf("/") + 1);
+            const short = name.slice(name.lastIndexOf("/") + 1);
             return (
               <button
                 key={`f:${name}`}
@@ -219,7 +237,10 @@ export function FileBrowser({
                 onClick={() => open(name)}
               >
                 <span className="wb-row-main">
-                  <span className="wb-row-name">{short}</span>
+                  <span className="wb-row-name">
+                    <StudioIcon name="file" className="wb-row-icon" />
+                    <PathLabel path={name} full={Boolean(search)} fallback={short} />
+                  </span>
                 </span>
               </button>
             );

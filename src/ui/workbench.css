@@ -12,14 +12,22 @@
   padding: 10px var(--pad) 16px;
 }
 
+.wb-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .wb-close {
-  align-self: flex-start;
-  min-height: 36px;
-  padding: 0 10px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
   color: var(--fg-dim);
+  font-size: 13px;
 }
 
 .wb-tabs {
+  flex: 1;
   display: flex;
   gap: 4px;
   padding: 4px;
@@ -30,7 +38,7 @@
 
 .wb-tabs button {
   flex: 1;
-  min-height: 36px;
+  min-height: 44px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -71,13 +79,13 @@
 }
 
 .wb-repos button {
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: 44px;
+  padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .wb-repos button.on {
@@ -128,12 +136,21 @@
   font-style: normal;
 }
 
+/* Sticks to the top of the takeover's scroll so 暂存全部 and 提交… stay reachable
+   while a long tree scrolls under them. The offset cancels the takeover's own
+   top padding: the sticky reference sits inside it, so 0 would leave a strip of
+   scrolling rows visible above the stuck head. */
 .wb-section-head {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px;
+  margin: 0 calc(var(--pad) * -1);
+  padding: 8px var(--pad);
+  background: var(--bg);
   font-size: 13px;
   color: var(--fg-dim);
 }
@@ -144,8 +161,8 @@
 }
 
 .wb-section-actions .primary {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 44px;
+  padding: 0 16px;
   font-size: 13px;
 }
 
@@ -160,7 +177,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 0;
   min-height: 44px;
   border-top: 1px solid var(--line-soft);
   text-align: left;
@@ -173,21 +190,36 @@
 
 .wb-stage {
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
   display: grid;
   place-items: center;
   padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.wb-stage-box {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--bg);
+  border-radius: 6px;
+  background: var(--bg-raised);
   color: var(--accent);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
 }
 
-.wb-stage[aria-checked="true"] {
+.wb-stage[aria-checked="true"] .wb-stage-box {
   background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.wb-stage[aria-checked="mixed"] .wb-stage-box {
   border-color: var(--accent);
 }
 
@@ -200,10 +232,10 @@
   min-width: 0;
   min-height: 44px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 4px 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -212,12 +244,20 @@
 }
 
 .wb-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
   font-size: 14px;
   overflow: hidden;
+  white-space: nowrap;
+}
+
+.wb-row-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -246,26 +286,38 @@
   font-size: 13px;
 }
 
-.wb-row-name,
-.wb-row-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.wb-chevron {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--fg-dim);
+  transform: rotate(-90deg);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.wb-chevron.open {
+  transform: rotate(0deg);
 }
 
 .wb-oldpath {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--fg-dim);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wb-row-meta {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--fg-dim);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .wb-counts {
@@ -283,17 +335,17 @@
   font-style: normal;
 }
 
-/* The open diff wraps onto its own line at the row's full width instead of
-   sitting beside the row's name as a squeezed flex sibling. */
+/* The open diff wraps onto its own line at the row's full width; the negative
+   margin the component sets cancels the tree indent so deep files keep it. */
 .wb-row-diff {
   flex: 1 0 100%;
   width: 100%;
-  margin: 2px 0 6px;
+  margin: 0 0 8px;
 }
 
 .wb-more {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   border: 1px dashed var(--line);
   border-radius: 10px;
   background: transparent;
@@ -303,8 +355,8 @@
 
 .wb-more.inline {
   width: auto;
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   font-size: 12px;
@@ -341,11 +393,44 @@
   color: var(--fg-dim);
 }
 
+/* Pinned while long lines scroll under it. The tint is the row's own rgba
+   flattened onto the sunken base — a translucent gutter would let the scrolling
+   text show through it. */
+.wb-diff-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  /* Stretch to the row: on a @@ header the number buttons are empty and would
+     otherwise collapse the gutter to zero height, letting scrolled text show
+     through where the gutter should cover it. */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  background: var(--bg-sunken);
+  box-shadow: 1px 0 0 var(--line-soft);
+}
+
+.wb-diff-line[data-mark="+"] .wb-diff-gutter {
+  background: var(--diff-add-solid);
+}
+
+.wb-diff-line[data-mark="-"] .wb-diff-gutter {
+  background: var(--diff-del-solid);
+}
+
+.wb-diff-line[data-mark="@"] .wb-diff-gutter {
+  background: var(--bg-raised);
+}
+
 .wb-diff-n {
   flex: none;
   width: 34px;
+  min-width: 34px;
+  min-height: 0;
   padding: 0 4px;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--ghost);
   font: inherit;
@@ -400,8 +485,8 @@
 }
 
 .wb-commit-cancel {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   color: var(--fg-dim);
   font-size: 12px;
 }
@@ -424,7 +509,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
+  min-height: 36px;
   font-family: var(--font-mono);
   font-size: 12px;
   border-top: 1px solid var(--line-soft);
@@ -467,6 +552,11 @@
   flex: 0 1 auto;
 }
 
+.wb-commit-sep {
+  flex: none;
+  color: var(--fg-dim);
+}
+
 .wb-sensitive {
   flex: none;
   padding: 1px 8px;
@@ -479,9 +569,16 @@
 .wb-ack {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 44px;
   font-size: 13px;
   color: var(--warn);
+}
+
+.wb-ack input {
+  width: 20px;
+  height: 20px;
+  flex: none;
 }
 
 .wb-commit-message {
@@ -494,7 +591,7 @@
   background: var(--bg);
   color: var(--fg);
   font: inherit;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.5;
 }
 
@@ -509,8 +606,12 @@
   gap: 8px;
 }
 
+.wb-commit-actions button {
+  min-height: 48px;
+}
+
 .wb-commit-go {
-  min-height: 44px;
+  flex: 1;
   padding: 0 18px;
   border: 0;
   border-radius: 999px;
@@ -540,6 +641,9 @@
 .wb-history-head {
   width: 100%;
   min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   background: transparent;
   color: var(--fg-dim);
@@ -553,10 +657,11 @@
 }
 
 .wb-history-row .wb-row-main {
-  min-height: 40px;
+  min-height: 44px;
 }
 
 .wb-hash {
+  flex: none;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--accent);
@@ -588,13 +693,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
+  min-height: 44px;
 }
 
 .wb-files-up {
   flex: none;
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
@@ -615,6 +720,41 @@
 
 .wb-files-search {
   flex: none;
+}
+
+/* The browser's rows are the tree's flat rows, not the shell's floating
+   cards: one list language across both tabs. */
+.wb-files .wb-row {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.wb-files .wb-tree > .wb-row:first-child {
+  border-top: 0;
+}
+
+.wb-files .wb-row-main {
+  padding: 4px 0;
+}
+
+.wb-row-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--fg-dim);
+}
+
+.wb-row[data-node="folder"] .wb-row-icon {
+  color: var(--accent);
+}
+
+.wb-files-dir {
+  color: var(--fg-dim);
 }
 
 .wb-file-view {

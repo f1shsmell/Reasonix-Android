@@ -40,6 +40,10 @@
   --diff-add-ink: #3fb950;
   --diff-del: rgba(248, 81, 73, 0.15);
   --diff-del-ink: #f85149;
+  /* The diff gutter pins over scrolling text, so its tint is the row's rgba
+     flattened onto the sunken base instead of the translucent row fill. */
+  --diff-add-solid: #0f2318;
+  --diff-del-solid: #2b1417;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
     0 1px 2px rgba(0, 0, 0, 0.28),
@@ -92,6 +96,8 @@
     --diff-add-ink: #1a7f37;
     --diff-del: rgba(207, 34, 46, 0.1);
     --diff-del-ink: #b42318;
+    --diff-add-solid: #d7e4e2;
+    --diff-del-solid: #e9dae1;
     --shadow-1:
       inset 0 1px 0 rgba(255, 255, 255, 0.8),
       0 1px 2px rgba(15, 23, 42, 0.05),
@@ -132,6 +138,8 @@
   --diff-add-ink: #1a7f37;
   --diff-del: rgba(207, 34, 46, 0.1);
   --diff-del-ink: #b42318;
+  --diff-add-solid: #d7e4e2;
+  --diff-del-solid: #e9dae1;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
     0 1px 2px rgba(15, 23, 42, 0.05),
@@ -170,6 +178,10 @@
   --diff-add-ink: #3fb950;
   --diff-del: rgba(248, 81, 73, 0.15);
   --diff-del-ink: #f85149;
+  /* The diff gutter pins over scrolling text, so its tint is the row's rgba
+     flattened onto the sunken base instead of the translucent row fill. */
+  --diff-add-solid: #0f2318;
+  --diff-del-solid: #2b1417;
   --shadow-1:
     inset 0 1px 0 rgba(255, 255, 255, 0.03),
     0 1px 2px rgba(0, 0, 0, 0.28),
@@ -199,6 +211,7 @@
     --scrim: rgba(30, 25, 15, 0.42);
     --diff-add: rgba(26, 127, 55, 0.1); --diff-add-ink: #1a7f37;
     --diff-del: rgba(207, 34, 46, 0.1); --diff-del-ink: #b42318;
+    --diff-add-solid: #dadcc8; --diff-del-solid: #ecd3c7;
     --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(70, 55, 30, 0.05);
     --shadow-2: 0 20px 50px rgba(50, 40, 20, 0.18);
   }
@@ -224,6 +237,7 @@
     --scrim: rgba(10, 8, 5, 0.58);
     --diff-add: rgba(63, 185, 80, 0.15); --diff-add-ink: #3fb950;
     --diff-del: rgba(248, 81, 73, 0.15); --diff-del-ink: #f85149;
+    --diff-add-solid: #162715; --diff-del-solid: #321713;
     --shadow-1: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 2px 10px rgba(0, 0, 0, 0.3);
     --shadow-2: 0 24px 64px rgba(0, 0, 0, 0.5);
   }
@@ -248,6 +262,7 @@
   --scrim: rgba(30, 25, 15, 0.42);
   --diff-add: rgba(26, 127, 55, 0.1); --diff-add-ink: #1a7f37;
   --diff-del: rgba(207, 34, 46, 0.1); --diff-del-ink: #b42318;
+  --diff-add-solid: #dadcc8; --diff-del-solid: #ecd3c7;
   --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(70, 55, 30, 0.05);
   --shadow-2: 0 20px 50px rgba(50, 40, 20, 0.18);
 }
@@ -271,6 +286,7 @@
   --scrim: rgba(10, 8, 5, 0.58);
   --diff-add: rgba(63, 185, 80, 0.15); --diff-add-ink: #3fb950;
   --diff-del: rgba(248, 81, 73, 0.15); --diff-del-ink: #f85149;
+  --diff-add-solid: #162715; --diff-del-solid: #321713;
   --shadow-1: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 2px 10px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
@@ -370,6 +386,7 @@ summary:focus-visible {
 .transcript,
 .sheet,
 .connect,
+.wb,
 .todos ol {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -379,6 +396,7 @@ summary:focus-visible {
 .transcript::-webkit-scrollbar,
 .sheet::-webkit-scrollbar,
 .connect::-webkit-scrollbar,
+.wb::-webkit-scrollbar,
 .todos ol::-webkit-scrollbar {
   display: none;
 }
