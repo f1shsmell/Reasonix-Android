@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { ChangeDiff } from "../../wire/changes";
+import { StudioIcon } from "../../app/StudioIcon";
 import { stagedState } from "./gittree";
 import type { ChangeNode } from "./gittree";
 import { WorkbenchDiff } from "./WorkbenchDiff";
@@ -39,6 +40,8 @@ function Counts({
   );
 }
 
+/** The tick is a 24px box inside a 44px hit area: the finger gets the whole
+ *  square, the eye gets a mark the size of the text beside it. */
 function StageBox({
   state,
   disabled,
@@ -63,7 +66,9 @@ function StageBox({
         onToggle();
       }}
     >
-      {state === true ? "✓" : state === "mixed" ? "–" : ""}
+      <span className="wb-stage-box" aria-hidden="true">
+        {state === true ? "✓" : state === "mixed" ? "–" : ""}
+      </span>
     </button>
   );
 }
@@ -110,7 +115,10 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
           aria-expanded={!folded}
           onClick={() => walkState.onToggleFold(node.path)}
         >
-          <span className="wb-row-name">{node.name}</span>
+          <span className="wb-row-name">
+            <StudioIcon name="down" className={folded ? "wb-chevron" : "wb-chevron open"} />
+            <span className="wb-row-text">{node.name}</span>
+          </span>
           <span className="wb-row-meta">
             {`${files.length} 个文件`}
             <Counts insertions={node.insertions} deletions={node.deletions} />
@@ -152,7 +160,7 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
       >
         <span className="wb-row-name">
           <em data-status={statusTone(entry.status)}>{entry.status}</em>
-          {node.name}
+          <span className="wb-row-text">{node.name}</span>
           {entry.oldPath && <span className="wb-oldpath">{` ← ${entry.oldPath}`}</span>}
         </span>
         <span className="wb-row-meta">
@@ -160,7 +168,7 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
         </span>
       </button>
       {open && (
-        <div className="wb-row-diff">
+        <div className="wb-row-diff" style={{ marginLeft: -depth * 14 }}>
           {slot === undefined && <p className="wb-wait">读取中…</p>}
           {slot?.state === "loading" && <p className="wb-wait">读取中…</p>}
           {slot?.state === "error" && <p className="wb-wait">{`没读出来：${slot.code ?? ""}`}</p>}

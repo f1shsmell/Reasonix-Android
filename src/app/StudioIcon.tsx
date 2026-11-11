@@ -36,6 +36,8 @@ const PATHS = {
   edit: "m4 16 12-12 4 4L8 20H4v-4zM13 7l4 4",
   rewind: "M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-4",
   check: "m5 12 4 4L19 6",
+  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  file: ["M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z", "M14 3v6h6"],
 } as const;
 
 export type StudioIconName = keyof typeof PATHS;

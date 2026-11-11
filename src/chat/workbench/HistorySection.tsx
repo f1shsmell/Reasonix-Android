@@ -7,6 +7,7 @@ import type {
   GitCommitFiles,
   GitHistory,
 } from "../../wire/changes";
+import { StudioIcon } from "../../app/StudioIcon";
 import { WorkbenchDiff } from "./WorkbenchDiff";
 
 /** A bare duration, the way the history rows print it: no "ago", no clock. */
@@ -77,6 +78,7 @@ export function HistorySection({
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
+        <StudioIcon name="down" className={open ? "wb-chevron open" : "wb-chevron"} />
         提交历史
       </button>
       {open && (
@@ -170,8 +172,9 @@ function CommitRow({
         onClick={expand}
       >
         <span className="wb-row-name">
+          <StudioIcon name="down" className={expanded ? "wb-chevron open" : "wb-chevron"} />
           <code className="wb-hash">{commit.id.slice(0, 7)}</code>
-          {commit.subject}
+          <span className="wb-row-text">{commit.subject}</span>
         </span>
         <span className="wb-row-meta">
           {refs && <span className="wb-refs">{refs}</span>}
