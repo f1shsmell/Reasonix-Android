@@ -383,4 +383,127 @@ describe("Workbench", () => {
     expect(container.textContent).toContain("该会话只读");
     expect(container.querySelectorAll('[role="checkbox"]')).toHaveLength(0);
   });
+
+  it("opens the diff on only the tapped part of a twice-listed path", async () => {
+    mount();
+    await flush();
+    const rows = [...container.querySelectorAll<HTMLButtonElement>(".wb-row-main")].filter((button) =>
+      button.textContent?.includes("main.tsx"),
+    );
+    expect(rows).toHaveLength(2);
+    act(() => rows[0]?.click());
+    await flush();
+    // The staged and unstaged parts of one path are two rows; the diff belongs
+    // to the row that was tapped, not to both.
+    expect(container.querySelectorAll(".wb-diff")).toHaveLength(1);
+  });
+
+  it("opens the jumped file even when the folder listing answers first", async () => {
+    // The jump sets the browser's folder, which re-runs the listing read. With
+    // one shared request guard that listing increments the id the pending file
+    // read holds, and the file the line number pointed at never opens.
+    let resolveFile: (value: unknown) => void = () => {};
+    net.readFile.mockImplementation(
+      () => new Promise((resolve) => { resolveFile = resolve; }),
+    );
+    mount();
+    await flush();
+    const row = [...container.querySelectorAll<HTMLButtonElement>(".wb-row-main")].find((button) =>
+      button.textContent?.includes("main.tsx"),
+    );
+    act(() => row?.click());
+    await flush();
+    const lineNumber = container.querySelector<HTMLButtonElement>(".wb-diff-n");
+    act(() => lineNumber?.click());
+    await flush();
+    await act(async () => {
+      resolveFile({ ok: true, value: { path: "src/app/main.tsx", content: "const x = 1;", revision: "r" } });
+      await Promise.resolve();
+    });
+    expect(container.querySelector(".wb-file-view")?.textContent).toContain("const x = 1;");
+  });
+
+  it("keeps the path separator out of the rtl-ellipsized directory", async () => {
+    mount();
+    await flush();
+    const commitButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "提交…",
+    );
+    act(() => commitButton?.click());
+    await flush();
+    // A trailing slash inside a direction:rtl span jumps to the front of the
+    // line and the path reads as one glued word; the separator is its own node.
+    expect(container.querySelector(".wb-commit-dir")?.textContent).toBe("src/app");
+    expect(container.querySelector(".wb-commit-sep")?.textContent).toBe("/");
+    expect(container.querySelector(".wb-commit-path")?.textContent).toBe("src/app/main.tsx");
+  });
+
+  it("collapses a commit's files on a second tap", async () => {
+    mount();
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
+    await flush();
+    const commitRow = container.querySelector<HTMLButtonElement>(".wb-history-row .wb-row-main");
+    act(() => commitRow?.click());
+    await flush();
+    expect(container.querySelector(".wb-history-files")).not.toBeNull();
+    act(() => commitRow?.click());
+    await flush();
+    expect(container.querySelector(".wb-history-files")).toBeNull();
+  });
+
+  it("re-reads the history after a commit lands while it is open", async () => {
+    mount();
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
+    await flush();
+    expect(net.loadHistory).toHaveBeenCalledTimes(1);
+    const commitButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "提交…",
+    );
+    act(() => commitButton?.click());
+    await flush();
+    act(() => container.querySelector<HTMLInputElement>(".wb-ack input")?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".wb-commit-go")?.click());
+    await flush();
+    expect(net.loadHistory.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("lets the later history request win over a slow earlier answer", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    net.loadHistory.mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve); }),
+    );
+    mount();
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
+    await flush();
+    const commitButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "提交…",
+    );
+    act(() => commitButton?.click());
+    await flush();
+    act(() => container.querySelector<HTMLInputElement>(".wb-ack input")?.click());
+    act(() => container.querySelector<HTMLButtonElement>(".wb-commit-go")?.click());
+    await flush();
+    expect(resolvers).toHaveLength(2);
+    const commit = (id: string, subject: string) => ({
+      ok: true,
+      value: {
+        repo: true,
+        commits: [{ id, parents: [], author: "a", at: Math.floor(Date.now() / 1000), refs: [], subject }],
+        truncated: false,
+      },
+    });
+    await act(async () => {
+      resolvers[1]?.(commit("new123456789", "较新提交"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolvers[0]?.(commit("old123456789", "较旧提交"));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("较新提交");
+    expect(container.textContent).not.toContain("较旧提交");
+  });
 });

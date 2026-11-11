@@ -5,10 +5,12 @@ import type { CommitFile, CommitProposal, CommitResult } from "../../wire/change
 type Phase = "drafting" | "ready" | "failed" | "done";
 
 /** The path as the commit card draws it: the directory side ellipsizes so the
- *  file's own name stays visible on a narrow row. */
+ *  file's own name stays visible on a narrow row. The separator is its own
+ *  node — inside the rtl-ellipsized directory span a trailing slash would jump
+ *  to the front of the line and glue the two halves into one word. */
 function fileParts(path: string): { dir: string; base: string } {
   const at = path.lastIndexOf("/");
-  return at < 0 ? { dir: "", base: path } : { dir: path.slice(0, at + 1), base: path.slice(at + 1) };
+  return at < 0 ? { dir: "", base: path } : { dir: path.slice(0, at), base: path.slice(at + 1) };
 }
 
 /**
@@ -179,7 +181,8 @@ export function CommitCard({
               <li key={file.path}>
                 <em data-status={file.status}>{file.status}</em>
                 <span className="wb-commit-path">
-                  <span className="wb-commit-dir">{parts.dir}</span>
+                  {parts.dir && <span className="wb-commit-dir">{parts.dir}</span>}
+                  {parts.dir && <span className="wb-commit-sep">/</span>}
                   <span>{parts.base}</span>
                 </span>
                 {file.sensitive === true && <span className="wb-sensitive">疑似密钥</span>}

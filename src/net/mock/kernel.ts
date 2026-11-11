@@ -333,16 +333,18 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
     }));
   }
   if (path === BASE + "/workspace/files") {
-    return Promise.resolve(json({
+    // A real kernel answer takes a network round trip; zero latency here would
+    // hide order-of-arrival races the phone actually hits.
+    return new Promise((done) => setTimeout(() => done(json({
       files: ["main.tsx", "README.md"],
       directories: ["src"],
-    }));
+    })), 40));
   }
   if (path === BASE + "/workspace/file") {
-    return Promise.resolve(json({
+    return new Promise((done) => setTimeout(() => done(json({
       path: "README.md", content: "# 演示\n\nmock 内核的只读文件。\n",
       revision: "mock",
-    }));
+    })), 40));
   }
   if (path === BASE + "/commit/propose" && method === "POST") {
     return Promise.resolve(json({

@@ -25,27 +25,35 @@ function refShort(ref: string): string {
 }
 
 /**
- * The commit history, folded under the changes and read on first open — the
+ * The commit history, folded under the changes and read on every open — the
  * desktop's `WorkbenchHistory` minus the client-drawn graph lanes. A row
- * expands into its files; a file expands into its diff.
+ * expands into its files and collapses again; a file expands into its diff.
+ * `refreshToken` moves when a commit lands, so an open section re-reads instead
+ * of showing a history the person's own commit already moved past.
  */
 export function HistorySection({
   base,
   repo,
   disabled,
+  refreshToken,
 }: {
   base: string;
   repo: string;
   disabled?: boolean;
+  refreshToken: number;
 }) {
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState<GitHistory | null>(null);
   const [error, setError] = useState("");
-  const loaded = useRef(false);
+  /** An open section re-reads on a commit while its own open-read may still be
+   *  in flight; the later request wins, not the later answer. */
+  const readReq = useRef(0);
 
   const read = (): void => {
+    const mine = ++readReq.current;
     setError("");
     void loadHistory(base, repo || undefined).then((reply) => {
+      if (mine !== readReq.current) return;
       if (!reply.ok) {
         setError(reply.code);
         return;
@@ -55,13 +63,10 @@ export function HistorySection({
   };
 
   useEffect(() => {
-    if (open && !loaded.current) {
-      loaded.current = true;
-      read();
-    }
-    // The section reads once per open; 重新读取 is the button's job.
+    if (open) read();
+    // base/repo remount the section through its key; the token is the commit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, refreshToken]);
 
   if (disabled) return null;
   return (
@@ -111,6 +116,7 @@ function CommitRow({
   now: number;
 }) {
   const [files, setFiles] = useState<GitCommitFiles | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState("");
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [diff, setDiff] = useState<ChangeDiff | null>(null);
@@ -121,6 +127,11 @@ function CommitRow({
   const refs = commit.refs.map(refShort).join(" · ");
 
   const expand = (): void => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
     if (files !== null) return;
     void loadCommitFiles(base, commit.id, repo || undefined).then((reply) => {
       if (!reply.ok) {
@@ -155,7 +166,7 @@ function CommitRow({
       <button
         type="button"
         className="wb-row-main"
-        aria-expanded={files !== null}
+        aria-expanded={expanded}
         onClick={expand}
       >
         <span className="wb-row-name">
@@ -168,7 +179,8 @@ function CommitRow({
         </span>
       </button>
       {error && <p className="wb-wait">{`没读出来：${error}`}</p>}
-      {files !== null && (
+      {expanded && files === null && !error && <p className="wb-wait">读取中…</p>}
+      {expanded && files !== null && (
         <div className="wb-history-files">
           {!files.repo && <p className="wb-wait">这个文件夹不是 git 仓库。</p>}
           {files.repo && files.files.length === 0 && <p className="wb-wait">这个提交没有文件变化。</p>}
