@@ -443,7 +443,6 @@ describe("Workbench", () => {
     await flush();
     act(() => container.querySelector<HTMLButtonElement>(".wb-history-head")?.click());
     await flush();
-<<<<<<< HEAD
     const commitRow = container.querySelector<HTMLButtonElement>(".wb-history-row .wb-row-main");
     act(() => commitRow?.click());
     await flush();
@@ -530,6 +529,5 @@ describe("Workbench", () => {
     await flush();
     expect(container.querySelector(".wb-history-files")).not.toBeNull();
     expect(container.textContent).not.toContain("没读出来");
-  });
   });
 });
