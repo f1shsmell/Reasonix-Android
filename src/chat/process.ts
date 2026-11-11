@@ -9,7 +9,8 @@
  *
  * How much is grouped is the transcript's fold preference: standard groups a
  * finished run but draws a running one step by step; compact groups even a
- * running run and drops thinking; full never groups. Pure and transport-free.
+ * running run and keeps thinking folded rather than dropped; full never
+ * groups. Pure and transport-free.
  */
 
 import type { FoldMode } from "./folding";
@@ -76,7 +77,8 @@ function stepOfReasoning(id: string, text: string, thoughtMs?: number): ProcessS
  *
  * `trailing` marks the run the turn is still producing. In standard mode that
  * run stays individual, because watching each step is the point while work is
- * happening; compact summarises it and drops thinking; full never groups.
+ * happening; compact summarises it with thinking folded along; full never
+ * groups.
  */
 export function buildDisplay(
   rows: Row[],
@@ -148,9 +150,14 @@ function buildCompact(rows: Row[], running: boolean): DisplayRow[] {
     const steps: ProcessStep[] = [];
     for (const row of slice) {
       if (row.kind === "tool") {
+        // A call's thinking belongs before the call it led to, as elsewhere.
+        if (row.reasoning?.trim()) steps.push(stepOfReasoning(row.id, row.reasoning));
         steps.push({ kind: "tool", id: row.id, row });
-      } else if (row.kind === "assistant" && row.text.trim()) {
-        steps.push({ kind: "text", id: row.id, text: row.text });
+      } else if (row.kind === "assistant") {
+        // Thinking is process, not answer: it rides in the folded record so
+        // the compact sheet and the thought window can still reach it.
+        if (row.reasoning.trim()) steps.push(stepOfReasoning(row.id, row.reasoning, row.thoughtMs));
+        if (row.text.trim()) steps.push({ kind: "text", id: row.id, text: row.text });
       }
     }
     return steps;
@@ -206,6 +213,26 @@ function buildCompact(rows: Row[], running: boolean): DisplayRow[] {
   }
   flush(running);
   return out;
+}
+
+/**
+ * A run's thinking as one window's worth: the thoughts in order, and the
+ * seconds they measured together. Null when the run never thought — a fold
+ * with nothing behind it is not drawn.
+ */
+export function thoughtOf(steps: ProcessStep[]): { text: string; thoughtMs?: number } | null {
+  const thoughts = steps.filter((step) => step.kind === "reasoning");
+  const text = thoughts
+    .map((step) => (step.kind === "reasoning" ? step.text : ""))
+    .filter((part) => part.trim())
+    .join("\n\n");
+  if (!text) return null;
+  const measured = thoughts.filter(
+    (step) => step.kind === "reasoning" && step.thoughtMs !== undefined,
+  );
+  if (measured.length === 0) return { text };
+  const ms = measured.reduce((sum, step) => sum + (step.kind === "reasoning" ? (step.thoughtMs ?? 0) : 0), 0);
+  return { text, thoughtMs: ms };
 }
 
 export interface RankedCategory {
