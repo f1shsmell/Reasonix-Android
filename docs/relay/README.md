@@ -1,5 +1,7 @@
 # Self-hosted relay: the server side
 
+[中文](README.zh-CN.md)
+
 Three files, one invariant: **the certificate lives on the machine that owns the
 kernel, and the server only forwards bytes.**
 
