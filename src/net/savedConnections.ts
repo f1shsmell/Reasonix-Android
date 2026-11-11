@@ -83,6 +83,41 @@ export function originName(origin: string): string {
   }
 }
 
+/**
+ * Whether an origin is reached across the internet rather than on this phone's
+ * own network.
+ *
+ * A self-hosted relay is an ordinary HTTPS origin, so it opens through the same
+ * door as a neighbour: nothing about routing differs. What differs is what the
+ * screen may promise — "回到同一 Wi-Fi 自动直连" can never apply to a name that
+ * resolves to a server in a rack.
+ */
+export function isRemoteOrigin(origin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (!host || host === "localhost" || host.endsWith(".local")) return false;
+  if (host.includes(":")) {
+    // IPv6: unique-local and link-local are neighbours, anything else is routed.
+    return !(host.startsWith("fd") || host.startsWith("fc") || host.startsWith("fe80"));
+  }
+  const parts = host.split(".");
+  const octets = parts.map((part) => Number(part));
+  const isAddress =
+    parts.length === 4 && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
+  // A name rather than an address: assume it resolves to somewhere off-link.
+  if (!isAddress) return true;
+  const [a = -1, b = -1] = octets;
+  if (a === 10 || a === 127) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 169 && b === 254) return false;
+  return true;
+}
+
 function read(): SavedConnection[] {
   try {
     const raw = localStorage.getItem(KEY);

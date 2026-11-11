@@ -44,6 +44,14 @@ export interface ProxyConfig {
    */
   direct?: string[];
   paired: boolean;
+  /**
+   * This upstream authenticates by launch token rather than by device cookie.
+   *
+   * A kernel behind a self-hosted relay has no share listener to pair with, so
+   * the proxy presents `Authorization: Bearer` on every request instead. The
+   * token itself stays in native preferences and never travels back here.
+   */
+  hasToken?: boolean;
   /** `relay` means kernel requests go through the account relay, not a LAN origin. */
   mode?: "lan" | "relay";
   relayDevice?: string;
@@ -126,15 +134,22 @@ export async function readProxyConfig(): Promise<ProxyConfig | null> {
   }
 }
 
-export async function configureProxy(origin: string, pairCode?: string): Promise<ProxyConfig> {
+export async function configureProxy(
+  origin: string,
+  pairCode?: string,
+  token?: string,
+): Promise<ProxyConfig> {
+  // `token` is sent when the caller names it, even as "": an explicit empty
+  // string is how a connection forgets a token it no longer needs. Omitting it
+  // keeps whatever the origin already had.
+  const body: Record<string, unknown> = { origin };
+  if (pairCode) body.pairCode = pairCode;
+  if (token !== undefined) body.token = token;
   // The proxy may spend 25 s reaching a share listener before it can name the
   // refusal; a shorter client deadline would replace that code with a timeout.
   return request<ProxyConfig>(
     "/__reasonix/config",
-    {
-      method: "POST",
-      body: JSON.stringify({ origin, ...(pairCode ? { pairCode } : {}) }),
-    },
+    { method: "POST", body: JSON.stringify(body) },
     pairCode ? 35_000 : undefined,
   );
 }
@@ -312,11 +327,15 @@ export async function readMachineIdentity(
  */
 export type DoorProbe = { ok: true; machine: string } | { ok: false; code: string };
 
-export async function probeDoor(origin: string, timeoutMs = 10_000): Promise<DoorProbe> {
+export async function probeDoor(
+  origin: string,
+  token?: string,
+  timeoutMs = 10_000,
+): Promise<DoorProbe> {
   try {
     const body = await request<{ machine?: unknown } | null>(
       "/__reasonix/device",
-      { method: "POST", body: JSON.stringify({ origin }) },
+      { method: "POST", body: JSON.stringify({ origin, ...(token ? { token } : {}) }) },
       timeoutMs,
     );
     // A page served where no proxy exists answers 200 with HTML, which parses
@@ -579,7 +598,7 @@ export async function firstAnswering(
 }
 
 export type ServerLink =
-  | { kind: "lan"; origin: string; pairCode?: string }
+  | { kind: "lan"; origin: string; pairCode?: string; token?: string }
   | { kind: "cloud"; device: string };
 
 /**
@@ -657,10 +676,15 @@ export function parseServerLink(raw: string): ServerLink | null {
     const device = url.searchParams.get("device") ?? fragment.get("device");
     if (device) return { kind: "cloud", device };
     const pairCode = fragment.get("pair") ?? url.searchParams.get("pair");
+    // A kernel behind a self-hosted relay publishes `#token=` instead of a
+    // pair code: there is no share listener to pair with. Keeping it here is
+    // what turns "an address" into "a door this phone can open".
+    const token = fragment.get("token") ?? url.searchParams.get("token");
     return {
       kind: "lan",
       origin: `${url.protocol}//${url.host}`,
       ...(pairCode ? { pairCode } : {}),
+      ...(token ? { token } : {}),
     };
   } catch {
     return null;

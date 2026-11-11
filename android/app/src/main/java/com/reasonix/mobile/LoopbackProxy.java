@@ -66,6 +66,16 @@ public final class LoopbackProxy {
     private static final String KEY_MODE = "mode";
     private static final String KEY_RELAY_DEVICE = "relay_device";
     private static final String KEY_NET_POLICY = "net_policy";
+    /**
+     * A pre-shared launch token for a kernel reached through a public origin.
+     *
+     * A LAN kernel hands this phone a device cookie through `/pair`; a kernel
+     * behind a self-hosted relay has no share listener to pair with, and asks
+     * every request to carry `Authorization: Bearer`. Tokens are held per
+     * origin, so a phone that remembers two relays keeps both, and a LAN
+     * neighbour never receives one.
+     */
+    private static final String KEY_TOKENS = "tokens";
     static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
     private static final String IDENTITY = "https://id.reasonix.io";
     /**
@@ -445,7 +455,48 @@ public final class LoopbackProxy {
         }
         saveOrigin(origin);
         prefs.edit().putString(KEY_MODE, "lan").remove(KEY_RELAY_DEVICE).apply();
+        // Absent `token` leaves whatever this origin already had; present but
+        // empty forgets it. A kernel behind a relay needs it on every request,
+        // so it outlives the connect that supplied it.
+        if (request.has("token")) rememberToken(origin, request.optString("token", "").trim());
         ProxyWire.writeJson(socket, 200, configJson().toString());
+    }
+
+    /** Bind a launch token to the origin it authenticates, or forget it. */
+    private void rememberToken(String origin, String token) {
+        JSONObject map = tokenMap();
+        try {
+            if (token.isEmpty()) map.remove(origin);
+            else map.put(origin, token);
+        } catch (JSONException e) {
+            return;
+        }
+        prefs.edit().putString(KEY_TOKENS, map.toString()).apply();
+    }
+
+    /** Every origin this phone holds a launch token for. Never leaves native. */
+    private JSONObject tokenMap() {
+        try {
+            return new JSONObject(prefs.getString(KEY_TOKENS, "{}"));
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    /**
+     * The launch token to send to [origin], or "" when there is none for it.
+     *
+     * Looked up by origin rather than held as "the current token": a token
+     * entered for one relay must never travel to a different upstream.
+     */
+    private String activeToken(String origin) {
+        return tokenMap().optString(origin, "");
+    }
+
+    /** Present a launch token as the kernel's own gate expects it. */
+    private void applyToken(HttpURLConnection conn, String origin, String override) {
+        String token = override == null || override.isEmpty() ? activeToken(origin) : override;
+        if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
     }
 
     private void setRelay(Socket socket, byte[] body) throws IOException, JSONException {
@@ -525,6 +576,10 @@ public final class LoopbackProxy {
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(4000);
             conn.setReadTimeout(4000);
+            // A door the app is about to adopt carries its own token: the
+            // stored one belongs to whichever origin was active before, and a
+            // probe that reused it would call a reachable relay unauthorised.
+            applyToken(conn, origin, request.optString("token", "").trim());
             String web = ProxyCookies.webCookie(origin.endsWith("/") ? origin : origin + "/");
             if (!web.isEmpty()) {
                 conn.setRequestProperty("Cookie", web);
@@ -749,6 +804,9 @@ public final class LoopbackProxy {
         out.put("direct", direct);
         out.put("paired", !origin.isEmpty()
                 && (cookies.has(origin) || !ProxyCookies.webCookie(origin.endsWith("/") ? origin : origin + "/").isEmpty()));
+        // Whether this upstream authenticates by token instead of by cookie.
+        // The value itself never travels back to the page.
+        out.put("hasToken", !activeToken(origin).isEmpty());
         String mode = prefs.getString(KEY_MODE, "lan");
         out.put("mode", mode);
         // The full Studio page can only reach a LAN kernel through this proxy:
@@ -858,6 +916,7 @@ public final class LoopbackProxy {
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
+            applyToken(conn, origin, "");
             String web = ProxyCookies.webCookie(origin.endsWith("/") ? origin : origin + "/");
             if (!web.isEmpty()) {
                 conn.setRequestProperty("Cookie", web);
@@ -985,6 +1044,10 @@ public final class LoopbackProxy {
             } else {
                 cookies.apply(conn, uri);
             }
+            // The kernel behind a relay authenticates every request by token
+            // rather than by cookie. A page that already speaks for itself wins:
+            // only fill the header in when the caller did not set one.
+            if (!headers.containsKey("authorization")) applyToken(conn, origin, "");
             if (body.length > 0) {
                 conn.setDoOutput(true);
                 conn.setFixedLengthStreamingMode(body.length);

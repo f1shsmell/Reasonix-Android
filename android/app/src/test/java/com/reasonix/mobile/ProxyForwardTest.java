@@ -66,12 +66,19 @@ public class ProxyForwardTest {
     }
 
     private static int postConfig(String origin) throws Exception {
+        return postConfig(origin, null);
+    }
+
+    /** [token] null leaves whatever the proxy already had; "" forgets it. */
+    private static int postConfig(String origin, String token) throws Exception {
         HttpURLConnection connection = open("/__reasonix/config", "POST");
         connection.setRequestProperty("Cookie", cookie);
         connection.setRequestProperty("Origin", base());
         connection.setRequestProperty("Content-Type", "application/json");
         connection.setDoOutput(true);
-        byte[] body = new JSONObject().put("origin", origin).toString().getBytes(StandardCharsets.UTF_8);
+        JSONObject payload = new JSONObject().put("origin", origin);
+        if (token != null) payload.put("token", token);
+        byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
         connection.setFixedLengthStreamingMode(body.length);
         try (OutputStream out = connection.getOutputStream()) {
             out.write(body);
@@ -161,9 +168,40 @@ public class ProxyForwardTest {
         assertTrue(body, body.contains("hello"));
     }
 
+    @Test
+    public void carriesTheLaunchTokenARelayAsksFor() throws Exception {
+        // A kernel behind a relay has no share listener to pair with: the token
+        // is the whole credential, so a forward without it is a 401 in the field.
+        assertEquals(200, postConfig(upstream.origin(), "relay-secret"));
+        try {
+            assertTrue(get("/runtimes", cookie, base()).contains("\"id\":\"up\""));
+            assertEquals("Bearer relay-secret", upstream.lastAuthorization());
+        } finally {
+            // Other tests in this class assume a plain LAN door.
+            assertEquals(200, postConfig(upstream.origin(), ""));
+        }
+    }
+
+    @Test
+    public void doesNotCarryTheTokenToADifferentOrigin() throws Exception {
+        FakeUpstream other = new FakeUpstream();
+        try {
+            assertEquals(200, postConfig(upstream.origin(), "relay-secret"));
+            // Switching to another door must not replay the first door's token:
+            // the next address is not necessarily the same machine.
+            assertEquals(200, postConfig(other.origin()));
+            assertTrue(get("/runtimes", cookie, base()).contains("\"id\":\"up\""));
+            assertEquals("", other.lastAuthorization());
+        } finally {
+            other.close();
+            assertEquals(200, postConfig(upstream.origin(), ""));
+        }
+    }
+
     private static final class FakeUpstream implements Runnable {
         private final ServerSocket server;
         private final Thread thread;
+        private volatile String lastAuthorization = "";
 
         FakeUpstream() throws IOException {
             server = new ServerSocket(0, 20, InetAddress.getByName("127.0.0.1"));
@@ -176,6 +214,11 @@ public class ProxyForwardTest {
             return "http://127.0.0.1:" + server.getLocalPort();
         }
 
+        /** The Authorization header the last forwarded request carried. */
+        String lastAuthorization() {
+            return lastAuthorization;
+        }
+
         @Override
         public void run() {
             while (!server.isClosed()) {
@@ -184,9 +227,14 @@ public class ProxyForwardTest {
                             new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
                     String request = reader.readLine();
                     String line;
+                    String authorization = "";
                     while ((line = reader.readLine()) != null && !line.isEmpty()) {
-                        // Drain the headers.
+                        int colon = line.indexOf(':');
+                        if (colon > 0 && "authorization".equalsIgnoreCase(line.substring(0, colon).trim())) {
+                            authorization = line.substring(colon + 1).trim();
+                        }
                     }
+                    lastAuthorization = authorization;
                     String path = request == null ? "" : request.split(" ")[1];
                     if ("/runtimes".equals(path)) {
                         write(socket, "application/json",
