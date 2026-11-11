@@ -122,12 +122,17 @@ export function Workbench({
   const [stageError, setStageError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCommit, setShowCommit] = useState(false);
-  /** The open diff, keyed to its repository: a repo switch invalidates it by
-   *  key comparison instead of a reset effect that races the diff fetch. */
-  const [open, setOpen] = useState<{ repo: string; path: string } | null>(null);
+  /** Moves once per recorded commit: an open history re-reads on it. */
+  const [commits, setCommits] = useState(0);
+  /** The open diff, keyed to its repository and to the staged part of the path:
+   *  a path listed twice (staged and unstaged) opens on the row tapped, and a
+   *  repo switch invalidates it by key comparison instead of a reset effect
+   *  that races the diff fetch. */
+  const [open, setOpen] = useState<{ repo: string; path: string; staged: boolean } | null>(null);
   const [slots, setSlots] = useState<Map<string, DiffSlot>>(new Map());
   const [jump, setJump] = useState<{ path: string; token: number } | null>(null);
   const openPath = open !== null && open.repo === activeRepo ? open.path : null;
+  const openStaged = open !== null && open.repo === activeRepo && open.staged;
 
   // The repo list: read per revision, single flight by effect discipline.
   useEffect(() => {
@@ -246,11 +251,11 @@ export function Workbench({
   );
 
   const onOpenDiff = useCallback(
-    (path: string): void => {
+    (path: string, staged: boolean): void => {
       setOpen((current) =>
-        current !== null && current.repo === activeRepo && current.path === path
+        current !== null && current.repo === activeRepo && current.path === path && current.staged === staged
           ? null
-          : { repo: activeRepo, path },
+          : { repo: activeRepo, path, staged },
       );
     },
     [activeRepo],
@@ -353,9 +358,12 @@ export function Workbench({
                   base={base}
                   repo={activeRepo}
                   onClose={() => setShowCommit(false)}
-                  // The card keeps its own done phase on screen; only the tree
-                  // refreshes here.
-                  onCommitted={() => refresh()}
+                  // The card keeps its own done phase on screen; the tree and
+                  // an open history refresh here.
+                  onCommitted={() => {
+                    setCommits((count) => count + 1);
+                    refresh();
+                  }}
                 />
               )}
               <div className="wb-section-head">
@@ -415,6 +423,7 @@ export function Workbench({
                   busy={busy}
                   readOnly={readOnly}
                   openPath={openPath}
+                  openStaged={openStaged}
                   slots={slots}
                   onToggleFile={onToggleFile}
                   onToggleFolder={onToggleFolder}
@@ -427,6 +436,7 @@ export function Workbench({
                 base={base}
                 repo={activeRepo}
                 disabled={changes?.repo === false}
+                refreshToken={commits}
               />
             </>
           )}

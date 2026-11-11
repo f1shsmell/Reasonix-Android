@@ -73,11 +73,12 @@ interface Walk {
   busy: boolean;
   readOnly: boolean;
   openPath: string | null;
+  openStaged: boolean;
   slots: Map<string, DiffSlot>;
   folded: Set<string>;
   onToggleFile: (path: string, current: boolean | "mixed") => void;
   onToggleFolder: (paths: string[], current: boolean | "mixed") => void;
-  onOpenDiff: (path: string) => void;
+  onOpenDiff: (path: string, staged: boolean) => void;
   onOpenFile: (path: string) => void;
   onToggleFold: (path: string) => void;
 }
@@ -126,7 +127,7 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
     return drawn;
   }
   const entry = node.change;
-  const open = walkState.openPath === node.path;
+  const open = walkState.openPath === node.path && walkState.openStaged === (entry.staged === true);
   const slot = open ? walkState.slots.get(node.path) : undefined;
   drawn.push(
     <div
@@ -147,7 +148,7 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
         type="button"
         className="wb-row-main"
         aria-current={open ? "page" : undefined}
-        onClick={() => walkState.onOpenDiff(node.path)}
+        onClick={() => walkState.onOpenDiff(node.path, entry.staged === true)}
       >
         <span className="wb-row-name">
           <em data-status={statusTone(entry.status)}>{entry.status}</em>
@@ -190,12 +191,13 @@ interface TreeProps {
   busy: boolean;
   readOnly: boolean;
   openPath: string | null;
+  openStaged: boolean;
   slots: Map<string, DiffSlot>;
   /** Rows drawn before a "show more" line ends the list. */
   budget?: number;
   onToggleFile: (path: string, current: boolean | "mixed") => void;
   onToggleFolder: (paths: string[], current: boolean | "mixed") => void;
-  onOpenDiff: (path: string) => void;
+  onOpenDiff: (path: string, staged: boolean) => void;
   onOpenFile: (path: string) => void;
 }
 
@@ -216,6 +218,7 @@ export function ChangesTree(props: TreeProps): React.JSX.Element {
     busy: props.busy,
     readOnly: props.readOnly,
     openPath: props.openPath,
+    openStaged: props.openStaged,
     slots: props.slots,
     folded,
     onToggleFile: props.onToggleFile,

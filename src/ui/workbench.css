@@ -159,6 +159,7 @@
 .wb-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-height: 44px;
   border-top: 1px solid var(--line-soft);
@@ -282,8 +283,10 @@
   font-style: normal;
 }
 
+/* The open diff wraps onto its own line at the row's full width instead of
+   sitting beside the row's name as a squeezed flex sibling. */
 .wb-row-diff {
-  flex: none;
+  flex: 1 0 100%;
   width: 100%;
   margin: 2px 0 6px;
 }

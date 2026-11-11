@@ -52,17 +52,19 @@ export function FileBrowser({
   const [error, setError] = useState("");
   const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [fileError, setFileError] = useState("");
-  /** Guards every read (listing, open, jump) against an out-of-order older
-   *  answer: the latest user intent wins. A per-effect `cancelled` flag would
-   *  not span the three effects; the shared counter is the one id both the
-   *  StrictMode re-mount and a quick tap sequence respect. */
-  const requestId = useRef(0);
+  /** Two guards, one per intent: the listing a folder change triggers and the
+   *  file a tap or jump asks for. A single shared counter let the jump's own
+   *  folder change discard the jump's pending file read, so the line number
+   *  landed on a listing instead of the file. Each guard still lets the latest
+   *  answer of its own kind win over a slow older one. */
+  const listingId = useRef(0);
+  const fileId = useRef(0);
 
   useEffect(() => {
-    const mine = ++requestId.current;
+    const mine = ++listingId.current;
     setError("");
     void listFiles(base, path, search).then((reply) => {
-      if (mine !== requestId.current) return;
+      if (mine !== listingId.current) return;
       if (!reply.ok) {
         setError(fileMessage(reply.code));
         setListing(null);
@@ -81,12 +83,12 @@ export function FileBrowser({
   // A jump from the diff's line numbers: open that file wherever it lives.
   useEffect(() => {
     if (!jump) return;
-    const mine = ++requestId.current;
+    const mine = ++fileId.current;
     setFileError("");
     const at = jump.path.lastIndexOf("/");
     setCurrent(at < 0 ? "" : jump.path.slice(0, at));
     void readFile(base, jump.path).then((reply) => {
-      if (mine !== requestId.current) return;
+      if (mine !== fileId.current) return;
       if (!reply.ok) {
         setFileError(fileMessage(reply.code));
         return;
@@ -101,10 +103,10 @@ export function FileBrowser({
     // so the name is the whole path there; a folder listing's names hang
     // under the current folder.
     const full = search ? name : path ? `${path}/${name}` : name;
-    const mine = ++requestId.current;
+    const mine = ++fileId.current;
     setFileError("");
     void readFile(base, full).then((reply) => {
-      if (mine !== requestId.current) return;
+      if (mine !== fileId.current) return;
       if (!reply.ok) {
         setFileError(fileMessage(reply.code));
         return;
