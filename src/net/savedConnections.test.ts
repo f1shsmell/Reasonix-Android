@@ -6,6 +6,7 @@ import {
   forgetConnection,
   forgetConnectionGroup,
   groupConnections,
+  isRemoteOrigin,
   latestConnection,
   learnConnectionMachine,
   loadConnections,
@@ -338,5 +339,35 @@ describe("machine identity", () => {
     rememberConnection("lan", "http://192.168.7.9:56789", "公司", "Office PC");
     const key = groupConnections(loadConnections())[0]!.key;
     expect(forgetConnectionGroup(key).map((row) => row.machine)).toEqual(["Office PC"]);
+  });
+});
+
+describe("isRemoteOrigin", () => {
+  it("treats a neighbour address as local", () => {
+    for (const origin of [
+      "http://192.168.5.2:8791",
+      "http://10.0.0.4:8791",
+      "http://172.16.2.59:8791",
+      "http://127.0.0.1:8788",
+      "http://studio.local:8791",
+      "http://localhost:8791",
+    ]) {
+      expect(isRemoteOrigin(origin), origin).toBe(false);
+    }
+  });
+
+  it("treats a routed address or a name as remote", () => {
+    for (const origin of [
+      "https://rx.example.com:8443",
+      "http://112.51.86.191:8791",
+      "https://[2408:8207::1]:8443",
+    ]) {
+      expect(isRemoteOrigin(origin), origin).toBe(true);
+    }
+  });
+
+  it("does not call a unique-local IPv6 neighbour remote", () => {
+    expect(isRemoteOrigin("http://[fddd:62aa:3db::1]:8791")).toBe(false);
+    expect(isRemoteOrigin("http://[fe80::1]:8791")).toBe(false);
   });
 });

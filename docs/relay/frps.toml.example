@@ -1,0 +1,17 @@
+# Runs on the server. Terminates nothing: no certificate, no HTTP parsing.
+bindPort = 7000
+
+auth.method = "token"
+auth.token = "<32 random characters>"
+
+# One port in, one port out. Anything else is refused, so a leaked token cannot
+# be used to open arbitrary listeners on the box.
+allowPorts = [{ start = 8443, end = 8443 }]
+
+# Encrypt the frpc↔frps control channel too. The payload is already inside TLS;
+# this covers the tunnel's own frames.
+transport.tls.force = true
+
+# The dashboard stays on loopback. Reach it over SSH, never from the internet.
+webServer.addr = "127.0.0.1"
+webServer.port = 7500

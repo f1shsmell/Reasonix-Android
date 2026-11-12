@@ -19,3 +19,8 @@ keystore.properties
 *.keystore
 $TMPDIR/
 /shots/
+
+# 本机部署记录与网络探测结果不进仓库：含家庭网络形态、运营商、出口地址与
+# 端口判定，属于"这台机器的事实"，不是"这个项目的事实"。
+docs/RELAY_DESIGN.md
+docs/*.local.md

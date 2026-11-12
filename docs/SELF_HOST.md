@@ -236,3 +236,87 @@ App 里在连接页填 `https://rx.example.com`，token 一并填进去。
 
 `RelayEventSource` 的 200 ms 轮询是独立的技术债，不影响 A/B 路线，但会让 C 路线
 一直慢。
+
+## 2026-11-12 复核
+
+买下一台 4 核 4G、5 Mbps、60 G 盘、500 GB/月的年付机之后重新过了一遍选型。
+**结论不变，仍走 A 路线**，但有三件事要更正或补记。
+
+### 一、这台机器的账
+
+5 Mbps 是出方向，约 640 KB/s；500 GB/月摊到 30 天是平均 1.5 Mbps 持续。
+**跑满 5 Mbps 约 9 天就烧完一个月流量。**
+
+结论：**带宽是硬约束，流量不是**。纯对话一天几十 MB，一年也用不完；吃流量的是
+图片附件（上下行各算一次）和 Studio 整页 WebView 的首次加载——几 MB 走 640 KB/s
+要 5–10 秒，之后靠缓存。
+
+### 二、Cloudflare Workers 不等于 Cloudflare Tunnel
+
+本文正文里担心的 SSE 缓冲和 100 s 空闲超时，是 **Tunnel** 的问题——它反代 HTTP。
+**Workers 版中继**（如 alma-relay 的 Cloudflare 版）是自己实现的转发，字节走
+WebSocket，不经过 CF 的 HTTP 反代链路，**没有 SSE 缓冲问题**。
+
+但换成另外三条，都写在它的 `docs/PROTOCOL.md` 里：
+
+| 限制 | 后果 |
+|---|---|
+| 运行时每周更新数次，in-flight 请求给 30 s 宽限后终止 | agent 那条 WSS 是长连接，撞上就断 |
+| Workers 不报告 WebSocket 背压 | 逐流流控退化成"发出去即确认"，慢读者靠 DO 内存扛 |
+| Durable Object 单实例单地域 | 一条隧道的全部流量钉在一个 colo |
+| 边缘先收完整请求体才跑 Worker | 流式上传失效 |
+
+再加上免费版按请求计费的日额度。**结论：Workers 版适合按需请求型的 relay，
+不适合长 SSE + 高频小包型。** 本项目的流量形状属于后者，所以即便走 CF，也应
+优先 Tunnel 而非 Workers。
+
+### 三、手机通知走账号服务，不走 relay
+
+Studio 的「设置 → 设备 → 手机通知」是新增的云端通知：电脑检测到**有操作等待批准 /
+模型提问 / 一轮失败**三类事件时，向**账号服务**（`id.reasonix.io`）上报，
+内容只有「哪一类 + 数量」，不含会话名、命令或对话内容；总开关关闭时不上报任何东西，
+默认全关。手机需在自己的远程页面里勾选接收，才会出现在「已登记的手机」里。
+
+**手机端的入口未验证（2026-11-12）。** App 内没有这个开关——`src/` 与 `android/`
+里没有任何「接收提醒 / 已登记 / 手机通知」的字符串，设置页只有「连接 / 账号 / 偏好」
+三个分组（`src/app/ConnectScreen.tsx:153`）。手机打开的是
+`https://reasonix.io/remote/?device=<id>`（`src/net/server.ts:592`），那是 reasonix.io
+托管的一层中转页，不是内核自己的设置界面；桌面那张截图来自内核的设置页。所以这个
+开关在手机上可能出现在远程页的独立入口、可能随服务端前端版本尚未上线、也可能被
+归入宿主专属路由（参见 `docs/KNOWN_LIMITATIONS.md` 里 host-only 表的说明）。
+
+链路是 **电脑 → 账号服务 → 已登记的手机**，与 relay 无关。中继仍然内容盲，E2E 不受影响。
+
+由此修正一个此前没说清的点：
+
+- **自建 relay 不影响通知。** 通知在 accounts 那一侧。
+- **只有连 accounts 一起自建，这条路才会断**，回退到 App 的本地轮询。
+- 而 accounts 正是本文第 45 行论证过"不值得自建"的那部分。
+
+App 侧现状（0.6.0）：`src/net/cloudWatch.ts` 仍是 WebView 内的
+`/runtimes` + `/status` 轮询，`CloudWatcher.POLL_MS = 60_000`，两次失败停服务；
+注释写明"only runs while the app process and its WebView are alive"。
+0.6.0 的发布说明里没有这项。**Studio 已经上报，App 还没有接收端。**
+
+**不要为此接 FCM。** 发送方是官方账号服务，它只会向签名该 App 的 Firebase 项目投递，
+第三方构建的 APK 拿不到这条通道。要做只能在 accounts 的拉取/订阅契约上做。
+
+### 四、alma-relay 的参照价值
+
+[yetone/alma-relay](https://github.com/yetone/alma-relay)：2026-10-31 从 Alma 主仓库
+拆出，11-08 已到 v1.4.0，MIT，512 star，Node 版单文件 + 唯一依赖 `ws`。
+
+**不能直接接本项目**：它的帧是 Alma 的（`register` / `hreq` / `hchunk` / `wopen`），
+Reasonix Studio 不说这套话。
+
+**但它反证了本文的核心结论**：
+
+- 它**不需要 accounts**——桌面端自生成 256-bit 连接码，relay 只存
+  `sha256(token)`，内存里，不落盘。所以纯转发的中继几百行就够。
+- 本文第 49 行说自建要 2–3 天，**贵在 accounts，不在 relay**。
+- 它把本文记下的几个痛点都解了：真流式 `hchunk`（无 200 ms 下限）、
+  Protocol 3 逐流控（1 MiB 窗口 + `ack`，慢读者只卡自己那条流）、
+  `hcancel`（手机走了立刻告诉桌面停手）。
+
+所以它是"协议级 relay 该怎么写"的参照，不是本项目的可选项。**要真流式，仍然得
+改客户端说 SSE，那就是 A 路线；不改客户端，自建 relay 依然受 200 ms 轮询限制。**

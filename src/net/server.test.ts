@@ -39,6 +39,21 @@ describe("parseServerLink", () => {
     });
   });
 
+  it("keeps the launch token a self-hosted relay publishes", () => {
+    // A kernel behind a relay has no share listener to pair with: the token in
+    // the fragment is the only credential, so dropping it loses the door.
+    expect(parseServerLink("https://rx.example.com:8443/#token=abc123")).toEqual({
+      kind: "lan",
+      origin: "https://rx.example.com:8443",
+      token: "abc123",
+    });
+    expect(parseServerLink("https://rx.example.com/?token=abc123")).toEqual({
+      kind: "lan",
+      origin: "https://rx.example.com",
+      token: "abc123",
+    });
+  });
+
   it("recognises the Internet link as a cloud code, not an origin", () => {
     expect(parseServerLink("https://reasonix.io/remote/?device=abc")).toEqual({
       kind: "cloud",
@@ -123,9 +138,42 @@ describe("proxy control plane", () => {
       code: "device.pairing_invalid",
     } satisfies Partial<ProxyError>);
   });
+
+  it("hands the proxy the launch token a relay door carries", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ origin: "https://rx.example.com" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await configureProxy("https://rx.example.com", undefined, "abc123");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toEqual({ origin: "https://rx.example.com", token: "abc123" });
+  });
+
+  it("leaves the token alone when the caller does not name one", async () => {
+    // Omitting `token` is how a reconnect keeps what the proxy already stored;
+    // sending "" instead would forget a relay's credential on every switch.
+    const fetchMock = vi.fn().mockResolvedValue(json({ origin: "http://192.168.5.2:8791" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await configureProxy("http://192.168.5.2:8791");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toEqual({ origin: "http://192.168.5.2:8791" });
+  });
 });
 
 describe("probeDoor", () => {
+  it("carries the token a relay door needs to answer", async () => {
+    // Without it the kernel answers 401 and the door is refused before the app
+    // ever points the proxy at it.
+    const fetchMock = vi.fn().mockResolvedValue(json({ machine: "studio" }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await probeDoor("https://rx.example.com", "abc123")).toEqual({
+      ok: true,
+      machine: "studio",
+    });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toEqual({ origin: "https://rx.example.com", token: "abc123" });
+  });
   it("names the computer behind a door that answers", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ machine: "MacBook-Pro" })));
 

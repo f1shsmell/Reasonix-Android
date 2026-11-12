@@ -28,6 +28,11 @@ export interface Door {
   kind: "lan" | "cloud";
   /** A LAN origin, or an account device id. */
   target: string;
+  /**
+   * The launch token this origin asks for, when it is a kernel behind a
+   * self-hosted relay. A neighbour on the same Wi-Fi pairs instead and has none.
+   */
+  token?: string;
   /** What to call it in the UI. */
   name?: string;
   /** The computer's own name, when a saved row or the account already knew it. */
@@ -121,14 +126,24 @@ export async function openDoor(
       // Verify before tearing anything down. The switch itself is a local
       // write, so a door that cannot answer leaves the current route intact —
       // that is the difference between a handover and an outage.
-      const pre = await probeDoor(door.target);
+      // A relay door carries its own launch token; a neighbour pairs instead
+      // and must not be sent one. Passing it only when it exists keeps the
+      // two shapes distinguishable to callers that assert on them.
+      const pre = door.token
+        ? await probeDoor(door.target, door.token)
+        : await probeDoor(door.target);
       if (!pre.ok) {
         return { ok: false, error: linkFailure(pre.code, `origin ${door.target}`) };
       }
       // What the proxy pointed at before this switch, so a door that answers
       // its probe but not `/runtimes` can put it back.
       const before = await readProxyConfig();
-      await configureProxy(door.target);
+      // Omitting the token keeps whatever this origin already had; a door that
+      // carries one replaces it, and that is what makes a relay usable after
+      // the first connect.
+      await (door.token
+        ? configureProxy(door.target, undefined, door.token)
+        : configureProxy(door.target));
       clearRelayRouting();
       onStep("verify");
       const reach = await probeUpstream();

@@ -1,0 +1,18 @@
+{
+	email <you@example.com>
+}
+
+# The certificate lives here, on the machine that owns the kernel. The server
+# forwards bytes and never sees plaintext.
+#
+# The name resolves to the server, not to this machine: frpc carries the traffic
+# in, so no inbound port is opened here and nothing has to be forwarded at home.
+<relay host>:8443 {
+	tls {
+		# DNS-01 needs no port 80 and no public reachability. Requires a Caddy
+		# built with the provider plugin; the stock binary lacks this directive.
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+
+	reverse_proxy 127.0.0.1:8791
+}

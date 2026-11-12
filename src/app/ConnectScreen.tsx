@@ -53,6 +53,7 @@ import {
   forgetCloudConnections,
   forgetConnection,
   groupConnections,
+  isRemoteOrigin,
   learnConnectionMachine,
   loadConnections,
   machineKey,
@@ -211,6 +212,12 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [config, setConfig] = useState<ProxyConfig | null>(null);
   const [origin, setOrigin] = useState("");
   const [pairCode, setPairCode] = useState("");
+  /**
+   * The launch token a self-hosted relay asks for, when this door is not a
+   * neighbour. Held only long enough to hand to the proxy, which keeps it per
+   * origin; the field is cleared once the door opens.
+   */
+  const [token, setToken] = useState("");
   const [account, setAccount] = useState<ProxyAccount>({ signedIn: false });
   const [devices, setDevices] = useState<RemoteDevice[]>([]);
   const [grant, setGrant] = useState<DeviceGrant | null>(null);
@@ -537,9 +544,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   }, [retainTranscript]);
 
   const connect = useCallback(
-    async (target: string, code: string) => {
+    async (target: string, code: string, launchToken?: string) => {
       const base = target.trim().replace(/\/+$/, "");
       const pairCodeValue = code.trim();
+      const tokenValue = (launchToken ?? "").trim();
       if (!base) {
         setError("先填一个地址，或者扫码。");
         return;
@@ -592,6 +600,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
           return false;
         }
         setPairCode("");
+        // The proxy keeps the token per origin from here on; leaving it in the
+        // field would show a secret on a screen that no longer needs it.
+        setToken("");
         if (next.origin) setSaved(rememberConnection("lan", next.origin));
         onConnected();
         return true;
@@ -657,7 +668,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             throw failure;
           }
         }
-        await apply(await configureProxy(base, pairCodeValue || undefined));
+        // A relay door authenticates by token; a neighbour by pair code. Only
+        // name the token when one was typed, so the two shapes stay distinct.
+        await apply(
+          await (tokenValue
+            ? configureProxy(base, pairCodeValue || undefined, tokenValue)
+            : configureProxy(base, pairCodeValue || undefined)),
+        );
       } catch (failure) {
         const failureCode = refusalCode(failure);
         const where = base;
@@ -762,7 +779,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       }
       setOrigin(serverLink.origin);
       setPairCode(serverLink.pairCode ?? "");
-      await connect(serverLink.origin, serverLink.pairCode ?? "");
+      setToken(serverLink.token ?? "");
+      await connect(serverLink.origin, serverLink.pairCode ?? "", serverLink.token ?? "");
     },
     [account.signedIn, connect, connectCloud],
   );
@@ -1157,6 +1175,10 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
    */
   const doorDetail = (door: SavedConnection): string => {
     if (door.kind === "cloud") return "云端 · Reasonix 账号";
+    // A self-hosted relay is an HTTPS origin, so it lands in the same door as a
+    // neighbour. Saying "局域网" for an address on the internet would promise a
+    // direct route this phone can never take.
+    if (isRemoteOrigin(door.target)) return "中继 · 自己的服务器";
     const near = direct.some((candidate) => normalizeTarget("lan", candidate) === door.target);
     // The door's title is already its address; repeating the URL here wrapped
     // "可直连" in half on a phone.
@@ -1164,7 +1186,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   };
   /** The × label keeps the address even when the visible line does not. */
   const doorAria = (door: SavedConnection): string =>
-    door.kind === "lan" ? `局域网 · ${door.target}` : `云端 · ${doorLabel(door)}`;
+    door.kind === "lan"
+      ? `${isRemoteOrigin(door.target) ? "中继" : "局域网"} · ${door.target}`
+      : `云端 · ${doorLabel(door)}`;
   /** A door's own name, for the row under a computer. */
   const doorLabel = (door: SavedConnection): string => labelOf(door);
   const groupDetail = (group: ConnectionGroup, door: SavedConnection): string => {
@@ -1560,10 +1584,25 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               spellCheck={false}
             />
           </label>
+          <label className="setting">
+            <span className="setting-title">启动令牌</span>
+            <input
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="自建中继时填写，局域网留空"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              type="password"
+            />
+          </label>
+          <p className="group-note">
+            同一 Wi-Fi 直连用配对码；走自己的服务器时改填启动令牌，两者只填一个。
+          </p>
           <button
             type="button"
             className="setting action"
-            onClick={() => void connect(origin, pairCode)}
+            onClick={() => void connect(origin, pairCode, token)}
             disabled={busy !== "" || !origin.trim()}
           >
             {busy === "正在连接" ? "正在连接…" : "连接这台电脑"}

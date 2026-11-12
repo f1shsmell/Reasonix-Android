@@ -119,3 +119,65 @@ not a shrink.
 
 Refuse: rendering chat from a terminal mirror. Reasonix has a structured event
 stream — use it.
+
+## 2026-11-12 复核：herdr 成了平台，上面的结论反而更硬
+
+上一轮（2026-10-29）漏了最大的一块。**herdr 现在是这个领域的运行时层**，
+而 collie / ovis 都只是它上面的客户端。
+
+| 仓库 | Stars | 定位 | 创建 |
+|---|---|---|---|
+| `herdrdev/herdr` | **50,260** | 所有 coding agent 的运行时，Rust 单二进制 | 2026-03 |
+| `herdrdev/herdr-app` | 2,723 | 官方桌面端 | 2026-10 |
+| `devswha/ovis` | 2,023 | 浏览器 / 手机客户端 | 2026-09 |
+| `AltanS/collie` | 1,635 | 手机 PWA | 2026-06 |
+| `eliasstravik/shepherdr` | 1,125 | 手机上跨机器跑多个 agent | 2026-09 |
+
+上一轮记的 collie 1495、ovis 1608，一个月各涨了一成多。
+
+### 平台层已被占住
+
+herdr 的原话是 *"herdr doesn't wrap or replace them; it owns their terminals."*
+它走 **PTY，不走 ACP**——整个仓库没有 ACP 一个字。它的资产是 libghostty-vt 加
+从终端输出推断出的三态（working / blocked / idle），对外只暴露一个本地 socket API。
+
+所以「一个客户端连所有 agent」这件事的答案是**把 agent 当终端**，不是当 API。
+agent 的语义永远统一不了，终端是唯一公约数。Collie 把这层抽象写成了
+`MUX_CONTRACT.md`，herdr / herdr-core / tmux / zellij 收敛成同一套
+pane + keys + snapshot。
+
+### 但这也证明了本文的主张
+
+上面「不要用渲染屏幕做聊天」那一节，现在有了规模化的证据：**所有通用客户端都
+只能抓终端，因为它们的 agent 不提供结构化事件流。**
+
+Collie 自己的 `ARCHITECTURE.md` 承认了这个天花板——alternate screen 没有
+scrollback、超过 30 行的框读不出、超过 8 行的消息发不出去。
+
+Reasonix 内核提供 `/rt/{id}/events` 的类型化 SSE，这条限制对本项目不存在。
+**通用客户端做不到结构化，只能做终端；能做结构化，恰恰因为它只服务一个内核。**
+
+### 另一个共同选择：Tailscale
+
+collie 和 shepherdr 都用 `tailscale serve`，都明确拒绝 `tailscale funnel`：
+
+> Never `tailscale funnel` this. `funnel` exposes the port to the public
+> internet, whereas `serve` limits access to your private tailnet.
+
+这意味着两者的安装成本都是：常开电脑 + 两端装 Tailscale + 跑一个 bridge 守护进程
++ `tailscale serve` + 配对。**没有一个方案做到「装个 App 扫码就用」。**
+
+### 对本项目的含义
+
+独特性按强度排：
+
+1. **结构化事件流**——通用客户端在架构上做不到（见上）。
+2. **零基础设施**——装 APK 扫码，不需要 VPN、不需要额外守护进程。
+3. **官方账号打通 + 局域网/云端自动切换**——依附 Studio 的账号体系。
+
+第 1 条是技术护城河，第 2 条是体验护城河，第 3 条是身份护城河，但它同时也是
+枷锁：它把远程能力绑在 `remote.reasonix.io` 上，而那个中继又慢又不稳。
+
+**所以这个项目该做的不是变成通用客户端，而是保住 1 和 2、解开 3。**
+自建 relay 的全部意义就在这里——不是增加功能，是让「零配置入口」不再受官方
+中继的性能限制。

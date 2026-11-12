@@ -1,0 +1,22 @@
+# Runs on the machine that has Studio. Dials out; opens no inbound port.
+serverAddr = "<server address>"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "<same as frps>"
+
+# Without this the process exits when the server is not up yet, and systemd
+# restarting it in a loop looks like a broken tunnel rather than a missing server.
+loginFailExit = false
+transport.heartbeatInterval = 10
+transport.heartbeatTimeout = 30
+
+[[proxies]]
+name = "studio"
+# TCP, not http. `http` is a vhost proxy: frps would parse the request and the
+# TLS in front of it would be pointless. This is the one line that keeps the
+# server a dumb pipe.
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8443
+remotePort = 8443
