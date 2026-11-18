@@ -14,7 +14,7 @@ import {
   markRelay,
   probeUpstream,
   readProxyConfig,
-  signInAccount,
+  setAccountIdentity,
   signOutAccount,
   startAccount,
   ProxyError,
@@ -96,17 +96,13 @@ vi.mock("../net/server", () => ({
   clearRelay: vi.fn(),
   disconnectProxy: vi.fn(),
   signOutAccount: vi.fn(),
-  signInAccount: vi.fn(),
+  setAccountIdentity: vi.fn(),
   approveDevice: vi.fn(),
   startAccount: vi.fn(),
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
   studioWebUrl: vi.fn(() => ""),
   studioAppUrl: vi.fn(() => ""),
-  studioRemoteUrl: (device: string | null | undefined) => {
-    const id = (device ?? "").trim();
-    return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
-  },
   probeUpstream: vi.fn(),
   probeDoor: vi.fn(async () => ({ ok: true as const, machine: "" })),
   readMachineIdentity: vi.fn(async () => null),
@@ -130,7 +126,9 @@ function config(overrides: Partial<ProxyConfig> = {}): ProxyConfig {
     candidates: ["http://192.168.5.2:56789"],
     paired: true,
     mode: "lan",
-    account: { signedIn: false },
+    // A self-hosted deployment this phone was pointed at: the account pane
+    // signs in against it, and its absence is a case of its own.
+    account: { signedIn: false, identity: "https://accounts.example.com" },
     ...overrides,
   };
 }
@@ -143,8 +141,8 @@ function grant(overrides: Partial<DeviceGrant> = {}): DeviceGrant {
   return {
     deviceCode: "device-code",
     userCode: "ABCD-EFGH",
-    verificationUri: "https://reasonix.io/device",
-    verificationUriComplete: "https://reasonix.io/device?code=ABCD-EFGH",
+    verificationUri: "https://accounts.example.com/device",
+    verificationUriComplete: "https://accounts.example.com/device?code=ABCD-EFGH",
     interval: 5,
     expiresIn: 600,
     ...overrides,
@@ -164,7 +162,7 @@ beforeEach(() => {
   vi.mocked(probeUpstream).mockResolvedValue({ ok: true });
   vi.mocked(clearRelay).mockResolvedValue(config());
   vi.mocked(signOutAccount).mockResolvedValue({ signedIn: false });
-  vi.mocked(signInAccount).mockResolvedValue({ signedIn: true });
+  vi.mocked(setAccountIdentity).mockResolvedValue({ signedIn: false });
   vi.mocked(approveDevice).mockResolvedValue(undefined);
   vi.mocked(markRelay).mockResolvedValue(config({ mode: "relay", relayDevice: "dev1" }));
   vi.mocked(connectRelay).mockResolvedValue({
@@ -839,6 +837,44 @@ describe("ConnectScreen saved connections", () => {
 });
 
 describe("ConnectScreen account sign-in", () => {
+  it("says the service address is missing instead of dialling a dead host", async () => {
+    vi.mocked(readProxyConfig).mockResolvedValue(config({ account: { signedIn: false } }));
+    await renderScreen();
+    await press("账号");
+
+    expect(container.textContent).toContain("还没设置");
+    expect(button("登录 Reasonix 账号").disabled).toBe(true);
+    expect(startAccount).not.toHaveBeenCalled();
+  });
+
+  it("remembers the account service this phone was pointed at", async () => {
+    await renderScreen();
+    await press("账号");
+
+    await typeInto('input[type="url"]', "https://rx.example.com/");
+    vi.mocked(setAccountIdentity).mockResolvedValue({
+      signedIn: false,
+      identity: "https://rx.example.com",
+    });
+    await press("保存地址");
+
+    expect(setAccountIdentity).toHaveBeenCalledWith("https://rx.example.com/");
+    // The proxy's normalised answer is what the pane shows, so a trailing
+    // slash or a default port cannot make the same service look like two.
+    expect(container.textContent).toContain("https://rx.example.com");
+  });
+
+  it("forgets the service, which disables sign-in again", async () => {
+    await renderScreen();
+    await press("账号");
+
+    vi.mocked(setAccountIdentity).mockResolvedValue({ signedIn: false });
+    await press("忘记这个服务");
+
+    expect(setAccountIdentity).toHaveBeenCalledWith("");
+    expect(button("登录 Reasonix 账号").disabled).toBe(true);
+  });
+
   it("shows the code request beside the account button while it waits", async () => {
     let finish: (value: DeviceGrant) => void = () => {};
     vi.mocked(startAccount).mockImplementation(
@@ -860,42 +896,39 @@ describe("ConnectScreen account sign-in", () => {
       await Promise.resolve();
     });
 
-    // The fast path opens a form, not the slow sign-in page.
-    expect(container.querySelector('input[type="email"]')).not.toBeNull();
-    expect(button("登录并批准").disabled).toBe(true);
+    // The code is approved in the app; the page is only the other door.
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+    expect(button("批准这次登录").disabled).toBe(true);
     expect(Browser.open).not.toHaveBeenCalled();
     expect(container.querySelector(".account-busy")).toBeNull();
   });
 
-  it("signs in with the account form and approves the code", async () => {
+  it("approves the code with the owner's admin token", async () => {
     vi.mocked(startAccount).mockResolvedValue(grant());
     await renderScreen();
     await press("账号");
 
     await press("登录 Reasonix 账号");
-    await typeInto('input[type="email"]', "me@example.com");
-    await typeInto('input[type="password"]', "secret123");
-    await press("登录并批准");
+    await typeInto('input[type="password"]', "s3cret");
+    await press("批准这次登录");
 
-    expect(signInAccount).toHaveBeenCalledWith("me@example.com", "secret123");
-    expect(approveDevice).toHaveBeenCalledWith("ABCD-EFGH");
+    expect(approveDevice).toHaveBeenCalledWith("ABCD-EFGH", "s3cret");
     expect(container.textContent).toContain("已批准，正在完成登录");
+    // The token is spent: nothing on screen carries it afterwards.
     expect(container.querySelector('input[type="password"]')).toBeNull();
   });
 
-  it("keeps the form after a wrong password", async () => {
+  it("keeps the token field after the service refuses it", async () => {
     vi.mocked(startAccount).mockResolvedValue(grant());
-    vi.mocked(signInAccount).mockRejectedValue(new ProxyError(401, "invalid_credentials"));
+    vi.mocked(approveDevice).mockRejectedValue(new ProxyError(401, "unauthorized"));
     await renderScreen();
     await press("账号");
 
     await press("登录 Reasonix 账号");
-    await typeInto('input[type="email"]', "me@example.com");
-    await typeInto('input[type="password"]', "wrongpass");
-    await press("登录并批准");
+    await typeInto('input[type="password"]', "wrong-token");
+    await press("批准这次登录");
 
-    expect(approveDevice).not.toHaveBeenCalled();
-    expect(container.querySelector(".account-notice")?.textContent).toContain("邮箱或密码不正确");
+    expect(container.querySelector(".account-notice")?.textContent).toContain("管理员令牌不对");
     expect(container.querySelector('input[type="password"]')).not.toBeNull();
   });
 
@@ -907,7 +940,10 @@ describe("ConnectScreen account sign-in", () => {
     await press("登录 Reasonix 账号");
 
     const notice = container.querySelector(".account-notice");
-    expect(notice?.textContent).toContain("id.reasonix.io");
+    // The address is this phone's own choice: quoting a vendor host would
+    // send the person to a domain that no longer resolves.
+    expect(notice?.textContent).toContain("https://accounts.example.com");
+    expect(notice?.textContent).not.toContain("id.reasonix.io");
     expect(notice?.textContent).toContain("换 Wi‑Fi/流量");
     expect(notice?.textContent).toContain("蒲公英");
   });
@@ -919,9 +955,9 @@ describe("ConnectScreen account sign-in", () => {
 
     await press("登录 Reasonix 账号");
 
-    expect(container.querySelector(".account-notice")?.textContent).toContain(
-      "手机连不上登录服务",
-    );
+    const notice = container.querySelector(".account-notice");
+    expect(notice?.textContent).toContain("手机连不上登录服务");
+    expect(notice?.textContent).toContain("https://accounts.example.com");
   });
 });
 

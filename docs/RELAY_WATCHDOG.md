@@ -13,9 +13,10 @@ the next interval. Detection bound: ~40s. 20s matches the device-side host's
 own ticker (`remotecloud/host.go`) and the relay's advertised `heartbeatMs`
 default. Ping/Pong are control frames handled by the endpoints, so the
 watchdog adds no traffic above the transport; the in-repo relay fixture
-(`relayfake`) skips non-text frames, but the hosted relay is not in this
-repository and should be confirmed once against `remote.reasonix.io` before
-release.
+(`relayfake`) skips non-text frames, but a real relay is what confirms the
+behaviour. `Reasonix-SelfHost` now provides one (`internal/relay/relay.go`,
+`gorilla/websocket`), so the check runs against your own deployment rather
+than a hosted service.
 
 **Bridge (`src/native/socket.ts`)**: OkHttp reports every failure — refused
 dial, refused send, missed Pong — through one `onFailure` callback that carries

@@ -77,7 +77,6 @@ public final class LoopbackProxy {
      */
     private static final String KEY_TOKENS = "tokens";
     static final String LOOPBACK_ORIGIN = "http://127.0.0.1:" + PORT;
-    private static final String IDENTITY = "https://id.reasonix.io";
     /**
      * The product token keeps its `rx-android/` prefix — the account service
      * may key on it and its source is not ours to check — but the version and
@@ -218,7 +217,7 @@ public final class LoopbackProxy {
         this.prefs = context.getSharedPreferences(ProxyAuth.PREFS, Context.MODE_PRIVATE);
         this.assets = new ProxyAssets(context);
         this.secret = ProxyAuth.secret(context);
-        this.account = new AccountFlow(prefs, cookies, userAgentFor(appVersion(context), Build.MODEL));
+        this.account = new AccountFlow(prefs, userAgentFor(appVersion(context), Build.MODEL));
         this.fleet = new FleetRoutes(prefs, this::forwardTo);
         this.server = new ServerSocket();
         this.server.setReuseAddress(true);
@@ -356,6 +355,16 @@ public final class LoopbackProxy {
                 ProxyWire.methodNotAllowed(socket);
                 return;
             }
+            // The upstream account host is gone and each phone names its own
+            // service, so "no address" is a state this proxy has to answer for
+            // itself. Without this check every account route would build a
+            // relative URL and fail as an unreachable upstream, which reads to
+            // the person as a network problem on a phone that never had a host
+            // to reach.
+            if (ProxyPaths.needsAccountService(path) && !account.configured()) {
+                ProxyWire.writeJson(socket, 503, "{\"code\":\"account.unconfigured\"}");
+                return;
+            }
             switch (path) {
                 case "/__reasonix/fleet":
                     fleet.handle(socket, method, body);
@@ -407,8 +416,8 @@ public final class LoopbackProxy {
                 case "/__reasonix/account/poll":
                     ProxyWire.writeJson(socket, 200, account.poll(body).toString());
                     return;
-                case "/__reasonix/account/signin":
-                    account.signIn(socket, body);
+                case "/__reasonix/account/identity":
+                    account.setIdentity(socket, body);
                     return;
                 case "/__reasonix/account/approve":
                     account.approve(socket, body);

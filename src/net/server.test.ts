@@ -107,12 +107,11 @@ describe("studio URLs", () => {
   });
 
   it("never sends a cloud door to the loopback proxy", () => {
-    expect(studioAppUrl(cloud)).toBe(
-      "https://reasonix.io/remote/?device=dev-1",
-    );
-    expect(studioWebUrl(cloud)).toBe(
-      "https://reasonix.io/remote/?device=dev-1",
-    );
+    // A self-hosted relay forwards sealed frames; it hosts no page, so there
+    // is no full Studio UI to open over the cloud and both helpers answer "".
+    // The caller hides the entry instead of shipping a dead link.
+    expect(studioAppUrl(cloud)).toBe("");
+    expect(studioWebUrl(cloud)).toBe("");
   });
 
   it("is empty when there is no link to open", () => {

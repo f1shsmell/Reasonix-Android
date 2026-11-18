@@ -21,6 +21,12 @@ export interface ProxyUser {
 export interface ProxyAccount {
   signedIn: boolean;
   user?: ProxyUser;
+  /**
+   * The self-hosted account service this phone was pointed at, or "" when
+   * nobody set one. The vendor's host is gone, so there is no default: an
+   * empty string is a state the account pane has to name, not a bug.
+   */
+  identity?: string;
 }
 
 export interface ProxyConfig {
@@ -197,25 +203,32 @@ export async function signOutAccount(): Promise<ProxyAccount> {
 }
 
 /**
- * Sign in with the account's own email and password.
+ * Point the proxy at a self-hosted account service, or forget one.
  *
- * This is the fast path: the proxy talks to the identity service directly and
- * keeps the session cookie, so the account can be approved without loading the
- * sign-in page. The page remains the way to register, verify and reset.
+ * The origin is the whole configuration: the deployment hands out one host
+ * for the device code, the device list and the relay grant. An empty string
+ * clears it, so a phone that only ever connects over the LAN can leave the
+ * account block quiet instead of calling a host that does not answer.
  */
-export async function signInAccount(email: string, password: string): Promise<ProxyAccount> {
-  return request<ProxyAccount>(
-    "/__reasonix/account/signin",
-    { method: "POST", body: JSON.stringify({ email, password }) },
-    25_000,
-  );
+export async function setAccountIdentity(origin: string): Promise<ProxyAccount> {
+  return request<ProxyAccount>("/__reasonix/account/identity", {
+    method: "POST",
+    body: JSON.stringify({ origin }),
+  });
 }
 
-/** Approve the pending device code with the account session the proxy holds. */
-export async function approveDevice(userCode: string): Promise<void> {
+/**
+ * Approve the pending device code with the service's admin token.
+ *
+ * The token is the owner's, typed at the moment of approving; it travels to
+ * the proxy (and from there to the service, once) and is never stored. A
+ * self-hosted service has no web session to carry it — the approval page asks
+ * for it in a form for the same reason.
+ */
+export async function approveDevice(userCode: string, token: string): Promise<void> {
   await request(
     "/__reasonix/account/approve",
-    { method: "POST", body: JSON.stringify({ userCode }) },
+    { method: "POST", body: JSON.stringify({ userCode, token }) },
     25_000,
   );
 }
@@ -602,25 +615,23 @@ export type ServerLink =
   | { kind: "cloud"; device: string };
 
 /**
- * The Studio page this connection opens in a web view of the whole UI.
+ * The full Studio page for the connection that is up.
  *
- * A LAN door is the kernel origin itself; a cloud door is the remote page that
- * carries the device id. Empty when there is nothing to open — the caller
- * hides the entry instead of shipping a dead link.
+ * Only a LAN door publishes one: it is the kernel's own front end, reached at
+ * the kernel origin. A self-hosted relay is a transport, not a web host — it
+ * issues tickets and forwards sealed frames, and serves no page — so a relay
+ * door has no full UI to open and answers "" (the caller hides the entry
+ * instead of shipping a dead link).
+ *
+ * The system browser has no proxy cookie and cannot reach 127.0.0.1 of the
+ * app, so it takes the kernel origin; the in-app WebView takes `studioAppUrl`.
  */
-export function studioRemoteUrl(device: string | null | undefined): string {
-  const id = device?.trim();
-  return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
-}
-
 export function studioWebUrl(
   config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice"> | null,
-  fallbackDevice?: string | null,
 ): string {
-  if (config?.mode === "relay") {
-    return studioRemoteUrl(config.relayDevice?.trim() || fallbackDevice);
-  }
-  return config?.origin?.trim() || "";
+  if (!config) return "";
+  if (config.mode === "relay") return "";
+  return config.origin?.trim() || "";
 }
 
 /**
@@ -631,26 +642,28 @@ export function studioWebUrl(
  * default route, adds the pairing cookie, and speaks the kernel's CSRF Origin.
  * A bare WebView on the kernel address has none of that and fails whenever a
  * tunnel is active — the "打不开完整界面" case. The proxy publishes its own
- * address in `studioUrl`; cloud doors and browser dev sessions keep the real
- * address (they have no loopback proxy to talk to).
+ * address in `studioUrl`; browser dev sessions keep the kernel address (they
+ * have no loopback proxy to talk to).
  *
  * The system browser is different again: it has no proxy cookie, so it must
  * keep using `studioWebUrl()` even on a LAN door.
+ *
+ * A relay door has no page at all: see `studioWebUrl`.
  */
 export function studioAppUrl(
-  config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice" | "studioUrl"> | null,
-  fallbackDevice?: string | null,
+  config: Pick<ProxyConfig, "mode" | "origin" | "studioUrl"> | null,
 ): string {
-  if (config?.mode === "relay") return studioWebUrl(config, fallbackDevice);
-  return config?.studioUrl?.trim() || config?.origin?.trim() || "";
+  if (!config || config.mode === "relay") return "";
+  return config.studioUrl?.trim() || config.origin?.trim() || "";
 }
 
 /**
  * Read what a Studio QR code carries.
  *
- * The LAN code is `http://<ip>:<port>/#pair=<one-time code>`. The Internet
- * code is `https://reasonix.io/remote/?device=<id>`: a web page, not a kernel
- * origin, so it is reported as a cloud link rather than used as an upstream.
+ * The LAN code is `http://<ip>:<port>/#pair=<one-time code>`. A cloud code is
+ * any page carrying `?device=<id>` — the account service's own share page,
+ * whose host this app does not know in advance — and it is reported as a
+ * cloud link rather than used as an upstream.
  */
 export function parseServerLink(raw: string): ServerLink | null {
   try {

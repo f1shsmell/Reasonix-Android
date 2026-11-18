@@ -4,8 +4,9 @@
  * A QR code carries either a LAN origin with a one-time pairing code, or the
  * Internet link. The pairing is spent by the loopback proxy, so the app never
  * puts the code in a URL and the device cookie lands on the app's own origin.
- * Account sign-in uses the device flow: a short code approved in the phone's
- * browser, with the session token kept by the proxy.
+ * Account sign-in uses the device flow against a service this phone names: a
+ * short code approved with the owner's admin token, with the session token
+ * kept by the proxy. There is no vendor default — the upstream host is gone.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -31,7 +32,7 @@ import {
   probeUpstream,
   readMachineIdentity,
   readProxyConfig,
-  signInAccount,
+  setAccountIdentity,
   signOutAccount,
   startAccount,
   approveDevice,
@@ -46,7 +47,7 @@ import { useBackCloser } from "./backStack";
 import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
-import { clearRelayDevice, loadRelayDevice } from "../net/relayStore";
+import { clearRelayDevice } from "../net/relayStore";
 import {
   connectionKey,
   directDoorForMachine,
@@ -133,16 +134,18 @@ export interface ConnectScreenProps {
  *
  * A timeout is the common one on phones: the proxy's connect timeout matches
  * the old request deadline, so a stalled IPv6 route looked exactly like an
- * unanswered tap. The sentence names the service so the next step (another
- * network) is obvious instead of another retry on the same one.
+ * unanswered tap. The sentence names the configured service — the host is
+ * this phone's own choice now, so quoting a vendor domain would send the
+ * person to a host that no longer exists.
  */
-function signInFailureText(failure: unknown): string {
+function signInFailureText(failure: unknown, identity: string): string {
+  const service = identity || "账号服务";
   if (failure instanceof RequestTimeout) {
-    return "登录服务没有响应。手机可能连不上 id.reasonix.io：换 Wi‑Fi/流量，或先关掉 VPN、组网（如蒲公英）再试。";
+    return `登录服务没有响应。手机可能连不上 ${service}：换 Wi‑Fi/流量，或先关掉 VPN、组网（如蒲公英）再试。`;
   }
   if (failure instanceof ProxyError) {
     if (failure.code === "proxy.upstream_unreachable") {
-      return "手机连不上登录服务 id.reasonix.io。检查网络，或先关掉 VPN、组网后再试。";
+      return `手机连不上登录服务 ${service}。检查网络，或先关掉 VPN、组网后再试。`;
     }
     return `登录服务不可用：${failure.code}`;
   }
@@ -176,21 +179,29 @@ function refusalCode(failure: unknown): string {
   return failure instanceof Error ? failure.message : "unknown";
 }
 
-/** A refusal from the identity service while signing in or approving. */
-function accountFailureText(failure: unknown): string {
+/**
+ * A refusal from the account service while approving a code.
+ *
+ * The self-hosted service answers with its own codes, not the vendor's: there
+ * is no password to get wrong and no account status to look up, so every
+ * sentence here is about the code, the token, or the host.
+ */
+function accountFailureText(failure: unknown, identity: string): string {
   // An unreachable service has its own sentence; a reply from it does not.
   if (failure instanceof ProxyError && failure.code !== "proxy.upstream_unreachable") {
     switch (failure.code) {
-      case "invalid_credentials":
-        return "邮箱或密码不正确。";
-      case "account_unavailable":
-        return "这个账号当前不可用，请在网页里查看账号状态。";
-      case "account.signin_required":
-        return "登录状态没有建立，请在网页中重新登录。";
-      case "invalid_user_code":
+      case "account.missing_admin_token":
+        return "先填管理员令牌。";
+      case "account.missing_user_code":
+        return "登录码丢了，请取消后重新登录。";
+      case "unauthorized":
+        return "管理员令牌不对，或服务端没有配置它。";
+      case "grant_not_found":
         return "登录码已失效，请取消后重新点登录。";
-      case "account.missing_credentials":
-        return "先填邮箱和密码。";
+      case "expired_token":
+        return "登录码已过期，请取消后重新点登录。";
+      case "access_denied":
+        return "这次登录已被拒绝，请重新发起。";
       default:
         break;
     }
@@ -198,7 +209,7 @@ function accountFailureText(failure: unknown): string {
     if (failure.status === 403) return "登录服务拒绝了这次请求，可能被网络或代理拦截。";
     if (failure.status >= 500) return "登录服务暂时不可用，稍后再试。";
   }
-  return signInFailureText(failure);
+  return signInFailureText(failure, identity);
 }
 
 /** A size a person can read, not a byte count. */
@@ -225,9 +236,16 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [error, setError] = useState("");
   /** Sign-in stays in its own notice: the shared one sits above the fold. */
   const [signInError, setSignInError] = useState("");
-  /** The native sign-in form: the fast path that skips the slow web page. */
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  /** Where the self-hosted account service lives, as typed on this phone. */
+  const [identityDraft, setIdentityDraft] = useState("");
+  /**
+   * The owner's admin token, typed to approve one device code.
+   *
+   * Held in this component only: it travels to the proxy and to the service
+   * once, and nothing writes it to storage. A phone that kept it would approve
+   * every later code silently.
+   */
+  const [adminToken, setAdminToken] = useState("");
   const [accountBusy, setAccountBusy] = useState("");
   /** The device code is approved; the poll behind this screen is finishing. */
   const [approved, setApproved] = useState(false);
@@ -884,25 +902,65 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     };
   }, []);
 
-  const openLoginPage = useCallback((url: string) => {
+  /**
+   * The account service's approval page, in the app's own WebView.
+   *
+   * There is no sign-in page any more. A self-hosted service has one human
+   * credential — the owner's admin token — and its `/device` page asks for it
+   * in a form, so this page only has to render and post. The WebView is kept
+   * over the system browser because the person is already in this app; unlike
+   * the vendor's flow, no cookie from it is read back by the proxy.
+   */
+  const openApprovalPage = useCallback((url: string) => {
     const failed = (failure: unknown) => {
       setSignInError(
         failure instanceof Error
-          ? `打不开登录页：${failure.message}`
-          : "打不开登录页，请重试。",
+          ? `打不开审批页：${failure.message}`
+          : "打不开审批页，请重试。",
       );
     };
     if (Capacitor.isNativePlatform()) {
-      // The account cookie this flow stores is what the proxy sends to
-      // /me/remote-grants; a system-browser login lands in a cookie jar the
-      // app cannot read, so there is no fallback here on purpose.
       void NativeLogin.open({ url }).catch(failed);
     } else {
       void Browser.open({ url }).catch(failed);
     }
   }, []);
 
+  /**
+   * Point the proxy at an account service, or forget the one it has.
+   *
+   * The proxy is the only party that talks to the service, so the address is
+   * its setting rather than this screen's: saving it here is what makes the
+   * device flow, the device list and the relay grant reach the same host. An
+   * empty address is a real choice — a phone that lives on one LAN needs no
+   * account at all.
+   */
+  const saveIdentity = useCallback(async (address: string) => {
+    setAccountBusy("正在保存地址");
+    setSignInError("");
+    try {
+      const next = await setAccountIdentity(address);
+      setAccount(next);
+      setIdentityDraft(next.identity ?? "");
+      setGrant(null);
+      setApproved(false);
+    } catch (failure) {
+      setSignInError(
+        refusalCode(failure) === "proxy.bad_origin"
+          ? "这个地址不是一个服务地址：要 http(s)://主机[:端口]，不带路径。"
+          : `保存地址失败：${refusalCode(failure)}`,
+      );
+    } finally {
+      setAccountBusy("");
+    }
+  }, []);
+
   const signIn = useCallback(async () => {
+    const identity = account.identity ?? "";
+    if (!identity) {
+      setSignInError("先填账号服务地址，再登录。");
+      return;
+    }
     setBusy("正在获取登录码");
     setError("");
     setSignInError("");
@@ -911,45 +969,44 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       const next = await startAccount();
       setGrant(next);
     } catch (failure) {
-      setSignInError(signInFailureText(failure));
+      setSignInError(signInFailureText(failure, identity));
     } finally {
       setBusy("");
     }
-  }, []);
+  }, [account.identity]);
 
   /**
-   * Sign in without the web page.
+   * Approve the code this screen just asked for.
    *
-   * The password goes to the loopback proxy, which sends it once to the
-   * identity service; the form then approves the code the app just asked for.
-   * The web page is kept for registration, verification and password resets.
+   * The admin token goes to the loopback proxy, which posts it once to the
+   * service; the poll behind the code then completes on its own. The token is
+   * cleared as soon as the service answers, so a screenshot of this screen at
+   * rest never carries it.
    */
-  const nativeSignIn = useCallback(async () => {
+  const approveCode = useCallback(async () => {
     if (!grant) return;
-    const mail = email.trim();
-    if (!mail || password === "") {
-      setSignInError("先填邮箱和密码。");
+    const secret = adminToken.trim();
+    if (!secret) {
+      setSignInError("先填管理员令牌。");
       return;
     }
-    setAccountBusy("正在登录");
+    setAccountBusy("正在批准");
     setSignInError("");
     try {
-      await signInAccount(mail, password);
-      setAccountBusy("正在批准");
-      await approveDevice(grant.userCode);
-      setPassword("");
+      await approveDevice(grant.userCode, secret);
+      setAdminToken("");
       setApproved(true);
     } catch (failure) {
-      setSignInError(accountFailureText(failure));
+      setSignInError(accountFailureText(failure, account.identity ?? ""));
     } finally {
       setAccountBusy("");
     }
-  }, [email, grant, password]);
+  }, [account.identity, adminToken, grant]);
 
   const cancelGrant = useCallback(() => {
     setGrant(null);
     setApproved(false);
-    setPassword("");
+    setAdminToken("");
     setSignInError("");
   }, []);
 
@@ -973,9 +1030,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         if (result.status === "complete") {
           setGrant(null);
           setApproved(false);
-          setPassword("");
+          setAdminToken("");
           setSignInError("");
-          setAccount({ signedIn: true, ...(result.user ? { user: result.user } : {}) });
+          setAccount((previous) => ({ ...previous, signedIn: true, ...(result.user ? { user: result.user } : {}) }));
           return;
         }
         if (result.status === "ended" || result.status === "error") {
@@ -1249,7 +1306,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
         ? "云端 · Reasonix 账号"
         : "局域网";
   /** The computer's own Studio page, for opening the full desktop UI. */
-  const webUrl = studioWebUrl(config, loadRelayDevice());
+  const webUrl = studioWebUrl(config);
   /**
    * The in-app page runs on the phone's own WebView, which may be years
    * behind: nothing in the app can update it, and the Studio front end needs
@@ -1932,6 +1989,63 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
 
         {pane === "account" ? (
           <>
+        <p className="group-label">账号服务</p>
+        <section className="group">
+          {/*
+            There is no vendor account host any more, so the address is a
+            setting rather than a constant: whatever the person deployed
+            answers the device code, the device list and the relay grant.
+            Shown even while signed in, because moving the phone to another
+            deployment has to start here.
+          */}
+          <label className="setting">
+            <span className="setting-main">
+              <span className="setting-title">服务地址</span>
+              <span className="setting-sub">
+                {account.identity ? account.identity : "还没设置：云端连接暂不可用"}
+              </span>
+            </span>
+            <input
+              type="url"
+              value={identityDraft}
+              onChange={(event) => setIdentityDraft(event.target.value)}
+              placeholder="https://accounts.example.com"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              autoComplete="url"
+              disabled={accountBusy !== ""}
+            />
+          </label>
+          <button
+            type="button"
+            className="setting action"
+            onClick={() => void saveIdentity(identityDraft)}
+            disabled={accountBusy !== "" || identityDraft.trim() === (account.identity ?? "")}
+          >
+            {accountBusy === "正在保存地址" ? accountBusy + "…" : "保存地址"}
+          </button>
+          {account.identity ? (
+            <button
+              type="button"
+              className="setting action danger"
+              onClick={() => void saveIdentity("")}
+              disabled={accountBusy !== ""}
+            >
+              忘记这个服务
+            </button>
+          ) : null}
+        </section>
+        {busy === "正在获取登录码" ? (
+          <p className="group-note account-busy">正在向账号服务申请登录码，最多等 25 秒…</p>
+        ) : null}
+        {signInError ? (
+          <div className="notice error account-notice" role="alert">
+            {signInError}
+          </div>
+        ) : null}
+
         <p className="group-label">Reasonix 账号</p>
         <section className="group">
           {account.signedIn ? (
@@ -1948,69 +2062,56 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               </button>
             </>
           ) : (
-            <button type="button" className="setting action" onClick={() => void signIn()} disabled={busy !== ""}>
+            <button
+              type="button"
+              className="setting action"
+              onClick={() => void signIn()}
+              disabled={busy !== "" || !account.identity}
+            >
               {busy === "正在获取登录码" ? "正在获取登录码…" : "登录 Reasonix 账号"}
             </button>
           )}
         </section>
-        {busy === "正在获取登录码" ? (
-          <p className="group-note account-busy">正在向登录服务申请登录码，最多等 25 秒…</p>
-        ) : null}
-        {signInError ? (
-          <div className="notice error account-notice" role="alert">
-            {signInError}
-          </div>
-        ) : null}
 
         {grant ? (
           <section className="group grant">
             {approved ? <p className="group-note">已批准，正在完成登录…</p> : null}
             <div className="code">{grant.userCode}</div>
+            {/*
+              One credential, one field: the owner's admin token approves this
+              code and is never stored. The service's own /device page takes
+              the same token in a form, so the two paths cannot disagree.
+            */}
             {approved ? null : (
               <>
                 <label className="setting">
-                  <span className="setting-title">邮箱</span>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@example.com"
-                    inputMode="email"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    autoComplete="username"
-                    disabled={accountBusy !== ""}
-                  />
-                </label>
-                <label className="setting">
-                  <span className="setting-title">密码</span>
+                  <span className="setting-title">管理员令牌</span>
                   <input
                     type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="账号密码"
-                    autoComplete="current-password"
+                    value={adminToken}
+                    onChange={(event) => setAdminToken(event.target.value)}
+                    placeholder="部署时设置的管理员令牌"
+                    autoComplete="off"
                     disabled={accountBusy !== ""}
                   />
                 </label>
                 <button
                   type="button"
                   className="setting action"
-                  onClick={() => void nativeSignIn()}
-                  disabled={accountBusy !== "" || !email.trim() || password === ""}
+                  onClick={() => void approveCode()}
+                  disabled={accountBusy !== "" || adminToken.trim() === ""}
                 >
-                  {accountBusy || "登录并批准"}
+                  {accountBusy || "批准这次登录"}
                 </button>
               </>
             )}
             <button
               type="button"
               className="setting action"
-              onClick={() => openLoginPage(grant.verificationUriComplete)}
+              onClick={() => openApprovalPage(grant.verificationUriComplete)}
               disabled={accountBusy !== "" || approved}
             >
-              在网页中登录（注册 / 找回密码）
+              在网页中批准
             </button>
             <button
               type="button"

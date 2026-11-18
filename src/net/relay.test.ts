@@ -171,7 +171,9 @@ describe("connectRelay trust", () => {
       JSON.stringify({
         grant: { ticket: "ticket" },
         device: { id: "dev1", publicKey, capabilities: ["desktop"], revokedAt: null },
-        relay: "wss://remote.reasonix.io",
+        // The account service names the relay as an https origin, the same
+        // string it is configured with; the client turns it into wss.
+        relay: "https://relay.example.com",
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );

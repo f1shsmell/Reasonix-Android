@@ -1,10 +1,12 @@
 /**
  * The Internet relay channel.
  *
- * The kernel's Studio dials `wss://remote.reasonix.io` as a device; this
- * client dials the same relay as a controller. The account service issues a
- * one-time ticket and names the device's X25519 public key; after that every
- * request and answer is sealed with AES-GCM under a key both sides derive.
+ * The kernel's Studio dials the deployment's relay as a device; this client
+ * dials the same relay as a controller. Neither side knows the address: the
+ * account service issues a one-time ticket and names both the relay origin
+ * and the device's X25519 public key, so a self-hosted deployment is
+ * reachable without rebuilding the app. After the handshake every request and
+ * answer is sealed with AES-GCM under a key both sides derive.
  *
  * The protocol is the desktop page's (`frontend-next/src/port/cloud_remote.ts`
  * and `cloud_link.ts`), reduced to what a phone needs: fetch and a polled
@@ -18,8 +20,8 @@ import { checkDeviceTrust } from "./deviceTrust";
 import type { ConfirmTrust, TrustResult } from "./deviceTrust";
 import { fetchWithTimeout } from "./http";
 
+// ---- account grant ---------------------------------------------------
 const ACCOUNT_GRANT = "/__reasonix/account/grant";
-const HOSTED_RELAY = "wss://remote.reasonix.io";
 const INFO_PREFIX = "reasonix-remote-v1|";
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 
@@ -220,6 +222,12 @@ async function fetchGrant(deviceId: string): Promise<RelayGrant> {
     if (response.status === 401 || code === "account.signed_out" || code === "remote_reauth_required") {
       throw new RelayError("reauth", "登录已过期，请重新登录 Reasonix 账号。");
     }
+    // The upstream account host is gone, so a phone names its own service.
+    // A proxy that has been told nothing answers this instead of dialling a
+    // relative URL, and "not configured" is a state only the person can end.
+    if (code === "account.unconfigured") {
+      throw new RelayError("reauth", "还没有设置账号服务地址，先在设置里填上再连云端。");
+    }
     if (response.status === 404 || code === "device_not_found") {
       throw new RelayError("ended", "这台电脑已从账号中移除，或不属于这个账号。");
     }
@@ -228,10 +236,17 @@ async function fetchGrant(deviceId: string): Promise<RelayGrant> {
   if (!body || typeof body.grant?.ticket !== "string" || !body.device) {
     throw new RelayError("ended", "账号服务没有返回可用的连接凭证。");
   }
+  // The relay address travels with the grant: the account service is the only
+  // party that knows which relay its device links through. A grant without one
+  // is not a grant — falling back to the vendor's relay would dial a host that
+  // no longer resolves and hide the real fault behind a timeout.
+  if (typeof body.relay !== "string" || body.relay.trim() === "") {
+    throw new RelayError("ended", "账号服务没有指明中继地址。");
+  }
   return {
     ticket: body.grant.ticket,
     device: body.device,
-    relay: typeof body.relay === "string" ? body.relay : HOSTED_RELAY,
+    relay: body.relay,
   };
 }
 
@@ -257,7 +272,6 @@ function trustError(result: Extract<TrustResult, { ok: false }>): RelayError {
 }
 
 function relayUrl(named: string): string {
-  if (named === HOSTED_RELAY) return named;
   let url: URL;
   try {
     url = new URL(named);
