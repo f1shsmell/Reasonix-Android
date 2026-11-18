@@ -37,7 +37,7 @@ final class ProxyPaths {
             case "/__reasonix/account/grant":
             case "/__reasonix/account/start":
             case "/__reasonix/account/poll":
-            case "/__reasonix/account/signin":
+            case "/__reasonix/account/identity":
             case "/__reasonix/account/approve":
             case "/__reasonix/account/logout":
             case "/__reasonix/relay":
@@ -50,6 +50,29 @@ final class ProxyPaths {
             default:
                 // The control switch answers 404 for unknown control paths.
                 return true;
+        }
+    }
+
+    /**
+     * Whether a control path has to talk to the account service.
+     *
+     * Everything under `/__reasonix/account/` builds a URL from the configured
+     * origin, so with none the request would be relative and die before it
+     * reached the network. The two exceptions are the setting itself and the
+     * status read: one reports the state, the other is how a phone that has
+     * none gets one.
+     */
+    static boolean needsAccountService(String path) {
+        switch (path) {
+            case "/__reasonix/account/start":
+            case "/__reasonix/account/poll":
+            case "/__reasonix/account/approve":
+            case "/__reasonix/account/grant":
+            case "/__reasonix/account/devices":
+            case "/__reasonix/account/logout":
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -210,6 +233,36 @@ final class ProxyPaths {
         if (upstreamStatus == 404) return 404;
         if (upstreamStatus != 200) return 502;
         return 200;
+    }
+
+    /**
+     * A service origin somebody typed, or "" when it is not one.
+     *
+     * Unlike {@link #normalizeOrigin}, a default port is dropped: this string
+     * becomes a URL, an `Origin` header and a WebView cookie host, and
+     * `https://id.example.com:443` in any of those is a spelling a strict
+     * comparison compares as a different service. A path, query or user info
+     * is refused rather than trimmed: an account service lives at an origin,
+     * so anything after it is a misunderstanding worth naming.
+     */
+    static String urlOrigin(String raw) {
+        try {
+            URI uri = URI.create(raw.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            if (!"http".equals(scheme) && !"https".equals(scheme)) return "";
+            String host = uri.getHost();
+            if (host == null || host.isEmpty() || uri.getRawUserInfo() != null) return "";
+            if (uri.getRawQuery() != null || uri.getRawFragment() != null) return "";
+            String path = uri.getPath();
+            if (path != null && !path.isEmpty() && !"/".equals(path)) return "";
+            int port = uri.getPort();
+            if (port <= 0 || port == ("https".equals(scheme) ? 443 : 80)) {
+                return scheme + "://" + host.toLowerCase(Locale.ROOT);
+            }
+            return scheme + "://" + host.toLowerCase(Locale.ROOT) + ":" + port;
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     static String normalizeOrigin(String raw) {

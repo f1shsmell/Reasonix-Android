@@ -9,5 +9,5 @@
     <string name="proxy_failed_retry">重试</string>
     <string name="proxy_failed_exit">退出</string>
     <string name="login_title">登录 Reasonix</string>
-    <string name="login_slow">登录页加载很慢，可能连不上 reasonix.io。可以继续等待，或点「重试」。</string>
+    <string name="login_slow">登录页加载很慢，可能连不上账号服务。可以继续等待，或点「重试」。</string>
 </resources>

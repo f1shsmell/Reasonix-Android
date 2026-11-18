@@ -25,12 +25,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * The account sign-in page, inside the app's own WebView.
+ * The account service's approval page, inside the app's own WebView.
  *
- * It must be this WebView and not the system browser: `/me/remote-grants`
- * accepts the account's cookie, and only a WebView the app owns shares its
- * cookie store with the loopback proxy. The device-flow poll still runs in the
- * page behind this activity; this activity only hosts the approval page.
+ * It stays in this WebView rather than the system browser because the person
+ * is already in this app; the page itself posts the owner's admin token in a
+ * form. Nothing is read back from the cookie jar any more: authorising the
+ * grant takes the Bearer token from `/device/poll`, which the loopback proxy
+ * holds. The device-flow poll still runs in the page behind this activity;
+ * this activity only hosts the approval page.
  *
  * The approval page's primary button has rendered white-on-white inside a
  * WebView (its own theme variables do not resolve there). The page is left
@@ -237,11 +239,11 @@ public class LoginActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        // WebModeActivity destroys its WebView for the same reason: the sign-in
-        // page's JS and renderers outlive this activity until GC otherwise.
-        // The cookie is flushed first — the account session the sign-in page
-        // just set is the credential everything else reads, and the system's
-        // own flush schedule would lose it to a process kill right after login.
+        // WebModeActivity destroys its WebView for the same reason: the
+        // approval page's JS and renderers outlive this activity until GC
+        // otherwise. The cookie is flushed first, because a deployment's
+        // approval page may still set a short-lived CSRF or session cookie and
+        // the system's own flush schedule would lose it to a process kill.
         try {
             android.webkit.CookieManager.getInstance().flush();
         } catch (RuntimeException ignored) {

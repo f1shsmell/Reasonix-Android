@@ -529,4 +529,37 @@ public class LoopbackProxyTest {
         assertEquals("", ProxyPaths.normalizeOrigin("not a url"));
         assertEquals("", ProxyPaths.normalizeOrigin(""));
     }
+
+    @Test
+    public void urlOriginNamesOneServiceWithoutAPathOrADefaultPort() {
+        // The same service spelled three ways must be one string: this value
+        // is compared, not just dialled, so a trailing slash or an explicit
+        // 443 would read as a different deployment.
+        assertEquals("https://accounts.example.com", ProxyPaths.urlOrigin("https://accounts.example.com/"));
+        assertEquals("https://accounts.example.com", ProxyPaths.urlOrigin("https://Accounts.Example.COM:443"));
+        assertEquals("http://192.168.5.3:8080", ProxyPaths.urlOrigin(" http://192.168.5.3:8080 "));
+        // A service lives at an origin; anything after it is a misunderstanding
+        // worth refusing instead of quietly trimming.
+        assertEquals("", ProxyPaths.urlOrigin("https://accounts.example.com/login"));
+        assertEquals("", ProxyPaths.urlOrigin("https://accounts.example.com/?x=1"));
+        assertEquals("", ProxyPaths.urlOrigin("https://user@accounts.example.com"));
+        assertEquals("", ProxyPaths.urlOrigin("ftp://accounts.example.com"));
+        assertEquals("", ProxyPaths.urlOrigin(""));
+    }
+
+    @Test
+    public void onlyRoutesThatDialTheServiceRequireOne() {
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/start"));
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/poll"));
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/approve"));
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/grant"));
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/devices"));
+        assertTrue(ProxyPaths.needsAccountService("/__reasonix/account/logout"));
+        // Reading the state and setting the address are how a phone with no
+        // service gets one; refusing them would leave the pane unable to say
+        // what is wrong or to fix it.
+        assertFalse(ProxyPaths.needsAccountService("/__reasonix/account"));
+        assertFalse(ProxyPaths.needsAccountService("/__reasonix/account/identity"));
+        assertFalse(ProxyPaths.needsAccountService("/__reasonix/config"));
+    }
 }

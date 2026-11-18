@@ -13,29 +13,71 @@ import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
 
 /**
  * The account device flow, isolated from the loopback server.
  *
- * The password is used once and never stored; the only credential kept is the
- * returned session token plus the WebView cookie the grant endpoint needs.
+ * The service this talks to is no longer the vendor's: the upstream account
+ * host is gone, so the origin comes from this phone's own settings. An
+ * unconfigured phone says so instead of dialling a domain that no longer
+ * resolves — the caller checks {@link #configured()} before routing here.
+ *
+ * The only credential kept is the session token the poll returns, sealed under
+ * the phone's keystore. The admin token that approves a code is a person's
+ * secret, used once and never stored.
  */
 final class AccountFlow {
     private static final String TAG = "ReasonixProxy";
-    private static final String IDENTITY = "https://id.reasonix.io";
+    /** The self-hosted account service's origin; empty until someone sets it. */
+    private static final String KEY_IDENTITY = "identity";
     private static final String KEY_ACCOUNT_TOKEN = "account_token";
     private static final String KEY_ACCOUNT_USER = "account_user";
 
     private final SharedPreferences prefs;
-    private final ProxyCookies cookies;
     private final String userAgent;
 
-    AccountFlow(SharedPreferences prefs, ProxyCookies cookies, String userAgent) {
+    AccountFlow(SharedPreferences prefs, String userAgent) {
         this.prefs = prefs;
-        this.cookies = cookies;
         this.userAgent = userAgent;
+    }
+
+    /**
+     * The configured service origin, or "" when nobody set one.
+     *
+     * Today's answers are all local: the stored value is normalised on read so
+     * an origin typed with a trailing slash, a default port or uppercase host
+     * still produces the same URL the service was named by.
+     */
+    String identity() {
+        return ProxyPaths.urlOrigin(prefs.getString(KEY_IDENTITY, ""));
+    }
+
+    boolean configured() {
+        return !identity().isEmpty();
+    }
+
+    /**
+     * Remember the account service's address, or forget it.
+     *
+     * An empty value is a state, not an error: a phone that only ever connects
+     * over the LAN has no account service, and the account pane should say so
+     * rather than keep a dead host it will call on every visit.
+     */
+    void setIdentity(Socket socket, byte[] body) throws IOException, JSONException {
+        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String raw = request.optString("origin", "").trim();
+        if (raw.isEmpty()) {
+            prefs.edit().remove(KEY_IDENTITY).apply();
+            ProxyWire.writeJson(socket, 200, status().toString());
+            return;
+        }
+        String origin = ProxyPaths.urlOrigin(raw);
+        if (origin.isEmpty()) {
+            ProxyWire.writeJson(socket, 400, "{\"code\":\"proxy.bad_origin\"}");
+            return;
+        }
+        prefs.edit().putString(KEY_IDENTITY, origin).apply();
+        ProxyWire.writeJson(socket, 200, status().toString());
     }
 
     /**
@@ -59,7 +101,7 @@ final class AccountFlow {
             ProxyWire.writeJson(socket, 400, "{\"code\":\"proxy.bad_device\"}");
             return;
         }
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/me/remote-grants").toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(identity() + "/me/remote-grants").toURL().openConnection();
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
@@ -67,20 +109,7 @@ final class AccountFlow {
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + token);
         conn.setRequestProperty("User-Agent", userAgent);
-        // The web page calls this endpoint from reasonix.io with the account
-        // cookie. A service that checks Origin needs the same one; the proxy
-        // is not a browser and would otherwise send none.
-        conn.setRequestProperty("Origin", "https://reasonix.io");
-        conn.setRequestProperty("Referer", "https://reasonix.io/remote/");
         conn.setRequestProperty("Accept", "application/json");
-        // The WebView that hosted the sign-in page owns the account cookie;
-        // /me/remote-grants wants that cookie, not the Bearer API token.
-        String webCookie = ProxyCookies.webCookie();
-        if (!webCookie.isEmpty()) {
-            conn.setRequestProperty("Cookie", webCookie);
-        } else {
-            cookies.apply(conn, URI.create(IDENTITY + "/me/remote-grants"));
-        }
         byte[] payload = new JSONObject()
                 .put("targetDeviceId", deviceId)
                 .put("scopes", new JSONArray().put("desktop"))
@@ -106,7 +135,7 @@ final class AccountFlow {
             ProxyWire.writeJson(socket, 401, "{\"code\":\"account.signed_out\"}");
             return;
         }
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/me/devices").toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(identity() + "/me/devices").toURL().openConnection();
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(20000);
@@ -122,6 +151,10 @@ final class AccountFlow {
         JSONObject out = new JSONObject();
         String token = token();
         out.put("signedIn", !token.isEmpty());
+        String identity = identity();
+        // A client that has never been told where the service is can say so
+        // instead of leaving the sign-in button to fail on a dead host.
+        out.put("identity", identity);
         String user = prefs.getString(KEY_ACCOUNT_USER, "");
         if (!user.isEmpty()) {
             try {
@@ -134,7 +167,7 @@ final class AccountFlow {
     }
 
     JSONObject start() throws IOException, JSONException {
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/device/start").toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(identity() + "/device/start").toURL().openConnection();
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
@@ -148,7 +181,6 @@ final class AccountFlow {
         }
         String text = ProxyWire.readText(conn);
         int status = conn.getResponseCode();
-        cookies.store(URI.create(IDENTITY + "/device/start"), conn);
         conn.disconnect();
         if (status < 200 || status >= 300) {
             throw new IOException("account start answered " + status);
@@ -162,7 +194,7 @@ final class AccountFlow {
         if (deviceCode.isEmpty()) {
             return new JSONObject().put("status", "error").put("code", "account.missing_device_code");
         }
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/device/poll").toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(identity() + "/device/poll").toURL().openConnection();
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
@@ -176,7 +208,6 @@ final class AccountFlow {
         }
         String text = ProxyWire.readText(conn);
         int status = conn.getResponseCode();
-        cookies.store(URI.create(IDENTITY + "/device/poll"), conn);
         conn.disconnect();
         if (status == 400 || status == 403 || status == 410) {
             return pollFailure(text);
@@ -199,56 +230,16 @@ final class AccountFlow {
     }
 
     /**
-     * Sign in with the account's email and password, keeping the web session
-     * cookie the account grant needs.
+     * Approve the pending device code with the service's admin token.
      *
-     * The password is used once and never stored: the request goes straight to
-     * the identity service over HTTPS, and the only thing kept is the response
-     * cookie, in the same jar the in-app login page would use.
-     */
-    void signIn(Socket socket, byte[] body) throws IOException, JSONException {
-        JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
-        String email = request.optString("email", "").trim();
-        String password = request.optString("password", "");
-        if (email.isEmpty() || password.isEmpty()) {
-            ProxyWire.writeJson(socket, 400, new JSONObject().put("code", "account.missing_credentials").toString());
-            return;
-        }
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/login").toURL().openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(20000);
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Origin", "https://reasonix.io");
-        conn.setRequestProperty("Referer", "https://reasonix.io/login/");
-        conn.setRequestProperty("User-Agent", userAgent);
-        conn.setRequestProperty("Accept", "application/json");
-        byte[] payload = new JSONObject().put("email", email).put("password", password)
-                .toString().getBytes(StandardCharsets.UTF_8);
-        conn.setFixedLengthStreamingMode(payload.length);
-        try (OutputStream out = conn.getOutputStream()) {
-            out.write(payload);
-        }
-        String text = ProxyWire.readText(conn);
-        int status = conn.getResponseCode();
-        if (status >= 200 && status < 300) persistAccountCookies(conn);
-        conn.disconnect();
-        if (status < 200 || status >= 300) {
-            ProxyWire.writeJson(socket, status, serviceFailure(text, "account.signin_failed").toString());
-            return;
-        }
-        JSONObject result = new JSONObject().put("signedIn", true);
-        JSONObject user = new JSONObject(text).optJSONObject("user");
-        if (user != null) result.put("user", user);
-        ProxyWire.writeJson(socket, 200, result.toString());
-    }
-
-    /**
-     * Approve the pending device code with the web session cookie.
+     * A self-hosted service has exactly one human credential: the owner's
+     * admin token. There is no web session to carry it (no sign-in page, no
+     * cookie), so the person types it here and the proxy sends it once, in the
+     * body — never in a URL a screenshot or a history could keep.
      *
-     * The cookie is the one either sign-in path left in the WebView jar; the
-     * device code itself is only a short-lived grant, so both must match.
+     * The token is deliberately not stored: approving is a decision made at
+     * the moment, and a phone that kept the answer would make it silently for
+     * every later code.
      */
     void approve(Socket socket, byte[] body) throws IOException, JSONException {
         JSONObject request = new JSONObject(new String(body, StandardCharsets.UTF_8));
@@ -257,23 +248,23 @@ final class AccountFlow {
             ProxyWire.writeJson(socket, 400, new JSONObject().put("code", "account.missing_user_code").toString());
             return;
         }
-        String cookie = ProxyCookies.webCookie();
-        if (cookie.isEmpty()) {
-            ProxyWire.writeJson(socket, 401, new JSONObject().put("code", "account.signin_required").toString());
+        String adminToken = request.optString("token", "").trim();
+        if (adminToken.isEmpty()) {
+            ProxyWire.writeJson(socket, 400, new JSONObject().put("code", "account.missing_admin_token").toString());
             return;
         }
-        HttpURLConnection conn = (HttpURLConnection) URI.create(IDENTITY + "/device/approve").toURL().openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(identity() + "/device/approve").toURL().openConnection();
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(20000);
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Origin", "https://reasonix.io");
-        conn.setRequestProperty("Referer", "https://reasonix.io/device/");
         conn.setRequestProperty("User-Agent", userAgent);
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("Cookie", cookie);
-        byte[] payload = new JSONObject().put("userCode", userCode).toString().getBytes(StandardCharsets.UTF_8);
+        byte[] payload = new JSONObject()
+                .put("userCode", userCode)
+                .put("token", adminToken)
+                .toString().getBytes(StandardCharsets.UTF_8);
         conn.setFixedLengthStreamingMode(payload.length);
         try (OutputStream out = conn.getOutputStream()) {
             out.write(payload);
@@ -289,74 +280,40 @@ final class AccountFlow {
     }
 
     /**
-     * End the account's server-side sessions before the local state goes.
+     * End the account's server-side session before the local state goes.
      *
      * Best effort and short: signing out must not hang on a bad network. The
-     * web session cookie is expired locally as well, or the next sign-in page
-     * would still believe the previous person is here.
+     * self-hosted service identifies a session by its Bearer token alone, so
+     * there is no cookie to expire beside it.
      */
     void logout() {
-        String token = token();
-        String cookie = ProxyCookies.webCookie();
-        // The identity service's /auth/logout deletes one credential, cookie
-        // first. Two calls end both sessions: the web cookie and the device
-        // token minted by the poll. The token call runs beside the cookie call
-        // so sign-out does not pay two network deadlines in series.
-        if (!token.isEmpty()) {
-            final String deviceToken = token;
-            new Thread(() -> endSession("", deviceToken), "reasonix-logout-token").start();
-        }
-        endSession(cookie, "");
-        try {
-            android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
-            jar.setCookie("https://id.reasonix.io/",
-                    "rxid=; Max-Age=0; Path=/; Domain=.reasonix.io; Secure; SameSite=Lax");
-            jar.flush();
-        } catch (RuntimeException e) {
-            Log.w(TAG, "cannot expire the account cookie", e);
-        }
+        final String token = token();
         prefs.edit().remove(KEY_ACCOUNT_TOKEN).remove(KEY_ACCOUNT_USER).apply();
+        if (token.isEmpty()) return;
+        new Thread(() -> endSession(token), "reasonix-logout").start();
     }
 
-    private void endSession(String cookie, String token) {
-        if (cookie.isEmpty() && token.isEmpty()) return;
+    private void endSession(String token) {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) URI.create(IDENTITY + "/auth/logout").toURL().openConnection();
+            conn = (HttpURLConnection) URI.create(identity() + "/auth/logout").toURL().openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(1500);
             conn.setReadTimeout(2500);
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Origin", "https://reasonix.io");
+            conn.setRequestProperty("Authorization", "Bearer " + token);
             conn.setRequestProperty("User-Agent", userAgent);
-            if (!cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
-            if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
             byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
             conn.setFixedLengthStreamingMode(payload.length);
             try (OutputStream out = conn.getOutputStream()) {
                 out.write(payload);
             }
             ProxyWire.readText(conn);
-            persistAccountCookies(conn);
         } catch (IOException e) {
             Log.w(TAG, "cannot end the account session", e);
         } finally {
             if (conn != null) conn.disconnect();
-        }
-    }
-
-    /** Keep the identity service's Set-Cookie in the WebView's jar. */
-    private void persistAccountCookies(HttpURLConnection conn) {
-        try {
-            android.webkit.CookieManager jar = android.webkit.CookieManager.getInstance();
-            for (Map.Entry<String, List<String>> entry : conn.getHeaderFields().entrySet()) {
-                if (entry.getKey() == null || !"set-cookie".equalsIgnoreCase(entry.getKey())) continue;
-                for (String value : entry.getValue()) jar.setCookie("https://id.reasonix.io/", value);
-            }
-            jar.flush();
-        } catch (RuntimeException e) {
-            Log.w(TAG, "cannot keep the account cookie", e);
         }
     }
 

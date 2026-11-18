@@ -1,6 +1,6 @@
 {
   "kernel": {
-    "repository": "https://github.com/esengine/DeepSeek-Reasonix",
+    "repository": "https://github.com/f1shsmell/DeepSeek-Reasonix",
     "ref": "2948ec98ec0cc3b2c8f5619a19c98ff98cd17e74",
     "version": "2.57.0"
   },

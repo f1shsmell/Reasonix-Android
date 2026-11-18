@@ -66,7 +66,7 @@ vi.mock("../net/server", () => ({
   markRelay: vi.fn(),
   clearRelay: vi.fn(),
   signOutAccount: vi.fn(),
-  signInAccount: vi.fn(),
+  setAccountIdentity: vi.fn(),
   approveDevice: vi.fn(),
   startAccount: vi.fn(),
   pollAccount: vi.fn(),

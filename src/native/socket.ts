@@ -4,9 +4,11 @@ import type { PluginListenerHandle } from "@capacitor/core";
 /**
  * The relay socket, carried by native code.
  *
- * A WebView cannot choose its WebSocket Origin, and the relay rejects the
- * app's loopback origin. This adapter exposes the small WebSocket surface the
- * relay link uses, backed by OkHttp with the allowed Origin header.
+ * A WebView cannot choose its WebSocket Origin, and a relay that checks the
+ * Origin header rejects the app's loopback origin. This adapter exposes the
+ * small WebSocket surface the relay link uses, backed by OkHttp with the
+ * relay's own origin — the one Origin every relay accepts, because it is the
+ * page the socket is dialled at.
  */
 interface RelaySocketPlugin {
   connect(options: { url: string; protocols: string[]; origin?: string; tag?: number }): Promise<void>;
@@ -31,6 +33,31 @@ interface SocketEvent {
 }
 
 type Listener = (event: SocketEvent) => void;
+
+/**
+ * The https origin of a wss URL, for the handshake's Origin header.
+ *
+ * A relay that checks Origin (`gorilla/websocket`'s default `checkSameOrigin`)
+ * accepts exactly the origin its own URL names. The app used to send the
+ * vendor's page as its Origin, which a self-hosted relay rightly refuses;
+ * same-origin is both what that check wants and what a browser would send if
+ * the page were served from the relay itself.
+ *
+ * Returns "" only for a string that is not a URL at all, and the plugin treats
+ * that as "send no Origin header" — an empty header value is not the same
+ * thing, and a strict relay refuses it. Callers hand this a URL the grant
+ * already validated (`relayUrl`), so the empty case means a malformed caller,
+ * not a deployment nobody named.
+ */
+function sameOrigin(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.host) return "";
+    return `${parsed.protocol === "wss:" ? "https:" : parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Identifies each dial, so the plugin's events can be told apart: Capacitor
@@ -95,7 +122,7 @@ export class NativeWebSocket {
       this.fail(String(event.message ?? "relay socket failed"), Number(event.status ?? 0));
     });
     try {
-      await plugin.connect({ url, protocols, origin: "https://reasonix.io", tag: this.tag });
+      await plugin.connect({ url, protocols, origin: sameOrigin(url), tag: this.tag });
     } catch (error) {
       this.fail(error instanceof Error ? error.message : "relay socket failed");
     }

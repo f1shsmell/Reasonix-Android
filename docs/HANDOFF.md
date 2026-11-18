@@ -81,9 +81,9 @@ detach, so one pane's last frame cannot be folded into the next pane.
 The Connect screen (`src/app/ConnectScreen.tsx`) scans a QR code with
 `@capacitor/barcode-scanner`, accepts a `reasonix://` deep link, or takes a
 manual origin. A LAN code is `http://<ip>:<port>/#pair=<code>`; the proxy
-spends the code with `POST /pair` and stores the device cookie. The Internet
-code (`https://reasonix.io/remote/?device=<id>`) is recognised, and the relay
-controller protocol is implemented in `src/net/relay.ts`.
+spends the code with `POST /pair` and stores the device cookie. A cloud code
+is any page carrying `?device=<id>` — the account service's own share page —
+and the relay controller protocol is implemented in `src/net/relay.ts`.
 
 The scanner asks for `QR_CODE` only and pins Android to the MLKit library. A
 Studio code is always a QR code; the earlier `hint: ALL` made the detector
@@ -91,19 +91,24 @@ evaluate every symbology per frame, which is the likely cause of the slow
 first read. The remaining latency is the plugin's camera Activity (focus and
 frame rate), which its public options do not expose.
 
-Account sign-in uses the device flow, but the approval page is hosted by the
-app's own WebView (`LoginActivity`, opened through the `Login` plugin), not the
-system browser. That distinction is load-bearing: `/me/remote-grants` wants the
-account cookie, and only a WebView the app owns shares its cookie store with
-the proxy. The proxy reads
-`CookieManager.getCookie("https://id.reasonix.io")` for the grant; the Bearer
-token from `/device/poll` is used for `/me/devices` only. The device list hides
-revoked devices, and a device without the `desktop` capability is rendered
-disabled instead of being attempted.
+Account sign-in uses the device flow against a service this phone names in
+"设置 → 账号 → 服务地址" (stored by the proxy, which is the only party that
+talks to it). The approval page is hosted by the app's own WebView
+(`LoginActivity`, opened through the `Login` plugin), not the system browser,
+so that a person already in this app is not thrown into a second one. Unlike
+the old vendor flow there is no cookie read back: the grant is authorised by
+the Bearer token from `/device/poll`, and approving a code takes the owner's
+admin token, typed and never stored. A proxy that has never been given an
+address answers `account.unconfigured` instead of dialling a host that no
+longer resolves. The device list hides revoked devices, and a device without
+the `desktop` capability is rendered disabled instead of being attempted.
 
-Grant succeeded after an in-app login (the next failure was the WebSocket),
-so the WebView cookie read does work. If it regresses, the next step is still
-to run the grant fetch inside that WebView.
+The grant used to be authorised by the cookie the in-app sign-in page set,
+and that read was verified working (it succeeded; the next failure was the
+WebSocket). That path is gone: the grant now rides on the Bearer token from
+`/device/poll` and the approval page is only a form. The constraint it taught
+still holds if a deployment ever needs a cookie again — only a WebView the app
+owns shares its jar with the proxy, so that fetch has to run inside it.
 
 The approval page rendered its primary button white-on-white inside the app's
 WebView; a phone showed only "拒绝". `LoginActivity` now forces a light color
@@ -453,10 +458,12 @@ page's controller protocol reduced to fetch and a polled stream:
   device's X25519 public key and the relay origin;
 - the WebSocket dials `/v1/sessions/connect` with subprotocols
   `reasonix.remote.v1` and `reasonix.auth.<ticket>`. It is carried by native
-  OkHttp (`RelaySocketPlugin` + `src/native/socket.ts`), not the WebView: the
-  relay answers **403 `origin_rejected`** to `Origin: http://127.0.0.1:8788`
-  and accepts `Origin: https://reasonix.io`. A WebView cannot set that header;
-  OkHttp can;
+  OkHttp (`RelaySocketPlugin` + `src/native/socket.ts`), not the WebView: a
+  relay that checks Origin (`gorilla/websocket`'s default) refuses the app's
+  loopback origin, and a WebView cannot set that header. OkHttp sends the
+  relay's own origin — `https://<relay host>`, derived from the granted URL,
+  which is what that check wants and what a same-origin page would send. No
+  host is baked in;
 - the controller sends `hello` (X25519 public key + 16-byte salt); the key is
   HKDF-SHA256 over the ECDH secret with info `reasonix-remote-v1|<deviceId>`,
   and every later frame is AES-GCM-sealed JSON;

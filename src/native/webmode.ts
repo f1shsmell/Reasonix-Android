@@ -19,12 +19,13 @@ export interface WebModePlugin {
     /** The real kernel origin, so absolute self-links can be rewritten. */
     origin?: string;
     /**
-     * Hosts the page may navigate to and keep running here.
+     * Extra hosts the page may navigate to and keep running here.
      *
-     * The cloud Studio redirects its own page from reasonix.io to
-     * studio.reasonix.io; that is the same page, not an external link.
-     * Matched by exact host over https; anything else still goes to the
-     * system browser.
+     * A deployment whose front end hands itself to another host of its own
+     * (a second origin for assets or an auth hop) declares it here; that is
+     * still the same page, not an external link. Matched by exact host over
+     * https, so the exception cannot downgrade a link to cleartext. Anything
+     * else still goes to the system browser.
      */
     allowHosts?: string[];
   }): Promise<void>;

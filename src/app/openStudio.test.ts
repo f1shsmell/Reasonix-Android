@@ -12,11 +12,6 @@ const serverMock = vi.hoisted(() => ({
   readProxyConfig: vi.fn(),
   studioAppUrl: vi.fn(),
   studioWebUrl: vi.fn(),
-  // The real helper is a pure string; keep the tests on the same spelling.
-  studioRemoteUrl: (device: string | null | undefined) => {
-    const id = (device ?? "").trim();
-    return id ? `https://reasonix.io/remote/?device=${encodeURIComponent(id)}` : "";
-  },
 }));
 vi.mock("../net/server", () => serverMock);
 
@@ -70,72 +65,60 @@ describe("openStudio", () => {
     });
   });
 
-  it("opens a cloud page without the proxy", async () => {
+  it("answers none on a cloud door, which hosts no page", async () => {
+    // A self-hosted relay forwards sealed frames and serves nothing: there is
+    // no remote Studio to open, so the caller hides the entry rather than
+    // shipping a link to a host that does not answer.
     serverMock.readProxyConfig.mockResolvedValue({
       mode: "relay",
       origin: "http://192.168.5.3:57074",
       relayDevice: "dev-1",
     });
-    serverMock.studioAppUrl.mockReturnValue("https://reasonix.io/remote/?device=dev-1");
+    serverMock.studioAppUrl.mockReturnValue("");
     webMock.WebMode.open.mockResolvedValue(undefined);
 
-    await expect(openStudio()).resolves.toEqual({ kind: "native" });
-    expect(webMock.WebMode.open).toHaveBeenCalledWith({
-      url: "https://reasonix.io/remote/?device=dev-1",
-      viaProxy: false,
-      origin: "http://192.168.5.3:57074",
-      // The cloud page redirects itself to the Studio host; that is the same
-      // visit, not an external link.
-      allowHosts: ["studio.reasonix.io", "id.reasonix.io"],
-    });
+    await expect(openStudio()).resolves.toEqual({ kind: "none" });
+    expect(webMock.WebMode.open).not.toHaveBeenCalled();
   });
 
   it("follows a live relay even before the proxy calls itself relay", async () => {
     // A handover opens the link before it marks it; the config still says
-    // "lan" for that window, and the loopback it names is already gone.
+    // "lan" for that window, and the loopback it names is already gone. The
+    // remembered LAN page must not be opened, and there is no cloud page.
     serverMock.readProxyConfig.mockResolvedValue({ ...LAN, relayDevice: "" });
     serverMock.studioAppUrl.mockReturnValue("http://127.0.0.1:8788/");
     storeMock.loadRelayDevice.mockReturnValue("dev-1");
     relayMock.relayAlive.mockReturnValue(true);
     webMock.WebMode.open.mockResolvedValue(undefined);
 
-    await expect(openStudio()).resolves.toEqual({ kind: "native" });
-    expect(webMock.WebMode.open).toHaveBeenCalledWith({
-      url: "https://reasonix.io/remote/?device=dev-1",
-      viaProxy: false,
-      origin: "http://192.168.5.3:57074",
-      allowHosts: ["studio.reasonix.io", "id.reasonix.io"],
-    });
+    await expect(openStudio()).resolves.toEqual({ kind: "none" });
+    expect(webMock.WebMode.open).not.toHaveBeenCalled();
+    expect(browserMock.Browser.open).not.toHaveBeenCalled();
   });
 
-  it("falls back to the remote page when a live relay's page cannot open", async () => {
-    // The proxy still says "lan" during a handover; the browser must not be
-    // handed the LAN origin the app has already left.
+  it("does not hand the browser the LAN address the phone has left", async () => {
+    // The proxy still says "lan" during a handover; the browser would be sent
+    // to an origin that no longer answers. Nothing opens instead.
     serverMock.readProxyConfig.mockResolvedValue({ ...LAN, relayDevice: "" });
     serverMock.studioAppUrl.mockReturnValue("http://127.0.0.1:8788/");
     serverMock.studioWebUrl.mockReturnValue("http://192.168.5.3:57074");
     storeMock.loadRelayDevice.mockReturnValue("dev-1");
     relayMock.relayAlive.mockReturnValue(true);
-    webMock.WebMode.open.mockRejectedValue(new Error("no activity"));
     browserMock.Browser.open.mockResolvedValue(undefined);
 
-    await expect(openStudio()).resolves.toEqual({ kind: "browser" });
-    expect(browserMock.Browser.open).toHaveBeenCalledWith({
-      url: "https://reasonix.io/remote/?device=dev-1",
-    });
+    await expect(openStudio()).resolves.toEqual({ kind: "none" });
+    expect(browserMock.Browser.open).not.toHaveBeenCalled();
   });
 
-  it("prefers the cloud door while the link is not a working LAN", async () => {
+  it("prefers the relay route while the link is not a working LAN", async () => {
     // A phone that just left Wi-Fi still has a LAN origin in the proxy; the
-    // caller's route says it is not usable, so the page must be the remote one.
+    // caller's route says it is not usable, so the LAN page must stay shut.
     serverMock.readProxyConfig.mockResolvedValue({ ...LAN, relayDevice: "dev-1" });
     serverMock.studioAppUrl.mockReturnValue("http://127.0.0.1:8788/");
     webMock.WebMode.open.mockResolvedValue(undefined);
 
-    await expect(openStudio({ preferRelay: true })).resolves.toEqual({ kind: "native" });
-    expect(webMock.WebMode.open).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://reasonix.io/remote/?device=dev-1", viaProxy: false }),
-    );
+    await expect(openStudio({ preferRelay: true })).resolves.toEqual({ kind: "none" });
+    expect(webMock.WebMode.open).not.toHaveBeenCalled();
   });
 
   it("keeps the LAN door when no cloud device is known", async () => {
@@ -205,20 +188,21 @@ describe("openStudio", () => {
     });
   });
 
-  it("gives the browser the remote page on a cloud door", async () => {
+  it("keeps the browser shut on a cloud door", async () => {
+    // Both doors answer "": there is no page on a relay, in the app or in the
+    // browser. Opening one anyway would be a dead link.
     serverMock.readProxyConfig.mockResolvedValue({
       mode: "relay",
       origin: "",
       relayDevice: "dev-1",
     });
-    serverMock.studioAppUrl.mockReturnValue("https://reasonix.io/remote/?device=dev-1");
-    serverMock.studioWebUrl.mockReturnValue("https://reasonix.io/remote/?device=dev-1");
+    serverMock.studioAppUrl.mockReturnValue("");
+    serverMock.studioWebUrl.mockReturnValue("");
     webMock.WebMode.open.mockRejectedValue(new Error("no activity"));
     browserMock.Browser.open.mockResolvedValue(undefined);
 
-    await expect(openStudio()).resolves.toEqual({ kind: "browser" });
-    expect(browserMock.Browser.open).toHaveBeenCalledWith({
-      url: "https://reasonix.io/remote/?device=dev-1",
-    });
+    await expect(openStudio()).resolves.toEqual({ kind: "none" });
+    expect(webMock.WebMode.open).not.toHaveBeenCalled();
+    expect(browserMock.Browser.open).not.toHaveBeenCalled();
   });
 });

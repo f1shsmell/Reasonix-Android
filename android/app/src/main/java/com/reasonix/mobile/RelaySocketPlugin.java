@@ -22,11 +22,13 @@ import okhttp3.WebSocketListener;
 /**
  * The relay's WebSocket, dialled from native code.
  *
- * The relay rejects a WebSocket whose Origin is the app's loopback page
- * (`origin_rejected`); the browser cannot override that header, and the
- * desktop page is only allowed because its Origin is reasonix.io. OkHttp can
- * send the allowed Origin explicitly, while the encrypted protocol stays in
- * the WebView. Only the transport moves.
+ * A relay that checks Origin (`gorilla/websocket`'s default checkSameOrigin)
+ * rejects the app's loopback page as the WebSocket Origin; the browser cannot
+ * override that header, and the page has none of its own to offer. OkHttp can
+ * send the origin the relay itself names — the one a same-origin page would
+ * send — while the encrypted protocol stays in the WebView. Only the transport
+ * moves, and no host is assumed: the caller passes the origin derived from the
+ * relay URL, and an empty one means "send no Origin header".
  */
 @CapacitorPlugin(name = "RelaySocket")
 public class RelaySocketPlugin extends Plugin {
@@ -60,7 +62,10 @@ public class RelaySocketPlugin extends Plugin {
     @PluginMethod
     public void connect(PluginCall call) {
         String url = call.getString("url");
-        String origin = call.getString("origin", "https://reasonix.io");
+        // No default host: a self-hosted relay is named by its grant, and an
+        // origin from a domain this app no longer knows would be refused by
+        // any deployment but the vendor's.
+        String origin = call.getString("origin", "");
         Integer tag = tagOf(call);
         JSArray array = call.getArray("protocols");
         List<String> protocols = new ArrayList<>();
@@ -83,7 +88,11 @@ public class RelaySocketPlugin extends Plugin {
         if (previous != null) {
             previous.close(1000, "replaced");
         }
-        Request.Builder builder = new Request.Builder().url(url).header("Origin", origin);
+        // An empty value would send `Origin: `, which is worse than sending
+        // nothing at all: a relay that checks Origin reads an empty header as
+        // a mismatch. Declaring none is the honest wire form of "unknown".
+        Request.Builder builder = new Request.Builder().url(url);
+        if (!origin.isEmpty()) builder.header("Origin", origin);
         if (!protocols.isEmpty()) {
             // OkHttp sends this header through to the handshake; the relay
             // requires the ticket-bearing subprotocol.

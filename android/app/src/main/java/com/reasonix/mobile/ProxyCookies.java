@@ -42,11 +42,6 @@ final class ProxyCookies {
         }
     }
 
-    /** The account cookie the in-app sign-in WebView holds. */
-    static String webCookie() {
-        return webCookie("https://id.reasonix.io");
-    }
-
     /** The CookieManager cookie for any origin a WebView paired with. */
     static String webCookie(String url) {
         try {
