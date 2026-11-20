@@ -68,12 +68,24 @@ describe("buildDiagnostics", () => {
     expect(text).toContain("client.offline");
     expect(text).toContain("Reach: ok");
     expect(text).toContain("Stream: open");
+    expect(text).toMatch(/Stream lane: (sse|mux|poll)/);
+    expect(text).toMatch(/Relay: (open|reconnecting|ended|none)/);
     expect(text).toContain("wifi");
     expect(text).toContain("Cloud background reminders: on");
     expect(text).toContain("Cloud watch: active");
     expect(text).toContain("Cloud sweep: last=ok · runtimes=1 · statuses=1 · asks=1");
     expect(text).not.toContain("token");
     expect(text).not.toContain("cookie");
+  });
+
+  it("names the lane a push stream rides on", async () => {
+    const text = await buildDiagnostics({
+      link,
+      snapshot: { ...snapshot, stream: { kind: "open", channel: "mux" } },
+      cloudWatch: true,
+      reach: [],
+    });
+    expect(text).toContain("Stream lane: mux");
   });
 
   it("lists the last reach batch with its timing", async () => {

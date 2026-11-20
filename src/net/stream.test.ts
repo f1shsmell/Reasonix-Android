@@ -71,12 +71,15 @@ describe("RuntimeStream", () => {
     expect(stream.cursor).toBe(7);
   });
 
-  it("names the lane the source settled on, defaulting to sse", () => {
+  it("names the lane the source settled on", () => {
     const { states, handlers } = makeHandlers();
     const stream = new RuntimeStream("/rt/r1/events", handlers);
     stream.start();
+    // The browser's own EventSource does not know — the LAN's SSE is the
+    // default every reader applies, and the state stays bare so old
+    // comparisons keep holding.
     FakeSource.latest?.onopen?.();
-    expect(states.at(-1)).toEqual({ kind: "open", channel: "sse" });
+    expect(states.at(-1)).toEqual({ kind: "open" });
 
     // A source that knows better — the relay's mux lane — is reported as-is.
     const push = new RuntimeStream("/rt/r1/events", handlers);

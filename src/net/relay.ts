@@ -1191,6 +1191,10 @@ export async function connectRelay(
   const previous = activeLink;
   install();
   activeLink = link;
+  // Forward this link's condition changes to the module-level watchers; a
+  // screen that shows the relay's health follows the link it is bound to.
+  link.watch(publishRelayState);
+  publishRelayState();
   // The old socket must not stay alive beside the new one; it would keep
   // reconnecting and could route a request after the switch.
   previous?.close("replaced by a new relay connection");
@@ -1222,6 +1226,29 @@ export function relayState(): RelayState | "none" {
   return activeLink?.currentState ?? "none";
 }
 
+const relayWatchers = new Set<(state: RelayState | "none") => void>();
+
+function publishRelayState(): void {
+  const state = relayState();
+  for (const listener of relayWatchers) listener(state);
+}
+
+/**
+ * Subscribe to the active relay's condition, including `none` when no relay
+ * is routing. Fires immediately with the current state.
+ *
+ * This is the screen-facing view of the link's own `watch`: the self-healing
+ * window while a relay socket rebuilds is exactly when the UI must not keep
+ * claiming everything is fine.
+ */
+export function watchRelayState(listener: (state: RelayState | "none") => void): () => void {
+  relayWatchers.add(listener);
+  listener(relayState());
+  return () => {
+    relayWatchers.delete(listener);
+  };
+}
+
 /** The device the relay is bound to, even while it is reconnecting. */
 export function relayDevice(): string | null {
   return activeLink?.device ?? null;
@@ -1234,4 +1261,5 @@ export function clearRelayRouting(): void {
   activeLink = null;
   link?.close("relay routing cleared");
   if (nativeEventSource !== null) globalThis.EventSource = nativeEventSource;
+  publishRelayState();
 }

@@ -155,9 +155,12 @@ export class RuntimeStream {
     source.onopen = () => {
       if (this.source !== source) return;
       this.attempt = 0;
-      // The channel is what the pane can tell the person: push over the mux,
-      // the polled fallback, or the LAN's own SSE.
-      this.handlers.onState({ kind: "open", channel: source.channel ?? "sse" });
+      // The channel is what the pane can tell the person: push over the mux or
+      // the polled fallback. A source that does not know — the browser's own
+      // EventSource on the LAN — leaves it unset, which every reader treats as
+      // the LAN's SSE.
+      const state: StreamState = { kind: "open", ...(source.channel ? { channel: source.channel } : {}) };
+      this.handlers.onState(state);
     };
 
     source.onmessage = (message: MessageEvent<string>) => {
