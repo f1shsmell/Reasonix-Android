@@ -21,6 +21,7 @@ import type { ConfirmTrust, TrustResult } from "./deviceTrust";
 import { fetchWithTimeout } from "./http";
 import { MuxClient } from "./relayMux";
 import type { MuxFrameHandlers, MuxStreamHandle } from "./relayMux";
+import { BulkUpload } from "./relayBulk";
 
 // ---- account grant ---------------------------------------------------
 const ACCOUNT_GRANT = "/__reasonix/account/grant";
@@ -72,6 +73,7 @@ export interface RelayGrant {
 interface Channel {
   bind(session: string): void;
   seal(value: unknown): Promise<string>;
+  sealBytes(part: Uint8Array<ArrayBuffer>): Promise<string>;
   open(payload: string): Promise<Record<string, unknown>>;
 }
 
@@ -118,6 +120,8 @@ interface Pending {
   chunks: Map<number, string>;
   /** Fires when the relay never answers, so a request cannot hang forever. */
   timer?: number;
+  /** A bulk upload survives a loss and resumes itself; see relayBulk.ts. */
+  bulk?: boolean;
   resolve: (value: Response) => void;
   reject: (reason: unknown) => void;
 }
@@ -149,6 +153,24 @@ function concatChunks(chunks: Map<number, string>): Uint8Array<ArrayBuffer> {
     offset += part.length;
   }
   return joined;
+}
+
+/**
+ * The attachment JSON the endpoint module builds, unpacked for the bulk lane.
+ * A body that is not that shape stays on the ordinary request path.
+ */
+function parseAttachment(body: Uint8Array): { name: string; mime: string; bytes: Uint8Array } | null {
+  try {
+    const value = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    if (typeof value.name !== "string" || typeof value.mime !== "string" || typeof value.data !== "string") {
+      return null;
+    }
+    const bytes = base64ToBytes(value.data);
+    if (bytes.length === 0) return null;
+    return { name: value.name, mime: value.mime, bytes };
+  } catch {
+    return null;
+  }
 }
 
 // ---- account grant ---------------------------------------------------
@@ -340,7 +362,7 @@ async function encryptedChannel(device: RelayDevice, socket: SocketLike): Promis
       type: "hello",
       publicKey: bytesToBase64(publicKey),
       salt: bytesToBase64(salt),
-      capabilities: { mux: 1 },
+      capabilities: { mux: 1, bulk: 1 },
     }),
   );
   let bound: string | null = null;
@@ -361,6 +383,18 @@ async function encryptedChannel(device: RelayDevice, socket: SocketLike): Promis
         v: 1,
         nonce: bytesToBase64(nonce),
         ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+      });
+    },
+    async sealBytes(part: Uint8Array<ArrayBuffer>) {
+      // A bulk part carries no session stamp: its order is the index inside
+      // the plaintext, and the kernel checks it against the upload's count.
+      const nonce = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: info }, key, part);
+      return JSON.stringify({
+        v: 1,
+        nonce: bytesToBase64(nonce),
+        ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+        bin: true,
       });
     },
     async open(payload: string) {
@@ -517,6 +551,7 @@ export class RelayLink {
   private state: RelayState = "open";
   private readonly watchers = new Set<(state: RelayState) => void>();
   private readonly mux: MuxClient;
+  private readonly bulks = new Map<string, BulkUpload>();
 
   constructor(private readonly deviceId: string, first: Connection) {
     this.current = first;
@@ -555,6 +590,11 @@ export class RelayLink {
     return (this.current?.capabilities?.mux ?? 0) >= 1;
   }
 
+  /** Whether the kernel at the other end negotiated the bulk binary lane. */
+  supportsBulk(): boolean {
+    return (this.current?.capabilities?.bulk ?? 0) >= 1;
+  }
+
   /** Subscribe to one runtime's events over the push lane. */
   openEventStream(
     runtime: string,
@@ -582,6 +622,10 @@ export class RelayLink {
     const body = new Uint8Array(await request.arrayBuffer());
     const target = new URL(request.url, location.origin);
     const path = `${target.pathname}${target.search}`;
+    if (this.supportsBulk() && request.method === "POST" && /\/attachments$/.test(target.pathname)) {
+      const attachment = parseAttachment(body);
+      if (attachment) return this.bulkUpload(target.pathname, attachment);
+    }
     const encoded = bytesToBase64(body);
     const command = {
       v: 1,
@@ -649,6 +693,89 @@ export class RelayLink {
     connection.socket.send(wire);
   }
 
+  /**
+   * Hand an attachment to the bulk lane. The response still arrives as the
+   * ordinary desktop.response for this id; the upload only drives the parts,
+   * and resumes itself across a reconnect instead of being failed like a
+   * write whose fate is unknown.
+   */
+  private bulkUpload(path: string, attachment: { name: string; mime: string; bytes: Uint8Array }): Promise<Response> {
+    const id = crypto.randomUUID();
+    const upload = new BulkUpload(
+      id,
+      path,
+      attachment.name,
+      attachment.mime,
+      attachment.bytes,
+      {
+        send: (command) => this.control(command),
+        sendBinary: (part) => this.binary(part),
+        buffered: () => this.current?.socket.bufferedAmount ?? 0,
+      },
+      (error) => {
+        const entry = this.pending.get(id);
+        if (entry) {
+          this.pending.delete(id);
+          entry.reject(error);
+        }
+      },
+    );
+    this.bulks.set(id, upload);
+    const response = new Promise<Response>((resolve, reject) => {
+      this.pending.set(id, {
+        id,
+        method: "POST",
+        path,
+        body: "",
+        sentTo: null,
+        chunks: new Map(),
+        bulk: true,
+        resolve: (value) => {
+          upload.abort();
+          this.bulks.delete(id);
+          resolve(value);
+        },
+        reject: (error) => {
+          upload.abort();
+          this.bulks.delete(id);
+          reject(error);
+        },
+      });
+    });
+    // Once every part is out, the answer gets the same deadline as any
+    // request; until then the upload's own watchdogs govern.
+    void upload.run().then(() => {
+      const entry = this.pending.get(id);
+      if (!entry) return;
+      entry.timer = window.setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        entry.reject(new RelayError("transient", "远程 Studio 没有及时回应，请稍后重试。"));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    return response;
+  }
+
+  /** A binary part rides the same send chain, so seals stay in order. */
+  private binary(part: Uint8Array<ArrayBuffer>): Promise<void> {
+    this.sending = this.sending.then(
+      () => this.binaryNow(part),
+      () => this.binaryNow(part),
+    );
+    return this.sending;
+  }
+
+  private async binaryNow(part: Uint8Array<ArrayBuffer>): Promise<void> {
+    const connection = this.current;
+    if (!connection || connection.socket.readyState !== 1) {
+      throw new RelayError("transient", "连接中断，附件上传已暂停。");
+    }
+    const wire = await connection.channel.sealBytes(part);
+    if (this.current !== connection || connection.socket.readyState !== 1) {
+      throw new RelayError("transient", "连接中断，附件上传已暂停。");
+    }
+    connection.socket.send(wire);
+  }
+
   private async sendNow(id: string, command: Record<string, unknown>): Promise<void> {
     const connection = this.current;
     if (!connection || connection.socket.readyState !== 1 || !this.pending.has(id)) return;
@@ -671,6 +798,11 @@ export class RelayLink {
     }
     if (this.current !== connection) return;
     if (this.mux.receive(message)) return;
+    if (message.type === "bulk.ready") {
+      const upload = typeof message.id === "string" ? this.bulks.get(message.id) : undefined;
+      upload?.ready(message);
+      return;
+    }
     const id = typeof message.id === "string" ? message.id : "";
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -704,8 +836,11 @@ export class RelayLink {
     if (this.ended) return;
     this.current = null;
     this.mux.lost();
-    // Only reads survive a reconnect: a write may have run already.
+    for (const upload of this.bulks.values()) upload.lost();
+    // Only reads survive a reconnect: a write may have run already. A bulk
+    // upload is the exception — its parts are counted, so it resumes itself.
     for (const [id, entry] of this.pending) {
+      if (entry.bulk) continue;
       if (entry.method !== "GET" && entry.method !== "HEAD") {
         this.pending.delete(id);
         if (entry.timer !== undefined) clearTimeout(entry.timer);
@@ -738,6 +873,7 @@ export class RelayLink {
           this.attach(connection);
           this.publishState("open");
           for (const [id, entry] of this.pending) {
+            if (entry.bulk) continue;
             await this.send(id, {
               v: 1,
               type: "desktop.request",
@@ -748,6 +884,7 @@ export class RelayLink {
             });
           }
           this.mux.reconnected();
+          for (const upload of this.bulks.values()) upload.reconnected();
           return;
         } catch (error) {
           last = error;
@@ -768,6 +905,7 @@ export class RelayLink {
     this.ended = true;
     this.publishState("ended");
     this.mux.ended(reason);
+    for (const upload of this.bulks.values()) upload.abort();
     for (const entry of this.pending.values()) {
       if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.reject(new RelayError("ended", reason));

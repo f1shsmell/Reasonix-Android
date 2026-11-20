@@ -23,6 +23,7 @@ function connection() {
   const channel = {
     bind: vi.fn(),
     seal: vi.fn(async (value: unknown) => JSON.stringify(value)),
+    sealBytes: vi.fn(async (_part: Uint8Array<ArrayBuffer>) => "sealed-binary"),
     open: vi.fn(),
   };
   return { socket, channel, listeners };
@@ -160,6 +161,205 @@ describe("RelayLink", () => {
     expect(link.isEnded).toBe(true);
     expect(link.currentState).toBe("ended");
     expect(states).toContain("ended");
+  });
+});
+
+describe("RelayLink bulk upload", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const attachmentBody = JSON.stringify({ name: "a.png", mime: "image/png", data: btoa("attachment bytes") });
+  const attachmentURL = "http://127.0.0.1:8788/rt/r1/attachments";
+
+  it("routes an attachment POST over the bulk lane and resolves the desktop answer", async () => {
+    const { socket, channel, listeners } = connection();
+    const commands: Record<string, unknown>[] = [];
+    channel.seal.mockImplementation(async (value: unknown) => {
+      commands.push(value as Record<string, unknown>);
+      return "sealed";
+    });
+    const parts: Uint8Array[] = [];
+    channel.sealBytes.mockImplementation(async (part: Uint8Array<ArrayBuffer>) => {
+      parts.push(part);
+      return "sealed-binary";
+    });
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+      capabilities: { bulk: 1 },
+    });
+
+    const responsePromise = link.fetch(new Request(attachmentURL, { method: "POST", body: attachmentBody }));
+    await tick();
+    const open = commands.find((command) => command.type === "bulk.open");
+    expect(open).toMatchObject({ path: "/rt/r1/attachments", name: "a.png", mime: "image/png", total: 1 });
+    expect(commands.some((command) => command.type === "desktop.request")).toBe(false);
+
+    channel.open.mockResolvedValueOnce({ v: 1, type: "bulk.ready", id: open?.id, next: 0 });
+    listeners.get("message")?.[0]?.({ data: "sealed" });
+    await tick();
+    await tick();
+    expect(parts).toHaveLength(1);
+    const part = parts[0];
+    if (!part) throw new Error("no binary part was sent");
+    const view = new DataView(part.buffer, part.byteOffset, part.byteLength);
+    expect(view.getUint32(0)).toBe(0);
+    expect(new TextDecoder().decode(part.subarray(4))).toBe("attachment bytes");
+    expect(socket.send).toHaveBeenCalledWith("sealed-binary");
+
+    channel.open.mockResolvedValueOnce({
+      id: open?.id,
+      type: "desktop.response",
+      index: 0,
+      body: btoa('{"ref":"@a.png"}'),
+      done: true,
+      status: 200,
+      contentType: "application/json",
+    });
+    listeners.get("message")?.[0]?.({ data: "sealed" });
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ref: "@a.png" });
+    link.close();
+  });
+
+  it("keeps the base64 request path when the kernel did not negotiate bulk", async () => {
+    const { socket, channel, listeners } = connection();
+    let command: Record<string, unknown> = {};
+    channel.seal.mockImplementation(async (value: unknown) => {
+      command = value as Record<string, unknown>;
+      return "sealed";
+    });
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+    });
+
+    const responsePromise = link.fetch(new Request(attachmentURL, { method: "POST", body: attachmentBody }));
+    await tick();
+    expect(command.type).toBe("desktop.request");
+    expect(command.path).toBe("/rt/r1/attachments");
+
+    channel.open.mockResolvedValueOnce({
+      id: command.id,
+      type: "desktop.response",
+      index: 0,
+      body: "W10",
+      done: true,
+      status: 200,
+      contentType: "application/json",
+    });
+    listeners.get("message")?.[0]?.({ data: "sealed" });
+    expect((await responsePromise).status).toBe(200);
+    expect(channel.sealBytes).not.toHaveBeenCalled();
+    link.close();
+  });
+
+  it("leaves a body that is not attachment JSON on the request path", async () => {
+    const { socket, channel } = connection();
+    let command: Record<string, unknown> = {};
+    channel.seal.mockImplementation(async (value: unknown) => {
+      command = value as Record<string, unknown>;
+      return "sealed";
+    });
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+      capabilities: { bulk: 1 },
+    });
+
+    void link.fetch(new Request(attachmentURL, { method: "POST", body: "raw text" })).catch(() => {});
+    await tick();
+    expect(command.type).toBe("desktop.request");
+    expect(channel.sealBytes).not.toHaveBeenCalled();
+    link.close();
+  });
+
+  it("fails a bulk upload whose answer never arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      const { socket, channel, listeners } = connection();
+      const commands: Record<string, unknown>[] = [];
+      channel.seal.mockImplementation(async (value: unknown) => {
+        commands.push(value as Record<string, unknown>);
+        return "sealed";
+      });
+      const link = new RelayLink("device", {
+        socket: socket as unknown as WebSocket,
+        channel,
+        features: [],
+        instance: "",
+        capabilities: { bulk: 1 },
+      });
+
+      const outcome = link
+        .fetch(new Request(attachmentURL, { method: "POST", body: attachmentBody }))
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      const open = commands.find((command) => command.type === "bulk.open");
+      channel.open.mockResolvedValueOnce({ v: 1, type: "bulk.ready", id: open?.id, next: 0 });
+      listeners.get("message")?.[0]?.({ data: "sealed" });
+      // Every part is out; the kernel never answers.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(channel.sealBytes).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const error = await outcome;
+      expect(error).toBeInstanceOf(RelayError);
+      expect((error as RelayError).kind).toBe("transient");
+      link.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a bulk upload pending across an abnormal close instead of failing the write", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
+    const { socket, channel, listeners } = connection();
+    const commands: Record<string, unknown>[] = [];
+    channel.seal.mockImplementation(async (value: unknown) => {
+      commands.push(value as Record<string, unknown>);
+      return "sealed";
+    });
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+      capabilities: { bulk: 1 },
+    });
+
+    let settled = false;
+    const outcome = link
+      .fetch(new Request(attachmentURL, { method: "POST", body: attachmentBody }))
+      .then(
+        (value) => {
+          settled = true;
+          return value;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+    await tick();
+    expect(commands.some((command) => command.type === "bulk.open")).toBe(true);
+
+    listeners.get("close")?.[0]?.({ code: 1006, reason: "abnormal" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // An ordinary write fails here; the counted upload waits for the resume.
+    expect(settled).toBe(false);
+    expect(link.isEnded).toBe(false);
+    expect(link.currentState).toBe("reconnecting");
+
+    // The refused grant then ends the link, which settles the upload too.
+    const ended = await outcome;
+    expect(ended).toBeInstanceOf(RelayError);
+    expect((ended as RelayError).kind).toBe("ended");
+    expect(link.isEnded).toBe(true);
   });
 });
 
