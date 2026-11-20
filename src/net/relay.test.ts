@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deviceFingerprint, pinDevice } from "./deviceTrust";
 import { RelayError, RelayEventSource, RelayLink, clearRelayRouting, connectRelay, isKernelPath } from "./relay";
+import type { MuxFrameHandlers } from "./relayMux";
 
 type Handler = (event: {
   data?: string;
@@ -313,6 +314,7 @@ describe("isKernelPath", () => {
 describe("RelayEventSource", () => {
   it("polls the replay feed and hands frames to onmessage", async () => {
     const link = {
+      supportsMux: () => false,
       fetch: vi.fn(async () =>
         new Response(
           JSON.stringify({
@@ -341,6 +343,7 @@ describe("RelayEventSource", () => {
   it("surfaces an error when an already-open feed dies", async () => {
     let calls = 0;
     const link = {
+      supportsMux: () => false,
       fetch: vi.fn(async () => {
         calls += 1;
         if (calls > 1) throw new Error("relay ended");
@@ -358,5 +361,167 @@ describe("RelayEventSource", () => {
     source.close();
 
     expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+function muxLink() {
+  let hooks: MuxFrameHandlers | null = null;
+  let cursor: (() => number | null) | null = null;
+  let runtime = "";
+  const close = vi.fn();
+  const link = {
+    supportsMux: () => true,
+    openEventStream: vi.fn(async (rt: string, cur: () => number | null, h: MuxFrameHandlers) => {
+      runtime = rt;
+      cursor = cur;
+      hooks = h;
+      return { close };
+    }),
+    fetch: vi.fn(),
+  } as unknown as RelayLink;
+  return { link, close, hooks: () => hooks, cursor: () => cursor, runtime: () => runtime };
+}
+
+describe("RelayEventSource over mux", () => {
+  it("subscribes with the runtime and cursor the URL names", async () => {
+    const rig = muxLink();
+    const source = new RelayEventSource("http://127.0.0.1:8788/rt/r1/events?lastEventId=3", rig.link);
+    const opened = vi.fn();
+    source.onopen = opened;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(rig.runtime()).toBe("r1");
+    expect(rig.cursor()?.()).toBe(3);
+    expect(opened).toHaveBeenCalledTimes(1);
+    source.close();
+    expect(rig.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the unprefixed events path as the default runtime with no cursor", async () => {
+    const rig = muxLink();
+    const source = new RelayEventSource("http://127.0.0.1:8788/events", rig.link);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rig.runtime()).toBe("");
+    expect(rig.cursor()?.()).toBeNull();
+    source.close();
+  });
+
+  it("hands pushed frames over with their numbered cursor", async () => {
+    const rig = muxLink();
+    const source = new RelayEventSource("http://127.0.0.1:8788/rt/r1/events", rig.link);
+    const seen: Array<{ data: string; id: string }> = [];
+    source.onmessage = (event) => seen.push({ data: event.data, id: event.lastEventId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    rig.hooks()?.onFrame({ kind: "stream_watermark", seq: 9 });
+    rig.hooks()?.onFrame({ kind: "text", text: "hi", seq: 10 });
+    rig.hooks()?.onFrame({ kind: "text", text: "delta" });
+    expect(seen).toEqual([
+      { data: '{"kind":"stream_watermark","seq":9}', id: "9" },
+      { data: '{"kind":"text","text":"hi","seq":10}', id: "10" },
+      { data: '{"kind":"text","text":"delta"}', id: "" },
+    ]);
+    source.close();
+  });
+
+  it("surfaces an unsolicited close as an error and delivers nothing after", async () => {
+    const rig = muxLink();
+    const source = new RelayEventSource("http://127.0.0.1:8788/rt/r1/events", rig.link);
+    const error = vi.fn();
+    const message = vi.fn();
+    source.onerror = error;
+    source.onmessage = message;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    rig.hooks()?.onClosed("credit_timeout");
+    rig.hooks()?.onFrame({ kind: "text", seq: 1 });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it("falls back to polling when the kernel refuses the stream", async () => {
+    const rig = muxLink();
+    (rig.link.openEventStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("event push is unavailable"),
+    );
+    (rig.link.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () =>
+      new Response(
+        JSON.stringify({ frames: [{ kind: "text", text: "hi", seq: 1 }], watermark: 1, complete: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const source = new RelayEventSource("http://127.0.0.1:8788/rt/r1/events", rig.link);
+    const opened = vi.fn();
+    const seen: string[] = [];
+    source.onopen = opened;
+    source.onmessage = (event) => seen.push(event.data);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    source.close();
+
+    expect(opened).toHaveBeenCalled();
+    expect(seen).toEqual(['{"kind":"text","text":"hi","seq":1}']);
+  });
+});
+
+describe("RelayLink mux dispatch", () => {
+  it("advertises push only when the ready handshake named it", () => {
+    const plain = connection();
+    const without = new RelayLink("device", {
+      socket: plain.socket as unknown as WebSocket,
+      channel: plain.channel,
+      features: [],
+      instance: "",
+    });
+    expect(without.supportsMux()).toBe(false);
+    const capable = connection();
+    const withMux = new RelayLink("device", {
+      socket: capable.socket as unknown as WebSocket,
+      channel: capable.channel,
+      features: [],
+      instance: "",
+      capabilities: { mux: 1 },
+    });
+    expect(withMux.supportsMux()).toBe(true);
+  });
+
+  it("opens a stream and delivers pushed frames beside desktop responses", async () => {
+    const { socket, channel, listeners } = connection();
+    const commands: Array<Record<string, unknown>> = [];
+    channel.seal.mockImplementation(async (value: unknown) => {
+      commands.push(value as Record<string, unknown>);
+      return "sealed";
+    });
+    const link = new RelayLink("device", {
+      socket: socket as unknown as WebSocket,
+      channel,
+      features: [],
+      instance: "",
+      capabilities: { mux: 1 },
+    });
+    const frames: Array<Record<string, unknown>> = [];
+    const opening = link.openEventStream("r1", () => null, {
+      onFrame: (frame) => frames.push(frame),
+      onClosed: () => {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const open = commands.find((item) => item.type === "mux.open");
+    expect(open).toMatchObject({ runtime: "r1", attach: true });
+
+    channel.open.mockResolvedValue({ type: "mux.opened", id: open?.id, stream: open?.id });
+    listeners.get("message")?.[0]?.({ data: "sealed" });
+    await opening;
+
+    channel.open.mockResolvedValue({
+      type: "mux.frame",
+      stream: open?.id,
+      seq: 1,
+      index: 0,
+      done: true,
+      data: '{"kind":"text","seq":1}',
+    });
+    listeners.get("message")?.[0]?.({ data: "sealed" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(frames).toEqual([{ kind: "text", seq: 1 }]);
+    link.close();
   });
 });
