@@ -27,8 +27,9 @@ grant 一起下发（`src/net/relay.ts` 的 `fetchGrant`），所以下面这段
 await new Promise((resolve) => setTimeout(resolve, active ? 200 : 1500));
 ```
 
-relay 通道用轮询模拟 SSE。有数据时 200 ms 一轮，空闲时 1500 ms 一轮，每一轮
-都是一次完整的加密请求-响应往返。**换一个再近的中继也改不掉这 200 ms 的下限。**
+relay 通道的事件流默认走 mux 推送（内核 `studio` 分支已合并，见 CLOUD_MUX_PLAN.md），
+不再轮询；老内核或被拒时回退轮询——有数据时 200 ms 一轮，空闲时 3 s 一轮，每一轮
+都是一次完整的加密请求-响应往返。**轮询只是回退，不再是常态。**
 
 所以自建中继能改善的是可控性和抖动，改善不了延迟模型。要真正快，只能让手机走
 真 SSE 直连。
