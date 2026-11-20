@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { kernelTransport } from "../net/transport";
-import { watchRelayState } from "../net/relay";
+import { relayState, watchRelayState } from "../net/relay";
 
 export type RelayHealth = "open" | "reconnecting" | "ended" | "none";
 
@@ -16,8 +16,10 @@ export type RelayHealth = "open" | "reconnecting" | "ended" | "none";
  * real dead link. `none` means no relay is routing — a LAN connection.
  */
 export function useRelayHealth(): RelayHealth {
+  // Seeded from the live link, not from "none": a hook mounted during a
+  // healing window must not paint one frame of the healthy claim.
   const [health, setHealth] = useState<RelayHealth>(
-    () => kernelTransport().relayState?.() ?? "none",
+    () => kernelTransport().relayState?.() ?? relayState(),
   );
   useEffect(() => {
     const scripted = kernelTransport().relayState;

@@ -471,7 +471,7 @@ page's controller protocol reduced to fetch and a polled stream:
   `desktop.response` chunks assembled by id;
 - the event stream rides the mux push lane when both hellos named it
   (`mux.open` with a cursor and credit, frames sealed like everything else —
-  see `src/net/relayMux.ts` and CLOUD_MUX_PLAN.md); the kernel's refusal or an
+  see `src/net/relayMux.ts` and CLOUD_MUX_PLAN.md in the Reasonix workspace root, outside this repo); the kernel's refusal or an
   old kernel falls back to `GET …/events/replay` polled, because the relay
   still carries messages, not a long-lived byte stream. Which lane a stream
   took is visible in the chat header's badge and the diagnostics lines.
