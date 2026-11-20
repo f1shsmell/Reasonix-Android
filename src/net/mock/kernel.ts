@@ -6,15 +6,26 @@
  * dev entry point; production builds never load this file.
  */
 
-import type { KernelEventSource, KernelTransport } from "../transport";
+import type { EventChannel, KernelEventSource, KernelTransport } from "../transport";
 import { setKernelTransport } from "../transport";
 
 const ORIGIN = "http://mock.local";
 const BASE = "/rt/demo";
 const now = Date.now();
+const params = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
 /** `?tour=1` scripts the states the README renders: waiting, running, slow. */
-const tour = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("tour") === "1";
+const tour = params.get("tour") === "1";
+/**
+ * `?cloud=1` scripts the cloud surfaces: the stream reports the mux push lane,
+ * and `?fallback=1` downgrades it to the polled path the old kernels get.
+ * `?lag=1` holds the relay link in its reconnecting state so the recovery
+ * indicators can be rendered and reviewed without a real dead link.
+ */
+const cloud = params.get("cloud") === "1";
+const fallback = params.get("fallback") === "1";
+const lag = params.get("lag") === "1";
 
 const runtime = {
   id: "demo",
@@ -143,6 +154,7 @@ const models = {
 
 class MockEventSource implements KernelEventSource {
   readyState = 0;
+  channel?: EventChannel;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
@@ -151,6 +163,7 @@ class MockEventSource implements KernelEventSource {
 
   constructor() {
     subscribers.add(this);
+    if (cloud) this.channel = fallback ? "poll" : "mux";
     setTimeout(() => {
       if (this.closed) return;
       this.readyState = 1;
@@ -555,6 +568,9 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
 const transport: KernelTransport = {
   fetch: mockFetch,
   eventSource: () => new MockEventSource(),
+  ...(cloud
+    ? { relayState: (): "open" | "reconnecting" => (lag ? "reconnecting" : "open") }
+    : {}),
 };
 
 let installed = false;

@@ -177,6 +177,17 @@ html[data-chat-font="xl"] {
   white-space: nowrap;
 }
 
+/* The lane badge: what the cloud session's frames ride on, in one word. */
+.chat-head .lane {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+
 .iconbtn {
   min-height: var(--tap);
   min-width: var(--tap);

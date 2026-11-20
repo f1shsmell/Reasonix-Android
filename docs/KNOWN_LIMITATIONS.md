@@ -24,6 +24,12 @@
 
 ## 连接
 
+- **云端附件上传没有进度显示**。bulk 分块上传（`src/net/relayBulk.ts`）有断点续传和
+  60 s 无进展看门狗，但进度没有跨过 fetch 拦截层传到输入框——拦截层只看见一个
+  `POST */attachments` 请求，不知道调用方是谁。要做进度条需要先设计进度事件的关联
+  方案（上传 id 穿过 fetch 接缝），属于独立改造，设计文档 CLOUD_MUX_PLAN.md 在 Reasonix 工作区根（本仓库之外）。
+  现在的表现是大附件上传期间输入框无反馈，最长 60 s 后报错。
+
 - **电脑内核重启后，手机可能要重新扫码配对**。内核的 `[serve] remember_paired_devices` 默认关闭，重启后设备登记表不回填，手机里的 `reasonix_device` 凭据随之失效；此时重试旧地址不会恢复，App 会在连接卡片上给出「重新扫码配对」按钮。想跨重启保留配对，在电脑的 `config.toml` 里设 `remember_paired_devices = true`——这是内核侧配置，App 无法代改。
 - **回前台会重建一次事件流**，即使流是健康的。这是修复「后台断连后对话不再更新」的代价：僵尸连接的 `readyState` 仍是 `OPEN`，没有更低成本的判定手段。重建带 cursor，不丢不重（见 #95）。
 - **`phase !== "connected"` 时回前台不自愈**。`reassess` 在链路状态不是 connected 时直接返回，属于既有行为，未纳入本次范围。

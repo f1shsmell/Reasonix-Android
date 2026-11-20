@@ -18,6 +18,7 @@ import { Capacitor } from "@capacitor/core";
 import { NativeWebSocket } from "../native/socket";
 import { checkDeviceTrust } from "./deviceTrust";
 import type { ConfirmTrust, TrustResult } from "./deviceTrust";
+import type { EventChannel } from "./transport";
 import { fetchWithTimeout } from "./http";
 import { MuxClient } from "./relayMux";
 import type { MuxFrameHandlers, MuxStreamHandle } from "./relayMux";
@@ -934,6 +935,13 @@ export class RelayEventSource {
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: (() => void) | null = null;
+  /**
+   * The lane this source settled on, set before `onopen` fires. Decided once
+   * per source: a stream that falls back never re-attempts the mux, and a
+   * `mux.closed` ends the source for RuntimeStream to reopen — as a new
+   * source that splits again.
+   */
+  channel: EventChannel | null = null;
   private closed = false;
   private after: number | null;
   private readonly replay: string;
@@ -984,6 +992,7 @@ export class RelayEventSource {
         return;
       }
       this.handle = handle;
+      this.channel = "mux";
       this.onopen?.();
     } catch {
       if (!this.closed) void this.poll();
@@ -1018,6 +1027,7 @@ export class RelayEventSource {
         if (!this.closed) {
           if (!opened) {
             opened = true;
+            this.channel = "poll";
             this.onopen?.();
           }
           const body = (await response.json()) as ReplayAnswer;
@@ -1181,6 +1191,10 @@ export async function connectRelay(
   const previous = activeLink;
   install();
   activeLink = link;
+  // Forward this link's condition changes to the module-level watchers; a
+  // screen that shows the relay's health follows the link it is bound to.
+  link.watch(publishRelayState);
+  publishRelayState();
   // The old socket must not stay alive beside the new one; it would keep
   // reconnecting and could route a request after the switch.
   previous?.close("replaced by a new relay connection");
@@ -1212,9 +1226,44 @@ export function relayState(): RelayState | "none" {
   return activeLink?.currentState ?? "none";
 }
 
+const relayWatchers = new Set<(state: RelayState | "none") => void>();
+
+function publishRelayState(): void {
+  const state = relayState();
+  for (const listener of relayWatchers) listener(state);
+}
+
+/**
+ * Subscribe to the active relay's condition, including `none` when no relay
+ * is routing. Fires immediately with the current state.
+ *
+ * This is the screen-facing view of the link's own `watch`: the self-healing
+ * window while a relay socket rebuilds is exactly when the UI must not keep
+ * claiming everything is fine.
+ */
+export function watchRelayState(listener: (state: RelayState | "none") => void): () => void {
+  relayWatchers.add(listener);
+  listener(relayState());
+  return () => {
+    relayWatchers.delete(listener);
+  };
+}
+
 /** The device the relay is bound to, even while it is reconnecting. */
 export function relayDevice(): string | null {
   return activeLink?.device ?? null;
+}
+
+/**
+ * Whether the live relay negotiated the mux push lane — both the phone's
+ * hello and the kernel's ready had to name it. A diagnostics line or a
+ * settings row reads this to say which lane cloud streams will take; the
+ * per-stream answer can still differ (a refused stream falls back), so this
+ * is the deployment's shape, not a per-pane guarantee.
+ */
+export function relayPushNegotiated(): boolean | null {
+  if (activeLink === null) return null;
+  return activeLink.supportsMux();
 }
 
 /** Stop routing kernel requests through the relay (a LAN connection took over). */
@@ -1224,4 +1273,5 @@ export function clearRelayRouting(): void {
   activeLink = null;
   link?.close("relay routing cleared");
   if (nativeEventSource !== null) globalThis.EventSource = nativeEventSource;
+  publishRelayState();
 }

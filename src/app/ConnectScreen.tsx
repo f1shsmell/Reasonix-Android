@@ -44,7 +44,13 @@ import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
 import { useBackCloser } from "./backStack";
-import { clearRelayRouting, connectRelay, RelayError } from "../net/relay";
+import {
+  clearRelayRouting,
+  connectRelay,
+  relayPushNegotiated,
+  relayState,
+  RelayError,
+} from "../net/relay";
 import { forgetDevice } from "../net/deviceTrust";
 import type { TrustPrompt } from "../net/deviceTrust";
 import { clearRelayDevice } from "../net/relayStore";
@@ -217,6 +223,17 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+
+/**
+ * The lane note the connection row carries: which way cloud frames will
+ * arrive on this relay. The deployment's shape, not a per-pane promise —
+ * a refused stream still falls back on its own.
+ */
+function relayLaneNote(): string {
+  if (relayState() === "none") return "";
+  return relayPushNegotiated() ? " · 事件推送" : " · 轮询回退";
 }
 
 export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, link, cloudWatch, onCloudWatchChange, notificationOptions, onNotificationOptionsChange, notifyPrefs, onNotifyPrefChange, buildDiagnostics }: ConnectScreenProps) {
@@ -1388,7 +1405,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                   <span className="setting-title">当前连接</span>
                   <span className="setting-sub">
                     {config?.mode === "relay"
-                      ? "云端 · Reasonix 账号中继"
+                      ? `云端 · Reasonix 账号中继${relayLaneNote()}`
                       : config?.origin
                         ? `局域网 · ${config.origin}`
                         : "未连接"}

@@ -469,8 +469,12 @@ page's controller protocol reduced to fetch and a polled stream:
   and every later frame is AES-GCM-sealed JSON;
 - requests are `desktop.request {id, method, path, body}`; answers are
   `desktop.response` chunks assembled by id;
-- the event stream is `GET …/events/replay` polled, because the relay carries
-  messages, not a long-lived byte stream.
+- the event stream rides the mux push lane when both hellos named it
+  (`mux.open` with a cursor and credit, frames sealed like everything else —
+  see `src/net/relayMux.ts` and CLOUD_MUX_PLAN.md in the Reasonix workspace root, outside this repo); the kernel's refusal or an
+  old kernel falls back to `GET …/events/replay` polled, because the relay
+  still carries messages, not a long-lived byte stream. Which lane a stream
+  took is visible in the chat header's badge and the diagnostics lines.
 
 Installing the link swaps `fetch` and `EventSource` only for kernel paths; the
 LAN proxy still serves the bundle and `/__reasonix/*`. `RelayLink` reconnects
@@ -764,10 +768,11 @@ working provider, driven by the app's own modules rather than by curl):
   horizontal insets are still unhandled.
 - **The transcript is never scrolled under a real finger.** `atBottom` is
   asserted only by reading the code.
-- **The relay channel has not been exercised end to end.** The protocol is
-  ported and unit-tested at the transport level, but no signed-in account or
-  online device was available; the grant, handshake and reconnect paths have
-  not met the real service.
+- **The mux push lane's end-to-end run is kernel-side now.** The grant,
+  handshake and reconnect paths have met the real relay; the mux lane speaks
+  to the kernel's `remotecloud` mux (merged on `studio`, PR #2/#3) and is
+  unit-tested against that contract at both ends, but a soak against a live
+  kernel behind a real relay has not been run yet.
 - **`GET /rt/{id}/todos` was called against a running kernel**: 204 on token
   exchange, 200 `application/json` with `[]` on a fresh pane. A **non-empty**
   list has still not been observed on a live stream — that needs a keyed turn —
@@ -875,9 +880,10 @@ Decisions that will look optional until they are removed:
 - `vite` no longer emits source maps into the APK (5 MB of maps), and
   `ChatScreen` is a lazy chunk: the entry bundle is 699 kB instead of 1.01 MB,
   with Markdown/highlight in a 329 kB chunk loaded on first chat.
-- Relay event polling waits 3 s while idle instead of 1.5 s; every poll is a
-  relay round trip. Cursor writes are throttled to 500 ms with a `pagehide`
-  flush instead of one synchronous localStorage write per SSE frame.
+- Relay events ride the mux push lane when both ends support it; the polled
+  fallback waits 3 s while idle — every poll is a relay round trip. Cursor
+  writes are throttled to 500 ms with a `pagehide` flush instead of one
+  synchronous localStorage write per frame.
 - Not done: history pagination and virtualisation. A very long transcript is
   still read and rendered whole.
 

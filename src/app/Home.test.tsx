@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetClickSwallow } from "./longPress";
 import { Home, projectActivity, recentConversations } from "./Home";
 import { loadConnections, rememberConnection } from "../net/savedConnections";
+import { kernelTransport, setKernelTransport } from "../net/transport";
 import type { LinkState } from "../net/link";
 import type { HomeTab } from "./homeTab";
 import type { NeedsYouState } from "./useNeedsYou";
@@ -1185,5 +1186,40 @@ describe("Home connection bar", () => {
       "lan:http://192.168.5.2:56789",
       "lan:http://192.168.9.9:51234",
     ]);
+  });
+});
+
+describe("the link chip during the relay's healing window", () => {
+  function scriptRelay(state: () => "open" | "reconnecting" | "ended" | null): () => void {
+    const previous = kernelTransport();
+    setKernelTransport({ ...previous, relayState: state });
+    return () => setKernelTransport(previous);
+  }
+
+  it("does not repeat the link's claim while the relay rebuilds", () => {
+    const restore = scriptRelay(() => "reconnecting");
+    try {
+      render({
+        link: { phase: "connected", completed: [], attempt: 0, target: "dev1", name: "app", mode: "cloud" },
+      });
+      expect(container.textContent).toContain("云端恢复中…");
+      const dot = container.querySelector(".linkbar .dot");
+      expect(dot?.className).toContain("warn");
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the connected summary when the relay is healthy", () => {
+    const restore = scriptRelay(() => "open");
+    try {
+      render({
+        link: { phase: "connected", completed: [], attempt: 0, target: "dev1", name: "app", mode: "cloud" },
+      });
+      expect(container.textContent).toContain("云端已连接");
+      expect(container.textContent).not.toContain("云端恢复中…");
+    } finally {
+      restore();
+    }
   });
 });

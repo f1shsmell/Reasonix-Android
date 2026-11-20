@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { installMockKernel } from "./kernel";
 import { fetchWithTimeout } from "../http";
 
@@ -37,5 +37,30 @@ describe("mock kernel", () => {
     expect(page.messages).toHaveLength(4);
     expect(page.total).toBe(4);
     expect(page.hasMoreBefore).toBe(false);
+  });
+});
+
+describe("mock kernel cloud lanes", () => {
+  // The lane is chosen from the query at module load, so each variant is a
+  // fresh import under its own URL.
+  async function withQuery(query: string): Promise<{ channel: unknown; relay: unknown }> {
+    history.replaceState(null, "", query);
+    vi.resetModules();
+    const { installMockKernel: install } = await import("./kernel");
+    install();
+    const { kernelTransport } = await import("../transport");
+    const transport = kernelTransport();
+    const source = transport.eventSource("http://mock.local/rt/demo/events");
+    const channel = source.channel;
+    source.close();
+    return { channel, relay: transport.relayState?.() ?? null };
+  }
+
+  it("scripts the mux lane, the polled fallback and the recovery hold", async () => {
+    expect(await withQuery("?cloud=1")).toEqual({ channel: "mux", relay: "open" });
+    expect(await withQuery("?cloud=1&fallback=1")).toEqual({ channel: "poll", relay: "open" });
+    expect(await withQuery("?cloud=1&lag=1")).toMatchObject({ relay: "reconnecting" });
+    // No query, no theatre: the LAN shape stays exactly as it was.
+    expect((await withQuery("/")).channel).toBeUndefined();
   });
 });
