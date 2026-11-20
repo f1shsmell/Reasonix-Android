@@ -19,6 +19,8 @@ import { NativeWebSocket } from "../native/socket";
 import { checkDeviceTrust } from "./deviceTrust";
 import type { ConfirmTrust, TrustResult } from "./deviceTrust";
 import { fetchWithTimeout } from "./http";
+import { MuxClient } from "./relayMux";
+import type { MuxFrameHandlers, MuxStreamHandle } from "./relayMux";
 
 // ---- account grant ---------------------------------------------------
 const ACCOUNT_GRANT = "/__reasonix/account/grant";
@@ -101,6 +103,7 @@ interface Connection {
   channel: Channel;
   features: string[];
   instance: string;
+  capabilities?: Record<string, number>;
 }
 
 interface Pending {
@@ -332,7 +335,13 @@ async function encryptedChannel(device: RelayDevice, socket: SocketLike): Promis
     ["encrypt", "decrypt"],
   );
   socket.send(
-    JSON.stringify({ v: 1, type: "hello", publicKey: bytesToBase64(publicKey), salt: bytesToBase64(salt) }),
+    JSON.stringify({
+      v: 1,
+      type: "hello",
+      publicKey: bytesToBase64(publicKey),
+      salt: bytesToBase64(salt),
+      capabilities: { mux: 1 },
+    }),
   );
   let bound: string | null = null;
   let seq = 0;
@@ -462,11 +471,18 @@ async function openConnection(
     const features = Array.isArray(ready.features)
       ? ready.features.filter((item): item is string => typeof item === "string")
       : [];
+    const capabilities: Record<string, number> = {};
+    if (ready.capabilities && typeof ready.capabilities === "object") {
+      for (const [name, level] of Object.entries(ready.capabilities as Record<string, unknown>)) {
+        if (typeof level === "number") capabilities[name] = level;
+      }
+    }
     return {
       socket,
       channel,
       features,
       instance: typeof ready.instance === "string" ? ready.instance : "",
+      capabilities,
     };
   } catch (error) {
     try {
@@ -500,9 +516,11 @@ export class RelayLink {
   private ended = false;
   private state: RelayState = "open";
   private readonly watchers = new Set<(state: RelayState) => void>();
+  private readonly mux: MuxClient;
 
   constructor(private readonly deviceId: string, first: Connection) {
     this.current = first;
+    this.mux = new MuxClient({ send: (command) => this.control(command) });
     this.attach(first);
   }
 
@@ -530,6 +548,21 @@ export class RelayLink {
   /** Which device this link is for; a recovery must not reuse a link to another. */
   get device(): string {
     return this.deviceId;
+  }
+
+  /** Whether the kernel at the other end negotiated the mux push lane. */
+  supportsMux(): boolean {
+    return (this.current?.capabilities?.mux ?? 0) >= 1;
+  }
+
+  /** Subscribe to one runtime's events over the push lane. */
+  openEventStream(
+    runtime: string,
+    cursor: () => number | null,
+    handlers: MuxFrameHandlers,
+  ): Promise<MuxStreamHandle> {
+    if (this.ended) return Promise.reject(new RelayError("ended", "远程连接已断开，请重新连接。"));
+    return this.mux.open(runtime, cursor, handlers);
   }
 
   /** Stop this link: close its socket and fail every request still waiting. */
@@ -599,6 +632,23 @@ export class RelayLink {
     return this.sending;
   }
 
+  /** A mux command rides the same send chain, so its seq stays in order. */
+  private control(command: Record<string, unknown>): Promise<void> {
+    this.sending = this.sending.then(
+      () => this.controlNow(command),
+      () => this.controlNow(command),
+    );
+    return this.sending;
+  }
+
+  private async controlNow(command: Record<string, unknown>): Promise<void> {
+    const connection = this.current;
+    if (!connection || connection.socket.readyState !== 1) return;
+    const wire = await connection.channel.seal(command);
+    if (this.current !== connection || connection.socket.readyState !== 1) return;
+    connection.socket.send(wire);
+  }
+
   private async sendNow(id: string, command: Record<string, unknown>): Promise<void> {
     const connection = this.current;
     if (!connection || connection.socket.readyState !== 1 || !this.pending.has(id)) return;
@@ -620,6 +670,7 @@ export class RelayLink {
       return;
     }
     if (this.current !== connection) return;
+    if (this.mux.receive(message)) return;
     const id = typeof message.id === "string" ? message.id : "";
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -652,6 +703,7 @@ export class RelayLink {
   private lost(code: number, reason: string): void {
     if (this.ended) return;
     this.current = null;
+    this.mux.lost();
     // Only reads survive a reconnect: a write may have run already.
     for (const [id, entry] of this.pending) {
       if (entry.method !== "GET" && entry.method !== "HEAD") {
@@ -695,6 +747,7 @@ export class RelayLink {
               body: entry.body,
             });
           }
+          this.mux.reconnected();
           return;
         } catch (error) {
           last = error;
@@ -714,6 +767,7 @@ export class RelayLink {
     if (this.ended) return;
     this.ended = true;
     this.publishState("ended");
+    this.mux.ended(reason);
     for (const entry of this.pending.values()) {
       if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.reject(new RelayError("ended", reason));
@@ -745,6 +799,8 @@ export class RelayEventSource {
   private closed = false;
   private after: number | null;
   private readonly replay: string;
+  private readonly runtime: string;
+  private handle: MuxStreamHandle | null = null;
 
   constructor(url: string | URL, private readonly link: RelayLink) {
     const target = new URL(String(url), location.origin);
@@ -752,11 +808,48 @@ export class RelayEventSource {
     this.after =
       target.searchParams.has("lastEventId") && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
     this.replay = `${target.pathname}/replay`;
-    queueMicrotask(() => void this.poll());
+    const pane = /^\/rt\/([^/]+)\/events$/.exec(target.pathname);
+    this.runtime = pane ? decodeURIComponent(pane[1] ?? "") : "";
+    if (link.supportsMux()) queueMicrotask(() => void this.startMux());
+    else queueMicrotask(() => void this.poll());
   }
 
   close(): void {
     this.closed = true;
+    this.handle?.close();
+    this.handle = null;
+  }
+
+  /**
+   * The push lane: the kernel sends frames as they happen, and the cursor
+   * advances exactly as it does on the polled path, so a reopen resumes from
+   * the last frame actually seen. A kernel that refuses the stream leaves the
+   * polled path as the fallback.
+   */
+  private async startMux(): Promise<void> {
+    try {
+      const handle = await this.link.openEventStream(this.runtime, () => this.after, {
+        onFrame: (frame) => {
+          if (this.closed) return;
+          const seq = typeof frame.seq === "number" ? frame.seq : 0;
+          if (this.after === null || seq > this.after) this.after = seq;
+          this.say(frame);
+        },
+        onClosed: () => {
+          if (this.closed) return;
+          this.closed = true;
+          this.onerror?.();
+        },
+      });
+      if (this.closed) {
+        handle.close();
+        return;
+      }
+      this.handle = handle;
+      this.onopen?.();
+    } catch {
+      if (!this.closed) void this.poll();
+    }
   }
 
   private say(frame: Record<string, unknown>): void {
