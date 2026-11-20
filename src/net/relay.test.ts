@@ -593,6 +593,7 @@ describe("RelayEventSource over mux", () => {
     expect(rig.runtime()).toBe("r1");
     expect(rig.cursor()?.()).toBe(3);
     expect(opened).toHaveBeenCalledTimes(1);
+    expect(source.channel).toBe("mux");
     source.close();
     expect(rig.close).toHaveBeenCalledTimes(1);
   });
@@ -660,6 +661,9 @@ describe("RelayEventSource over mux", () => {
 
     expect(opened).toHaveBeenCalled();
     expect(seen).toEqual(['{"kind":"text","text":"hi","seq":1}']);
+    // The fallback is visible: a source that ended up polling says so, which
+    // is what the channel indicator on screen reads.
+    expect(source.channel).toBe("poll");
   });
 });
 

@@ -18,6 +18,7 @@ import { Capacitor } from "@capacitor/core";
 import { NativeWebSocket } from "../native/socket";
 import { checkDeviceTrust } from "./deviceTrust";
 import type { ConfirmTrust, TrustResult } from "./deviceTrust";
+import type { EventChannel } from "./transport";
 import { fetchWithTimeout } from "./http";
 import { MuxClient } from "./relayMux";
 import type { MuxFrameHandlers, MuxStreamHandle } from "./relayMux";
@@ -934,6 +935,13 @@ export class RelayEventSource {
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: (() => void) | null = null;
+  /**
+   * The lane this source settled on, set before `onopen` fires. Decided once
+   * per source: a stream that falls back never re-attempts the mux, and a
+   * `mux.closed` ends the source for RuntimeStream to reopen — as a new
+   * source that splits again.
+   */
+  channel: EventChannel | null = null;
   private closed = false;
   private after: number | null;
   private readonly replay: string;
@@ -984,6 +992,7 @@ export class RelayEventSource {
         return;
       }
       this.handle = handle;
+      this.channel = "mux";
       this.onopen?.();
     } catch {
       if (!this.closed) void this.poll();
@@ -1018,6 +1027,7 @@ export class RelayEventSource {
         if (!this.closed) {
           if (!opened) {
             opened = true;
+            this.channel = "poll";
             this.onopen?.();
           }
           const body = (await response.json()) as ReplayAnswer;
