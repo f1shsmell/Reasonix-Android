@@ -1254,6 +1254,18 @@ export function relayDevice(): string | null {
   return activeLink?.device ?? null;
 }
 
+/**
+ * Whether the live relay negotiated the mux push lane — both the phone's
+ * hello and the kernel's ready had to name it. A diagnostics line or a
+ * settings row reads this to say which lane cloud streams will take; the
+ * per-stream answer can still differ (a refused stream falls back), so this
+ * is the deployment's shape, not a per-pane guarantee.
+ */
+export function relayPushNegotiated(): boolean | null {
+  if (activeLink === null) return null;
+  return activeLink.supportsMux();
+}
+
 /** Stop routing kernel requests through the relay (a LAN connection took over). */
 export function clearRelayRouting(): void {
   connectSeq += 1;

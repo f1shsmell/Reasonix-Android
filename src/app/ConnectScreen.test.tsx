@@ -24,7 +24,13 @@ import { RequestTimeout } from "../net/http";
 import { WebMode } from "../native/webmode";
 import { studioAppUrl, studioWebUrl } from "../net/server";
 import { forgetFleetPeer } from "../net/fleet";
-import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
+import {
+  connectRelay,
+  clearRelayRouting,
+  relayPushNegotiated,
+  relayState,
+  RelayError,
+} from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
 import { deviceFingerprint, pinDevice, trustedDevice } from "../net/deviceTrust";
 import {
@@ -78,6 +84,8 @@ vi.mock("../net/relay", () => ({
   clearRelayRouting: vi.fn(),
   connectRelay: vi.fn(),
   relayAlive: vi.fn(() => false),
+  relayState: vi.fn(() => "none"),
+  relayPushNegotiated: vi.fn(() => false),
   prefetchGrant: vi.fn(),
   RelayError: class MockRelayError extends Error {
     readonly kind: string;
@@ -1326,5 +1334,34 @@ describe("ConnectScreen on an old WebView", () => {
 
     expect(container.textContent).not.toContain("系统 WebView 是 Chrome");
     expect(container.textContent).toContain("电脑上那套 Studio 页面");
+  });
+});
+
+describe("the connection row's lane note", () => {
+  beforeEach(() => {
+    vi.mocked(readProxyConfig).mockResolvedValue(config({ mode: "relay", relayDevice: "dev1" }));
+    vi.mocked(loadBackgroundStatus).mockResolvedValue(null);
+    vi.mocked(listRemoteDevices).mockResolvedValue([]);
+  });
+
+  it("names the lane the relay's streams will take", async () => {
+    vi.mocked(relayState).mockReturnValue("open");
+    vi.mocked(relayPushNegotiated).mockReturnValue(true);
+    await renderScreen();
+    expect(container.textContent).toContain("云端 · Reasonix 账号中继 · 事件推送");
+
+    // An old kernel never negotiated the push lane: the note says so instead
+    // of claiming push it cannot deliver.
+    vi.mocked(relayPushNegotiated).mockReturnValue(false);
+    await renderScreen();
+    expect(container.textContent).toContain("云端 · Reasonix 账号中继 · 轮询回退");
+  });
+
+  it("leaves the note off when no relay is routing", async () => {
+    vi.mocked(relayState).mockReturnValue("none");
+    await renderScreen();
+    expect(container.textContent).toContain("云端 · Reasonix 账号中继");
+    expect(container.textContent).not.toContain("事件推送");
+    expect(container.textContent).not.toContain("轮询回退");
   });
 });
