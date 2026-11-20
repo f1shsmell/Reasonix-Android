@@ -51,6 +51,8 @@ const connectionMock = vi.hoisted(() => {
       reach: { kind: "ok" as "ok" | "unauthorized" | "unreachable" },
       runtimes: [] as unknown[],
       stream: { kind: "idle" as const },
+      events: [] as { seq: number; event: unknown }[],
+      eventSeq: 0,
     },
     /** Whether the transport has failed enough times to count as gone. */
     lost: false,
@@ -316,6 +318,8 @@ beforeEach(() => {
   connectionMock.current = {
     reach: { kind: "ok" },
     runtimes: [{ id: "r2", base: "/rt/r2", root: "/work/app", name: "app" }],
+    events: [],
+    eventSeq: 0,
     stream: { kind: "idle" },
   };
   connectionMock.lost = false;

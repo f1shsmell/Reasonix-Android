@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Attention, decisionKey, runningKey } from "./attention";
 import { loadStatus } from "../net/status";
 import type { Decision } from "../net/status";
+import type { EventPayload } from "../wire/events";
 import type { RuntimeView } from "../wire/runtime";
 import type { TreeProject } from "../wire/tree";
 import { sessionTitle } from "./SessionList";
@@ -109,10 +110,36 @@ function runtimeTitle(runtime: RuntimeView): string {
   return base || runtime.name;
 }
 
+/**
+ * The frames that change what this block shows, counted.
+ *
+ * An `ask` or an `approval` is a decision arriving; a turn starting or ending
+ * moves the running row. The mux lane pushes these the moment they happen, so
+ * the caller can bump its sweep the same second instead of leaving the card
+ * waiting out the twenty-second clock. A frame with none of these — the bulk
+ * of a streaming answer — changes nothing here and must not cost a sweep.
+ */
+export function needsYouSignal(events: readonly { event: EventPayload }[]): number {
+  let count = 0;
+  for (const queued of events) {
+    const event = queued.event;
+    if (
+      event.ask !== undefined ||
+      event.approval !== undefined ||
+      event.kind === "turn_started" ||
+      event.kind === "turn_done"
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function useNeedsYou(
   runtimes: RuntimeView[],
   projects: TreeProject[],
   revision: number,
+  signal = 0,
 ): NeedsYouState {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [running, setRunning] = useState<RunningItem[]>([]);
@@ -191,9 +218,10 @@ export function useNeedsYou(
       setStatus("loaded");
     });
     // `runtimeKey` is the pane set; `revision` is what makes a tree reload
-    // (and with it the labels in `projectsRef`) visible. Both can change
-    // without the other.
-  }, [runtimeKey, revision, tick]);
+    // (and with it the labels in `projectsRef`) visible. `signal` is the
+    // pushed-frame counter: a decision arriving on the mux lane sweeps at
+    // once. All three can change without the others.
+  }, [runtimeKey, revision, tick, signal]);
 
   // Home is the screen a person leaves open while work happens. Without a
   // clock the block only refreshed when the tree changed, which can be hours.

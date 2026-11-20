@@ -33,7 +33,7 @@ import { SessionList, runtimeOpenMessage } from "./SessionList";
 import { ConnectScreen } from "./ConnectScreen";
 import { closeTopSheet } from "./backStack";
 import { useLink } from "./useLink";
-import { useNeedsYou } from "./useNeedsYou";
+import { needsYouSignal, useNeedsYou } from "./useNeedsYou";
 import { useTree } from "./useTree";
 import { loadCloudWatch, saveCloudWatch } from "./cloudWatchPref";
 import {
@@ -134,7 +134,12 @@ export function App() {
   const [showConnect, setShowConnect] = useState(false);
   const [boot, setBoot] = useState<Boot>(() => (Capacitor.isNativePlatform() ? "loading" : "ready"));
   const tree = useTree();
-  const pending = useNeedsYou(snapshot.runtimes, tree.projects, tree.revision);
+  const pending = useNeedsYou(
+    snapshot.runtimes,
+    tree.projects,
+    tree.revision,
+    needsYouSignal(snapshot.events),
+  );
   const link = useLink(connection);
   /**
    * The callbacks below must read the live link without listing it as a
