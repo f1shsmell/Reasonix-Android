@@ -615,9 +615,6 @@ export type ServerLink =
   | { kind: "cloud"; device: string };
 
 /**
- * The full Studio page for the connection that is up.
- *
-/**
  * Read what a Studio QR code carries.
  *
  * The LAN code is `http://<ip>:<port>/#pair=<one-time code>`. A cloud code is

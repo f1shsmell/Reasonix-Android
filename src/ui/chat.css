@@ -390,6 +390,13 @@ html[data-chat-font="xl"] {
   50% { opacity: 0.25; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .streaming .bubble::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 
 
 /* ---- todos ---- */
@@ -1674,12 +1681,8 @@ html[data-chat-font="xl"] {
   gap: 2px;
   padding: 10px 6px;
   font-size: 15px;
-}
-
-.head-menu .sheet-actions .head-menu-note {
   /* A reading, not an action: set it apart from the tappable rows above. */
   margin-top: 4px;
-  padding-top: 10px;
   border-top: 1px solid var(--line);
   cursor: default;
 }

@@ -127,7 +127,11 @@ final class ProxyPaths {
         }
     }
 
-    /** Whether a request came from the full Studio WebView, not the app. */
+    /**
+     * Retired marker: it named the UA the full-page Studio activity added.
+     * That activity is gone; the branches this feeds in LoopbackProxy stay
+     * inert until the proxy prunes them.
+     */
     static boolean isStudio(Map<String, String> headers) {
         String agent = headers.get("user-agent");
         return agent != null && agent.contains(STUDIO_UA_MARKER);

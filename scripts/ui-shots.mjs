@@ -9,7 +9,6 @@
  * native activity does still needs a device smoke.
  *
  *   npm run shots -- --out=shots/studio
- *   npm run shots -- --out=shots/studio-before --prefix=before --hide='[aria-label="打开 Studio"]'
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -236,6 +235,16 @@ async function main() {
         expression: `[...document.querySelectorAll(${JSON.stringify(hide)})].forEach((el) => { el.style.display = "none"; })`,
       });
       await sleep(200);
+    }
+
+    for (const step of (options["click-js"] ?? "").split(";").filter(Boolean)) {
+      const clicked = await send("Runtime.evaluate", { expression: step, returnByValue: true });
+      if (clicked.exceptionDetails) {
+        console.error("click step failed:", step.trim(), JSON.stringify(clicked.exceptionDetails.exception?.description ?? ""));
+        process.exitCode = 1;
+        break;
+      }
+      await sleep(700);
     }
 
     if (options.probe) {

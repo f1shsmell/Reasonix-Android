@@ -239,7 +239,7 @@ public class LoginActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        // WebModeActivity destroys its WebView for the same reason: the
+        // the full-page Studio activity destroys its WebView for the same reason: the
         // approval page's JS and renderers outlive this activity until GC
         // otherwise. The cookie is flushed first, because a deployment's
         // approval page may still set a short-lived CSRF or session cookie and
