@@ -209,9 +209,20 @@ async function main() {
       deviceScaleFactor: 2,
       mobile: false,
     });
+    if (options["ui-style"]) {
+      // The theme is remembered in localStorage, so it has to be seeded before
+      // the app boots: a warmup navigation owns the origin first.
+      await send("Page.navigate", { url: `http://127.0.0.1:${port}/` });
+      await sleep(400);
+      await send("Runtime.evaluate", {
+        expression: `localStorage.setItem("reasonix.ui-style", ${JSON.stringify(options["ui-style"])})`,
+      });
+    }
     await send("Page.navigate", { url });
-    await waitForSelector(send, ".chat-head");
-    await waitForSelector(send, '[aria-label="更多"]');
+    await waitForSelector(send, options["wait-for"] ?? ".chat-head");
+    if ((options["wait-for"] ?? ".chat-head") === ".chat-head") {
+      await waitForSelector(send, '[aria-label="更多"]');
+    }
     await sleep(600);
 
     if (hide) {
