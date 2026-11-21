@@ -110,7 +110,12 @@ describe("loadStatus", () => {
       ),
     );
     const withLedger = await loadStatus("/rt/r1");
-    expect(withLedger.ok && withLedger.status.cache).toEqual({ hit: 300, miss: 120, unknown: 20 });
+    expect(withLedger.ok && withLedger.status.cache).toEqual({
+      hit: 300,
+      miss: 120,
+      unknown: 20,
+      requests: 3,
+    });
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ cacheHit: 40, cacheMiss: 60 })));
     const withoutLedger = await loadStatus("/rt/r1");
