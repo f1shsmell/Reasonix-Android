@@ -30,8 +30,11 @@ import androidx.activity.OnBackPressedCallback;
  * The page's own `#pair=` bootstrap is the path a browser uses and the one
  * known to pair; the direct proxy POST has been refused on codes the page
  * accepts. This activity shows only a small "正在配对" card while a 2x2
- * WebView loads the same link. It succeeds when the `reasonix_device` cookie
- * appears, then finishes and hands the result to PairPlugin.
+ * WebView loads the same link. It succeeds when the page sets a NEW
+ * `reasonix_device` credential — a phone that paired once keeps its cookie
+ * for thirty days, so the value the jar held before the page loads is read
+ * once and only a change counts — then finishes and hands the result to
+ * PairPlugin.
  */
 @SuppressLint("SetJavaScriptEnabled")
 public class PairActivity extends ComponentActivity {
@@ -42,6 +45,9 @@ public class PairActivity extends ComponentActivity {
     /** Kept for onDestroy: an invisible WebView with JS running still leaks if only GC'd. */
     private WebView web;
     private String origin = "";
+    /** The credential the jar held before the page loaded: what the page
+     *  writes is judged against this, not against mere existence. */
+    private String credentialBefore = "";
     private long startedAt;
     private boolean done;
 
@@ -112,6 +118,9 @@ public class PairActivity extends ComponentActivity {
         root.addView(card, cardParams);
 
         setContentView(root);
+        // Read before the page loads, so what the page writes is a change this
+        // code can see rather than the copy it could not tell apart from one.
+        credentialBefore = deviceCookieValue();
         web.loadUrl(url);
         handler.postDelayed(this::poll, 250);
     }
@@ -136,12 +145,38 @@ public class PairActivity extends ComponentActivity {
     }
 
     private boolean hasDeviceCookie() {
+        return isNewCredential(credentialBefore, deviceCookieValue());
+    }
+
+    /**
+     * A pairing is judged by a new credential, not by any credential. A phone
+     * that paired once keeps its `reasonix_device` cookie for thirty days, and
+     * the very first poll — before the page could have answered — would
+     * otherwise find the old copy and call the pairing done; the page would be
+     * torn down before it could spend the code, and the proxy would go on to
+     * carry the stale credential, which the kernel refuses exactly as it
+     * refuses a phone that never paired. Static and pure, so the judgement is
+     * tested without a WebView.
+     */
+    static boolean isNewCredential(String before, String now) {
+        return !now.isEmpty() && !now.equals(before);
+    }
+
+    /** The `reasonix_device` value at the one spelling of the door, or ""
+     *  when the jar holds none. */
+    private String deviceCookieValue() {
         try {
-            String cookie = CookieManager.getInstance()
-                    .getCookie(origin.endsWith("/") ? origin : origin + "/");
-            return cookie != null && cookie.contains("reasonix_device=");
+            String cookie = CookieManager.getInstance().getCookie(ProxyCookies.cookieUrl(origin));
+            if (cookie == null) return "";
+            for (String piece : cookie.split(";")) {
+                String pair = piece.trim();
+                if (pair.startsWith("reasonix_device=")) {
+                    return pair.substring("reasonix_device=".length());
+                }
+            }
+            return "";
         } catch (RuntimeException e) {
-            return false;
+            return "";
         }
     }
 
