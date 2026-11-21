@@ -143,9 +143,9 @@
   border-radius: calc(var(--radius) + 6px);
   background:
     radial-gradient(
-      120% 90% at 50% -12%,
-      rgba(var(--hero-tone-rgb), 0.15),
-      transparent 70%
+      150% 110% at 50% -12%,
+      rgba(var(--hero-tone-rgb), 0.07),
+      transparent 72%
     ),
     var(--bg-raised);
   box-shadow: var(--shadow-1);
@@ -626,6 +626,10 @@ button.setting:disabled {
   font-size: 16px;
   text-align: right;
   caret-color: var(--accent);
+  /* A long relay address ends in an ellipsis, not a hard cut at the edge. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .setting input::placeholder {

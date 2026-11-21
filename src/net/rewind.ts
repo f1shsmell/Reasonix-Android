@@ -114,6 +114,6 @@ export function rewindMessage(code: string): string {
     case "client.timeout":
       return "电脑没有及时回应，稍后重试。";
     default:
-      return `没回到这里：${code}`;
+      return `没回到这里（${code}），检查连接后再试。`;
   }
 }

@@ -978,10 +978,6 @@ export function Home({
 
             {tab === "projects" ? (
               <>
-                <div className="section-head home-head">
-                  <h2>项目</h2>
-                  <span className="meta">{shownProjects.length}</span>
-                </div>
                 <input
                   className="search"
                   type="search"
@@ -990,6 +986,10 @@ export function Home({
                   placeholder="搜索项目"
                   aria-label="搜索项目"
                 />
+                <div className="section-head home-head">
+                  <h2>项目</h2>
+                  <span className="meta">{shownProjects.length}</span>
+                </div>
               </>
             ) : null}
 

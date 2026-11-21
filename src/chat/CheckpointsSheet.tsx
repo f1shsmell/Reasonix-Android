@@ -104,7 +104,7 @@ export function CheckpointsSheet({
           内核在每一轮第一次写入前拍下快照。只能恢复编辑工具改过的文件；命令行的副作用不在其中。
         </p>
 
-        {list === null ? <p className="sheet-note">正在读取检查点…</p> : null}
+        {list === null ? <p className="sheet-note loading">正在读取检查点…</p> : null}
         {list !== null && list.length === 0 ? (
           <p className="sheet-note">还没有可以回去的检查点。</p>
         ) : null}
