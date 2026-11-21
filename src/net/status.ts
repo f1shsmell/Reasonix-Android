@@ -51,7 +51,13 @@ export interface RuntimeStatus {
    * The session's cache split, from the kernel's ledger when it reports one and
    * from the agent's own counters otherwise. Absent before the first request.
    */
-  cache?: { hit: number; miss: number; unknown: number };
+  cache?: {
+    hit: number;
+    miss: number;
+    unknown: number;
+    /** Whole requests the ledger has counted, when it says so. */
+    requests?: number;
+  };
 }
 
 export type StatusRead =
@@ -145,6 +151,7 @@ function status(value: unknown): RuntimeStatus | null {
         hit: tokens(totals.cacheHit),
         miss: tokens(totals.cacheMiss),
         unknown: tokens(totals.cacheUnknown),
+        requests: tokens(totals.requests),
       };
     }
   }

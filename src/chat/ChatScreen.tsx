@@ -392,11 +392,18 @@ function HeadMenu({
  * Unsplit prompt is left out of the rate by `cachePercent`, so the counts are
  * the ledger's own and need no adjustment.
  */
-function cacheNote(cache: { hit: number; miss: number; unknown: number } | null): string {
+function cacheNote(
+  cache: { hit: number; miss: number; unknown: number; requests?: number } | null,
+): string {
   if (!cache) return "还没有可统计的请求";
   const percent = cachePercent(cache.hit, cache.miss, cache.unknown);
   if (percent === null) return "还没有可统计的请求";
-  return `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
+  const ledger = `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
+  // The request count is the one number the provider bills by, so it rides
+  // with the cache split rather than needing its own screen.
+  return cache.requests !== undefined && cache.requests > 0
+    ? `${ledger} · 请求 ${compactCount(cache.requests)}`
+    : ledger;
 }
 
 /**

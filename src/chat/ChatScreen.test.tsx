@@ -1004,6 +1004,8 @@ describe("ChatScreen cache reading", () => {
     expect(note?.textContent).toContain("75%");
     expect(note?.textContent).toContain("命中 750");
     expect(note?.textContent).toContain("未命中 250");
+    // The provider bills by the request; the count rides with the split.
+    expect(note?.textContent).toContain("请求 2");
   });
 
   it("says nothing was measured before a prompt is split", async () => {

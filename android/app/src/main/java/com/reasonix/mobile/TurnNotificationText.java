@@ -25,11 +25,23 @@ final class TurnNotificationText {
         return status.heading.isEmpty() ? "需要你处理" : status.heading;
     }
 
+    /**
+     * A decision's question can carry whole paragraphs of the conversation's
+     * own words — paths, commands, whatever the agent was quoting. The
+     * notification is the glanceable half; the full text lives in the app,
+     * where the ask card renders it whole.
+     */
+    private static final int MAX_QUESTION = 120;
+
     static String askBody(AskStatus status) {
         if (status.question.isEmpty()) {
             return status.count > 1 ? status.text : "点开查看并处理";
         }
-        String body = status.question;
+        String question = status.question;
+        if (question.length() > MAX_QUESTION) {
+            question = question.substring(0, MAX_QUESTION) + "…";
+        }
+        String body = question;
         if (status.count > 1) body += "（还有 " + (status.count - 1) + " 个）";
         return body;
     }
