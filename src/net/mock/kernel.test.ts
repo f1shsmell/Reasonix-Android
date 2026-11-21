@@ -13,17 +13,30 @@ describe("mock kernel", () => {
     const list = await (await fetchWithTimeout("/runtimes")).json() as { id: string; base: string }[];
     expect(list[0]?.id).toBe("demo");
 
+    // A POST opens a pane of its own — the canned demo pane with its history
+    // is what made every new session read as the old conversation.
     const opened = await (await fetchWithTimeout("/runtimes", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ root: "/demo" }),
-    })).json() as { id: string; base: string };
-    expect(opened).toMatchObject({ id: "demo", base: "/rt/demo" });
+    })).json() as { id: string; base: string; sessionPath: string };
+    expect(opened.id).not.toBe("demo");
+    expect(opened.base).toBe(`/rt/${opened.id}`);
+    expect(opened.sessionPath).toContain("/.reasonix/");
+
+    // The fresh pane's transcript is empty, and the canned demo one is gone.
+    const page = await (await fetchWithTimeout(`${opened.base}/history/page`)).json() as {
+      messages: unknown[];
+      total: number;
+    };
+    expect(page.messages).toEqual([]);
+    expect(page.total).toBe(0);
   });
 
   it("serves the tree, status and a history page the app can fold", async () => {
     const tree = await (await fetchWithTimeout("/tree?scope=active&limit=30")).json() as { sessions: unknown[] }[];
-    expect(tree[0]?.sessions).toHaveLength(3);
+    // POST /runtimes in an earlier test created panes the tree now knows.
+    expect(tree[0]?.sessions.length).toBeGreaterThanOrEqual(3);
 
     const status = await (await fetchWithTimeout("/rt/demo/status")).json() as { running: boolean; decisions: unknown[] };
     expect(status.running).toBe(false);

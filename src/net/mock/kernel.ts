@@ -41,6 +41,18 @@ const notesRuntime = {
   sessionPath: "/demo/.reasonix/notes.jsonl",
 };
 
+/**
+ * Panes POST /runtimes created. The kernel hands back a fresh pane per call
+ * with its own empty transcript; the mock used to answer with one canned
+ * pane, which made every "new session" silently reopen the demo one — the
+ * review's "新会话显示旧内容" turned out to be exactly this fixture defect.
+ */
+const created: {
+  view: { id: string; base: string; root: string; name: string; sessionPath: string };
+  running: boolean;
+}[] = [];
+let createdSeq = 0;
+
 const tree = [{
   root: "/demo",
   name: "演示项目",
@@ -405,7 +417,7 @@ function wbListing(path: string, q: string): { files: string[]; directories: str
   return { files: files.sort(), directories: [...dirs].sort() };
 }
 
-function emitTurn(input: string): void {
+function emitTurn(input: string, onDone?: () => void): void {
   const events: Record<string, unknown>[] = [
     { kind: "turn_started" },
     { kind: "reasoning", reasoning: "先确认一下需求：两天、轻松、杭州。\n第一天围绕西湖走，但不要把行程排满——用户说了轻松一点。\n上午苏堤或白堤选一条，步行加拍照大约两小时。\n中午在湖滨一带吃饭，顺便避开正午的太阳。\n下午原本想安排游船，但要看天气：下雨就换室内。\n第二天灵隐寺早上去，人少；龙井村下午散步喝茶。\n交通以地铁加步行为主，打车作为雨天的备选。\n还要留一个室内备选：浙江省博物馆之江馆或武林馆。\n住宿建议西湖东侧，地铁方便，晚上也热闹。\n最后把节奏写松一点，每天只排两个主点。" },
@@ -417,6 +429,7 @@ function emitTurn(input: string): void {
   events.forEach((event, index) => {
     setTimeout(() => {
       for (const source of [...subscribers]) source.emit(event);
+      if (event.kind === "turn_done") onDone?.();
     }, (tour ? 900 : 180) * (index + 1));
   });
 }
@@ -434,8 +447,38 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
 
   if (path === "/models") return Promise.resolve(json({ models: models.models }));
   if (path === "/runtimes") {
-    if (method === "POST") return Promise.resolve(json(runtime));
-    return Promise.resolve(json(tour ? [runtime, reviewRuntime, notesRuntime] : [runtime]));
+    if (method === "POST") {
+      let body: { root?: unknown; sessionPath?: unknown } = {};
+      try {
+        body = JSON.parse(String(init.body ?? "{}")) as typeof body;
+      } catch {
+        // An unreadable body still opens a pane in the demo project.
+      }
+      const root = typeof body.root === "string" && body.root ? body.root : "/demo";
+      createdSeq += 1;
+      const id = `s${createdSeq}`;
+      const view = {
+        id,
+        base: `/rt/${id}`,
+        root,
+        name: root.split("/").filter(Boolean).pop() || "新会话",
+        sessionPath:
+          typeof body.sessionPath === "string" ? body.sessionPath : `${root}/.reasonix/${id}.jsonl`,
+      };
+      created.push({ view, running: false });
+      // The recent list reads the tree, and a created pane owns a session
+      // file the tree should know about.
+      tree[0]?.sessions.push({
+        path: view.sessionPath,
+        name: id,
+        title: "新会话",
+        turns: 0,
+        lastActiveAt: Date.now(),
+      });
+      return Promise.resolve(json(view));
+    }
+    const canned = tour ? [runtime, reviewRuntime, notesRuntime] : [runtime];
+    return Promise.resolve(json([...canned, ...created.map((entry) => entry.view)]));
   }
   if (path === "/tree") return Promise.resolve(json(tourTree));
   if (path === BASE + "/status") return Promise.resolve(json(status));
@@ -454,6 +497,34 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
   if (path === BASE + "/history") return Promise.resolve(json(messages));
   if (path === BASE + "/todos") return Promise.resolve(json([]));
   if (path === BASE + "/models") return Promise.resolve(json(models));
+  // A pane POST /runtimes created: its transcript is empty, its status is a
+  // plain idle one, and a submit actually runs there — the dispatch flow and
+  // the new-session flow both land here.
+  const createdPane = /^\/rt\/(s\d+)\/(status|history|history\/page|todos)$/.exec(path);
+  if (createdPane) {
+    const id = createdPane[1];
+    const entry = created.find((candidate) => candidate.view.id === id);
+    if (entry === undefined) return Promise.resolve(json({ code: "mock.unknown" }, 404));
+    if (createdPane[2] === "status") {
+      return Promise.resolve(json({
+        ...status,
+        running: entry.running,
+        busy: entry.running,
+        sessionPath: entry.view.sessionPath,
+      }));
+    }
+    if (createdPane[2] === "todos") return Promise.resolve(json([]));
+    if (createdPane[2] === "history") return Promise.resolve(json([]));
+    return Promise.resolve(json({
+      messages: [],
+      total: 0,
+      hasMoreBefore: false,
+      start: 0,
+      end: 0,
+      snapshot: `mock-${id}`,
+    }));
+  }
+
   // The workbench: every route answers from its query, so repo switches,
   // per-path diffs, search and the history drill-down behave like the kernel.
   const query = queryOf(input);
@@ -535,6 +606,24 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
       // A body the mock cannot read still records a commit.
     }
     return Promise.resolve(json({ hash: "b7e3f00d9c1a", subject }));
+  }
+  if (/^\/rt\/(s\d+)\/submit$/.test(path) && method === "POST") {
+    const paneId = /^\/rt\/(s\d+)\/submit$/.exec(path)?.[1] ?? "";
+    const entry = created.find((candidate) => candidate.view.id === paneId);
+    if (entry === undefined) return Promise.resolve(json({ code: "mock.unknown" }, 404));
+    let body = "";
+    if (typeof init.body === "string") body = init.body;
+    let prompt = "";
+    try {
+      prompt = String((JSON.parse(body) as { input?: unknown }).input ?? "");
+    } catch {
+      // An empty fixture prompt is still a valid turn.
+    }
+    entry.running = true;
+    emitTurn(prompt, () => {
+      entry.running = false;
+    });
+    return Promise.resolve(noContent());
   }
   if (path === BASE + "/submit" && method === "POST") {
     let body = "";
