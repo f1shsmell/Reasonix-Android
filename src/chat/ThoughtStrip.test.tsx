@@ -61,6 +61,28 @@ describe("ThoughtStrip", () => {
     expect(container.querySelector(".thought-caret")).not.toBeNull();
   });
 
+  it("streams the thought in place while running and closed", () => {
+    mount({ text: "第一段思路\n第二段思路", running: true });
+    const preview = container.querySelector(".thought-body.live");
+    expect(preview).not.toBeNull();
+    expect(preview?.textContent).toContain("第二段思路");
+    // Decorative: the folded row above is the control that opens it all.
+    expect(preview?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("a settled strip keeps no preview", () => {
+    mount({ text: "想完了", thoughtMs: 900 });
+    expect(container.querySelector(".thought-body.live")).toBeNull();
+  });
+
+  it("opening swaps the preview for the bounded window", () => {
+    mount({ text: "全文都在这里", running: true });
+    expect(container.querySelector(".thought-body.live")).not.toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>(".thought-row")?.click());
+    expect(container.querySelector(".thought-body.live")).toBeNull();
+    expect(container.querySelector(".thought-body:not(.live)")?.textContent).toContain("全文都在这里");
+  });
+
   it("drops the caret once the thought settles", async () => {
     mount({ text: "想完了", thoughtMs: 900 });
     await flush();

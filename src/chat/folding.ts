@@ -19,7 +19,7 @@ export const FOLD_CHOICES: ReadonlyArray<{ value: FoldMode; label: string }> = [
 ];
 
 export const FOLD_NOTE =
-  "精简只显示每轮最终回答，工具与中间说明折叠成一行，思考过程收成可展开的小窗；详尽把每一步都摊开。只影响这台手机。";
+  "精简只显示每轮最终回答，工具与中间说明折叠成一行，思考边想边流式展示、点开看全部；标准在此之上保留中间说明；详尽把每一步都摊开。只影响这台手机。";
 
 
 export function loadFoldMode(): FoldMode {

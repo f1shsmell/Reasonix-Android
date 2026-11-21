@@ -360,9 +360,12 @@ the mode:
 
 - **standard** — a finished run is one summary; a running run is individual
   (the original behaviour).
-- **compact** — thinking is dropped, and even a running run is one summary,
-  marked `running` so `ProcessSummary` draws a pulsing dot. Failed steps still
-  take the `!` icon.
+- **compact** — even a running run is one summary, marked `running` so
+  `ProcessSummary` draws a pulsing dot. Thinking is not dropped: it rides the
+  fold, and its strip streams the text in place while the turn runs (a
+  bounded tail that follows the stream) and opens into the same window a tap
+  gives it when settled. Narration folds with everything else; failed steps
+  still take the `!` icon.
 - **full** — `flush` always marks the entry live, so every step is its own
   row, finished or not.
 

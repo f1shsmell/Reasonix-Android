@@ -753,6 +753,15 @@ html[data-chat-font="xl"] {
   scrollbar-color: var(--line) transparent;
 }
 
+.thought-body.live {
+  pointer-events: none;
+  scrollbar-width: none;
+}
+
+.thought-body.live::-webkit-scrollbar {
+  display: none;
+}
+
 .thought-body::-webkit-scrollbar {
   width: 4px;
 }
