@@ -1057,7 +1057,12 @@ describe("ChatScreen message actions", () => {
     await flush();
     await flush();
 
-    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    // The action speaks in one word: the old double-quote glyph read as "99".
+    const quoteButton = container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement;
+    expect(quoteButton.textContent).toBe("引用");
+    expect(quoteButton.querySelector("svg, .studio-icon")).toBeNull();
+
+    act(() => quoteButton.click());
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("");
     expect(container.querySelector(".quote-chip")?.textContent).toContain("引用第 1 轮回复");

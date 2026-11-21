@@ -220,12 +220,12 @@ export function AssistantBubble({
             {actions ? (
               <button
                 type="button"
-                className="row-act"
+                className="row-act row-act-word"
                 aria-label="引用到输入框"
                 title="引用到输入框"
                 onClick={() => actions.quote(row.text, row.id)}
               >
-                <StudioIcon name="quote" />
+                引用
               </button>
             ) : null}
             {actions && branchTurn !== undefined ? (
