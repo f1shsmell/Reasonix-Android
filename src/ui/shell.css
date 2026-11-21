@@ -453,6 +453,13 @@
   color: var(--fg-dim);
 }
 
+/* 待处理 marks a decision blocked on the person: the accent is the urgency
+   the NeedsYou card already carries, in the list a person scans first. */
+.pill.attention {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 pre.frame {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 11px;

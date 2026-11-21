@@ -931,6 +931,7 @@ export function App() {
     screen = shownProject ? (
       <SessionList
         snapshot={snapshot}
+        pendingRuntimeIds={new Set(pending.items.map((item) => item.runtimeId))}
         tree={tree}
         project={shownProject}
         onBack={() => setProject(null)}
