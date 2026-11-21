@@ -23,6 +23,13 @@ export const FOLD_NOTE =
 
 
 export function loadFoldMode(): FoldMode {
+  // Dev-preview override: ?fold=compact|standard|full pins the density so a
+  // capture can name the one it is reviewing without seeding storage. A dev
+  // build reads the query; a production bundle never does.
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    const asked = new URLSearchParams(window.location.search).get("fold")?.trim();
+    if (asked === "compact" || asked === "standard" || asked === "full") return asked;
+  }
   return readChoice(SETTINGS_KEYS.folding, ["compact", "standard", "full"], SETTINGS_DEFAULTS.folding);
 }
 

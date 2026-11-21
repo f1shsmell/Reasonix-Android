@@ -123,10 +123,79 @@ const notesMessages = [
   },
 ];
 
-/** `?rich=1` demo transcript: markdown paths the 精简/详尽 review needs —
-    a fenced code block, a table, an inline formula and a quote. */
-const richMessages = [
+/** `?rich=1` demo transcript: the inputs the 精简/标准/详尽 fold and the
+    markdown paths need to be judged — a finished tool run (thinking, a read,
+    a diff, a failed test, a retry) with narration between the calls, plus a
+    fenced code block, a table, an inline formula and a quote. Without the
+    run the three folds draw the same picture and a review cannot tell them
+    apart. */
+export const richMessages = [
   { role: "user", content: "把重试逻辑改成指数退避，写清楚参数表和公式，再给个对比表格。", msgIndex: 0 },
+  {
+    role: "assistant",
+    reasoning: "先找到现在的固定间隔实现在哪个文件，改之前看清调用方。",
+    thoughtMs: 4120,
+    toolCalls: [{ id: "rich-c1", name: "read_file", arguments: '{"path":"src/net/retry.ts"}' }],
+    content: "",
+    msgIndex: 1,
+    modelRef: "demo/demo-flash",
+  },
+  {
+    role: "tool",
+    toolCallId: "rich-c1",
+    toolName: "read_file",
+    content: "const RETRY_DELAY_MS = 5000;\n\nexport async function withRetry<T>(task: () => Promise<T>): Promise<T> {\n  for (let i = 0; ; i++) {\n    try { return await task(); } catch { if (i >= 2) throw new Error(\"重试三次仍失败\"); await sleep(RETRY_DELAY_MS); }\n  }\n}",
+    msgIndex: 2,
+  },
+  {
+    role: "assistant",
+    content: "旧实现是固定 5 秒间隔，重试上限写死在循环里。我把它换成指数退避，并让测试跟着参数走。",
+    msgIndex: 3,
+    modelRef: "demo/demo-flash",
+  },
+  {
+    role: "assistant",
+    reasoning: "延迟表换成 2^n；测试的断言还盯着旧常量，要一起改。",
+    thoughtMs: 2980,
+    toolCalls: [
+      { id: "rich-c2", name: "edit_file", arguments: '{"path":"src/net/retry.ts","change":"RETRY_DELAY_MS -> RETRY_DELAYS_MS"}' },
+      { id: "rich-c3", name: "run_tests", arguments: '{"cmd":"npm test -- retry"}' },
+    ],
+    content: "",
+    msgIndex: 4,
+    modelRef: "demo/demo-flash",
+  },
+  {
+    role: "tool",
+    toolCallId: "rich-c2",
+    toolName: "edit_file",
+    content: "--- a/src/net/retry.ts\n+++ b/src/net/retry.ts\n@@ -1,3 +1,4 @@\n-const RETRY_DELAY_MS = 5000;\n+const RETRY_DELAYS_MS = [2000, 4000, 8000];\n\n export async function withRetry",
+    outputDiff: true,
+    msgIndex: 5,
+  },
+  {
+    role: "tool",
+    toolCallId: "rich-c3",
+    toolName: "run_tests",
+    content: "✖ retry › backoff · 期望第二次间隔 4000ms，收到 5000ms\n  at retry.test.ts:31",
+    toolFailed: true,
+    msgIndex: 6,
+  },
+  {
+    role: "assistant",
+    reasoning: "失败的断言是测试自己的期望没跟上，改期望再跑。",
+    toolCalls: [{ id: "rich-c4", name: "run_tests", arguments: '{"cmd":"npm test -- retry"}' }],
+    content: "",
+    msgIndex: 7,
+    modelRef: "demo/demo-flash",
+  },
+  {
+    role: "tool",
+    toolCallId: "rich-c4",
+    toolName: "run_tests",
+    content: "✓ retry › backoff · 三次间隔 2s/4s/8s\n✓ 14 passed",
+    msgIndex: 8,
+  },
   {
     role: "assistant",
     content: [
@@ -151,7 +220,7 @@ const richMessages = [
       "",
       "对照旧的固定 5 秒间隔：指数方案前两轮更快、第三轮更慢，总等待 14s 对 15s 基本持平。",
     ].join("\n"),
-    msgIndex: 1,
+    msgIndex: 9,
     modelRef: "demo/demo-flash",
   },
 ];
