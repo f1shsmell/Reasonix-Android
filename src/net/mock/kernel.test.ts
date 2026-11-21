@@ -24,6 +24,14 @@ describe("mock kernel", () => {
     expect(opened.base).toBe(`/rt/${opened.id}`);
     expect(opened.sessionPath).toContain("/.reasonix/");
 
+    // Opening a stored session rebinds that file instead of minting a pane.
+    const rebound = await (await fetchWithTimeout("/runtimes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: "/demo", sessionPath: "/demo/.reasonix/api.jsonl" }),
+    })).json() as { id: string };
+    expect(rebound.id).toBe("api");
+
     // The fresh pane's transcript is empty, and the canned demo one is gone.
     const page = await (await fetchWithTimeout(`${opened.base}/history/page`)).json() as {
       messages: unknown[];

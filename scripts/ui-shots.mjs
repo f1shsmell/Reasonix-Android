@@ -208,6 +208,18 @@ async function main() {
       deviceScaleFactor: 2,
       mobile: false,
     });
+    if (options.seed) {
+      // Raw localStorage seeding for states a URL cannot express (the fold
+      // mode, chat font scale): JSON of key → value, set on a warmup pass.
+      await send("Page.navigate", { url: `http://127.0.0.1:${port}/` });
+      await sleep(400);
+      for (const [key, value] of Object.entries(JSON.parse(options.seed))) {
+        await send("Runtime.evaluate", {
+          expression: `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)})`,
+        });
+      }
+    }
+
     if (options["ui-style"]) {
       // The theme is remembered in localStorage, so it has to be seeded before
       // the app boots: a warmup navigation owns the origin first.
@@ -222,7 +234,7 @@ async function main() {
     if ((options["wait-for"] ?? ".chat-head") === ".chat-head") {
       await waitForSelector(send, '[aria-label="更多"]');
     }
-    await sleep(600);
+    await sleep(Number(options.sleep ?? 600));
 
     if (hide) {
       const matched = await send("Runtime.evaluate", {
@@ -237,8 +249,9 @@ async function main() {
       await sleep(200);
     }
 
-    for (const step of (options["click-js"] ?? "").split(";").filter(Boolean)) {
-      const clicked = await send("Runtime.evaluate", { expression: step, returnByValue: true });
+    for (const step of (options["click-js"] ?? "").split(";;").filter(Boolean)) {
+      const clicked = await send("Runtime.evaluate", { expression: `${step}
+;undefined`, returnByValue: false });
       if (clicked.exceptionDetails) {
         console.error("click step failed:", step.trim(), JSON.stringify(clicked.exceptionDetails.exception?.description ?? ""));
         process.exitCode = 1;
