@@ -9,7 +9,6 @@
  * native activity does still needs a device smoke.
  *
  *   npm run shots -- --out=shots/studio
- *   npm run shots -- --out=shots/studio-before --prefix=before --hide='[aria-label="打开 Studio"]'
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -209,10 +208,33 @@ async function main() {
       deviceScaleFactor: 2,
       mobile: false,
     });
+    if (options.seed) {
+      // Raw localStorage seeding for states a URL cannot express (the fold
+      // mode, chat font scale): JSON of key → value, set on a warmup pass.
+      await send("Page.navigate", { url: `http://127.0.0.1:${port}/` });
+      await sleep(400);
+      for (const [key, value] of Object.entries(JSON.parse(options.seed))) {
+        await send("Runtime.evaluate", {
+          expression: `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)})`,
+        });
+      }
+    }
+
+    if (options["ui-style"]) {
+      // The theme is remembered in localStorage, so it has to be seeded before
+      // the app boots: a warmup navigation owns the origin first.
+      await send("Page.navigate", { url: `http://127.0.0.1:${port}/` });
+      await sleep(400);
+      await send("Runtime.evaluate", {
+        expression: `localStorage.setItem("reasonix.ui-style", ${JSON.stringify(options["ui-style"])})`,
+      });
+    }
     await send("Page.navigate", { url });
-    await waitForSelector(send, ".chat-head");
-    await waitForSelector(send, '[aria-label="打开 Studio"]');
-    await sleep(600);
+    await waitForSelector(send, options["wait-for"] ?? ".chat-head");
+    if ((options["wait-for"] ?? ".chat-head") === ".chat-head") {
+      await waitForSelector(send, '[aria-label="更多"]');
+    }
+    await sleep(Number(options.sleep ?? 600));
 
     if (hide) {
       const matched = await send("Runtime.evaluate", {
@@ -225,6 +247,25 @@ async function main() {
         expression: `[...document.querySelectorAll(${JSON.stringify(hide)})].forEach((el) => { el.style.display = "none"; })`,
       });
       await sleep(200);
+    }
+
+    for (const step of (options["click-js"] ?? "").split(";;").filter(Boolean)) {
+      const clicked = await send("Runtime.evaluate", { expression: `${step}
+;undefined`, returnByValue: false });
+      if (clicked.exceptionDetails) {
+        console.error("click step failed:", step.trim(), JSON.stringify(clicked.exceptionDetails.exception?.description ?? ""));
+        process.exitCode = 1;
+        break;
+      }
+      await sleep(700);
+    }
+
+    if (options.probe) {
+      const probed = await send("Runtime.evaluate", {
+        expression: options.probe,
+        returnByValue: true,
+      });
+      console.log("PROBE:", JSON.stringify(probed.result?.result?.value ?? probed, null, 1));
     }
 
     const written = [];

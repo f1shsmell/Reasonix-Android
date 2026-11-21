@@ -28,8 +28,6 @@ import { useStreamHaptics } from "./streamHaptics";
 import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
-import { StudioIcon } from "../app/StudioIcon";
-import type { StudioOpenResult } from "../app/openStudio";
 import { loadEnterPref } from "../app/enterPref";
 import { channelLabel, useRelayHealth } from "../app/useRelayHealth";
 import type { EnterPref } from "../app/enterPref";
@@ -77,8 +75,6 @@ export interface ChatScreenProps {
   /** A decision notification asked the screen to land on the waiting prompt. */
   focusAsk?: boolean;
   onFocusConsumed?: () => void;
-  /** Open the paired computer's Studio page; absent where there is no native shell. */
-  onOpenStudio?: () => Promise<StudioOpenResult>;
   /** Open a conversation the kernel just forked; false when the open failed. */
   onOpenBranch?: (path: string, name: string) => Promise<boolean>;
 }
@@ -397,11 +393,18 @@ function HeadMenu({
  * Unsplit prompt is left out of the rate by `cachePercent`, so the counts are
  * the ledger's own and need no adjustment.
  */
-function cacheNote(cache: { hit: number; miss: number; unknown: number } | null): string {
+function cacheNote(
+  cache: { hit: number; miss: number; unknown: number; requests?: number } | null,
+): string {
   if (!cache) return "还没有可统计的请求";
   const percent = cachePercent(cache.hit, cache.miss, cache.unknown);
   if (percent === null) return "还没有可统计的请求";
-  return `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
+  const ledger = `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
+  // The request count is the one number the provider bills by, so it rides
+  // with the cache split rather than needing its own screen.
+  return cache.requests !== undefined && cache.requests > 0
+    ? `${ledger} · 请求 ${compactCount(cache.requests)}`
+    : ledger;
 }
 
 /**
@@ -1107,29 +1110,10 @@ export function ChatScreen({
   mode,
   focusAsk,
   onFocusConsumed,
-  onOpenStudio,
   onOpenBranch,
 }: ChatScreenProps) {
   const relayHealth = useRelayHealth();
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
-  /**
-   * The header's Studio entry opens the paired computer's own page, not this
-   * conversation's Workbench — the menu already carries that one, and the two
-   * must not share a name. An old system WebView is named in settings, where
-   * the browser alternative sits beside it; a note here could only be read
-   * after the page had already been shown.
-   */
-  const [studioNote, setStudioNote] = useState("");
-  const openStudioFromChat = useCallback(() => {
-    if (!onOpenStudio) return;
-    setStudioNote("");
-    void onOpenStudio()
-      .then((result) => {
-        if (result.kind === "none") setStudioNote("读不到这台电脑的 Studio 地址。");
-        else if (result.kind === "failed") setStudioNote("打不开 Studio。");
-      })
-      .catch(() => setStudioNote("打不开 Studio。"));
-  }, [onOpenStudio]);
   /**
    * When the running turn started being watched; a restored turn has no start.
    * A ref rather than state: the fold loop reads it to vouch for frames.
@@ -2249,17 +2233,6 @@ export function ChatScreen({
             ＋
           </button>
         ) : null}
-        {onOpenStudio ? (
-          <button
-            type="button"
-            className="iconbtn"
-            onClick={openStudioFromChat}
-            aria-label="打开 Studio"
-            title="打开 Studio"
-          >
-            <StudioIcon name="panel" />
-          </button>
-        ) : null}
         <button
           type="button"
           className="iconbtn"
@@ -2269,12 +2242,6 @@ export function ChatScreen({
           ⋯
         </button>
       </div>
-
-      {studioNote ? (
-        <div className="notice error" role="status">
-          {studioNote}
-        </div>
-      ) : null}
 
       {workbenchOpen && runtime ? (
         <Suspense fallback={<p className="wb-wait">读取中…</p>}>

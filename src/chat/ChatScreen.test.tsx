@@ -1004,6 +1004,8 @@ describe("ChatScreen cache reading", () => {
     expect(note?.textContent).toContain("75%");
     expect(note?.textContent).toContain("命中 750");
     expect(note?.textContent).toContain("未命中 250");
+    // The provider bills by the request; the count rides with the split.
+    expect(note?.textContent).toContain("请求 2");
   });
 
   it("says nothing was measured before a prompt is split", async () => {
@@ -1057,7 +1059,12 @@ describe("ChatScreen message actions", () => {
     await flush();
     await flush();
 
-    act(() => (container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement).click());
+    // The action speaks in one word: the old double-quote glyph read as "99".
+    const quoteButton = container.querySelector('[aria-label="引用到输入框"]') as HTMLButtonElement;
+    expect(quoteButton.textContent).toBe("引用");
+    expect(quoteButton.querySelector("svg, .studio-icon")).toBeNull();
+
+    act(() => quoteButton.click());
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("");
     expect(container.querySelector(".quote-chip")?.textContent).toContain("引用第 1 轮回复");
@@ -2842,75 +2849,3 @@ describe("ChatScreen transcript windowing", () => {
   });
 });
 
-describe("ChatScreen studio entry", () => {
-  it("opens Studio from the header", async () => {
-    const openStudio = vi.fn(async () => ({ kind: "native" as const }));
-    render(snapshot(), "r1", { onOpenStudio: openStudio });
-    await flush();
-
-    const button = container.querySelector(
-      'button[aria-label="打开 Studio"]',
-    ) as HTMLButtonElement | null;
-    expect(button).toBeTruthy();
-    await act(async () => {
-      button?.click();
-      await Promise.resolve();
-    });
-
-    expect(openStudio).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the entry available on a read-only conversation", async () => {
-    const openStudio = vi.fn(async () => ({ kind: "native" as const }));
-    render(snapshot(undefined, [{ ...runtime, readOnly: true }]), "r1", {
-      onOpenStudio: openStudio,
-    });
-    await flush();
-
-    const button = container.querySelector(
-      'button[aria-label="打开 Studio"]',
-    ) as HTMLButtonElement | null;
-    expect(button?.disabled).toBe(false);
-  });
-
-  it("renders no entry where the shell cannot carry one", async () => {
-    render(snapshot());
-    await flush();
-
-    expect(container.querySelector('button[aria-label="打开 Studio"]')).toBeNull();
-  });
-
-  it("says so when there is no Studio address", async () => {
-    const openStudio = vi.fn(async () => ({ kind: "none" as const }));
-    render(snapshot(), "r1", { onOpenStudio: openStudio });
-    await flush();
-
-    const button = container.querySelector(
-      'button[aria-label="打开 Studio"]',
-    ) as HTMLButtonElement | null;
-    await act(async () => {
-      button?.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain("读不到这台电脑的 Studio 地址。");
-  });
-
-  it("says so when Studio cannot be opened", async () => {
-    const openStudio = vi.fn(async () => ({ kind: "failed" as const, error: new Error("x") }));
-    render(snapshot(), "r1", { onOpenStudio: openStudio });
-    await flush();
-
-    const button = container.querySelector(
-      'button[aria-label="打开 Studio"]',
-    ) as HTMLButtonElement | null;
-    await act(async () => {
-      button?.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain("打不开 Studio。");
-  });
-});

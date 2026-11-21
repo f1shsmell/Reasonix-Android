@@ -39,6 +39,8 @@ export interface SessionListProps {
   /** A pane is open (or was just opened) on this conversation. */
   onOpen: (runtimeId: string, title: string) => void;
   onRefresh: () => void;
+  /** Runtimes with a decision blocked on the person, from the app's sweep. */
+  pendingRuntimeIds?: ReadonlySet<string> | undefined;
 }
 
 /** A stable, readable label: the generated title, else the file stem. */
@@ -146,6 +148,7 @@ function SessionRow({
   onMenu,
   onToggleFold,
   onOpenChild,
+  pendingRuntimeIds,
 }: {
   session: TreeSession;
   busy: boolean;
@@ -156,6 +159,8 @@ function SessionRow({
   onMenu: () => void;
   onToggleFold: () => void;
   onOpenChild: (child: TreeSessionChild) => void;
+  /** Runtimes with a decision blocked on the person, from the app's sweep. */
+  pendingRuntimeIds?: ReadonlySet<string> | undefined;
 }) {
   const when = relativeTime(session.lastActiveAt);
   const press = useLongPress(onMenu);
@@ -182,7 +187,13 @@ function SessionRow({
               {session.unread ? (
                 <span className="dot accent" role="img" aria-label="有新回答" title="有新回答" />
               ) : null}
-              {session.runtimeId ? <span className="pill">运行中</span> : null}
+              {pendingRuntimeIds?.has(session.runtimeId ?? "") ? (
+                <span className="pill attention" role="img" aria-label="等你处理">
+                  待处理
+                </span>
+              ) : session.runtimeId ? (
+                <span className="pill">运行中</span>
+              ) : null}
               {session.legacy ? <span className="pill">旧版</span> : null}
             </span>
             <span className="session-meta">
@@ -246,6 +257,7 @@ export function SessionList({
   onBack,
   onOpen,
   onRefresh,
+  pendingRuntimeIds,
 }: SessionListProps) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -413,6 +425,7 @@ export function SessionList({
                 }}
                 onToggleFold={() => toggleFold(session.path)}
                 onOpenChild={(child) => void open(child)}
+                pendingRuntimeIds={pendingRuntimeIds}
               />
             ))}
           </ul>

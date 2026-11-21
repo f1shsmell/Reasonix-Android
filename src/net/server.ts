@@ -615,49 +615,6 @@ export type ServerLink =
   | { kind: "cloud"; device: string };
 
 /**
- * The full Studio page for the connection that is up.
- *
- * Only a LAN door publishes one: it is the kernel's own front end, reached at
- * the kernel origin. A self-hosted relay is a transport, not a web host — it
- * issues tickets and forwards sealed frames, and serves no page — so a relay
- * door has no full UI to open and answers "" (the caller hides the entry
- * instead of shipping a dead link).
- *
- * The system browser has no proxy cookie and cannot reach 127.0.0.1 of the
- * app, so it takes the kernel origin; the in-app WebView takes `studioAppUrl`.
- */
-export function studioWebUrl(
-  config: Pick<ProxyConfig, "mode" | "origin" | "relayDevice"> | null,
-): string {
-  if (!config) return "";
-  if (config.mode === "relay") return "";
-  return config.origin?.trim() || "";
-}
-
-/**
- * The URL for the **in-app** full Studio WebView.
- *
- * A LAN door has to go through the loopback proxy, not straight at the kernel:
- * the proxy is what binds the request to the Wi-Fi network when a VPN owns the
- * default route, adds the pairing cookie, and speaks the kernel's CSRF Origin.
- * A bare WebView on the kernel address has none of that and fails whenever a
- * tunnel is active — the "打不开完整界面" case. The proxy publishes its own
- * address in `studioUrl`; browser dev sessions keep the kernel address (they
- * have no loopback proxy to talk to).
- *
- * The system browser is different again: it has no proxy cookie, so it must
- * keep using `studioWebUrl()` even on a LAN door.
- *
- * A relay door has no page at all: see `studioWebUrl`.
- */
-export function studioAppUrl(
-  config: Pick<ProxyConfig, "mode" | "origin" | "studioUrl"> | null,
-): string {
-  if (!config || config.mode === "relay") return "";
-  return config.studioUrl?.trim() || config.origin?.trim() || "";
-}
-
-/**
  * Read what a Studio QR code carries.
  *
  * The LAN code is `http://<ip>:<port>/#pair=<one-time code>`. A cloud code is

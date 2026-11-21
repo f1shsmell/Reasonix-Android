@@ -10,7 +10,6 @@ import { Fleet, originKey, syncFleetPeer } from "../net/fleet";
 import type { FleetSnapshot, FleetPendingItem, FleetRunningItem } from "../net/fleet";
 import { bootstrap } from "../net/token";
 import { configureProxy, firstAnswering, reachReport, readProxyConfig } from "../net/server";
-import { openStudio } from "./openStudio";
 import { devPreview } from "./devPreview";
 import { submit } from "../net/submit";
 import { switchEffort, switchModel } from "../net/models";
@@ -931,22 +930,13 @@ export function App() {
               },
             }
           : {})}
-        {...(preview?.native || Capacitor.isNativePlatform()
-          ? {
-              onOpenStudio: () =>
-                openStudio({
-                  // A configured LAN origin is not a working one: report the
-                  // route the link machine actually has.
-                  preferRelay: link.state.phase !== "connected" || link.state.mode === "cloud",
-                }),
-            }
-          : {})}
       />
     );
   } else if (project !== null) {
     screen = shownProject ? (
       <SessionList
         snapshot={snapshot}
+        pendingRuntimeIds={new Set(pending.items.map((item) => item.runtimeId))}
         tree={tree}
         project={shownProject}
         onBack={() => setProject(null)}

@@ -410,16 +410,16 @@
 /* The home and project lists are one raised surface: the rounded edge says
    where the list starts and stops, and the rows keep their hairlines. */
 .list.grouped {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
 .list.grouped .session,
 .list.grouped .project {
-  padding: 13px 14px;
+  padding: 11px 0;
 }
 
 .list .session,
@@ -451,6 +451,13 @@
   border-radius: 999px;
   border: 1px solid var(--line);
   color: var(--fg-dim);
+}
+
+/* 待处理 marks a decision blocked on the person: the accent is the urgency
+   the NeedsYou card already carries, in the list a person scans first. */
+.pill.attention {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 pre.frame {
@@ -1387,11 +1394,11 @@ pre.frame {
   min-width: 0;
   width: auto;
   min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-1);
+  padding: 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .topline .linkbar-main {
@@ -1419,13 +1426,6 @@ pre.frame {
   width: 44px;
   height: 44px;
   flex: none;
-}
-
-[data-style="paper"] .topline .linkbar {
-  padding: 0 4px;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
 }
 
 [data-style="paper"] .topline .iconbtn {
@@ -1472,9 +1472,24 @@ pre.frame {
   height: 16px;
 }
 
+.tabbar button {
+  position: relative;
+}
+
 .tabbar button.on {
-  background: var(--accent-fill);
-  color: var(--on-fill);
+  color: var(--accent);
+}
+
+.tabbar button.on::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 24px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--accent);
 }
 
 [data-style="paper"] .tabbar {
@@ -1482,12 +1497,7 @@ pre.frame {
   background: var(--bg);
 }
 
-[data-style="paper"] .tabbar button.on {
-  background: transparent;
-  color: var(--accent);
-  border-bottom: 2px solid var(--accent);
-  border-radius: 0;
-}
+
 
 .home-head {
   padding: 0 2px;
@@ -1639,19 +1649,6 @@ pre.frame {
 .dispatch-hint b {
   color: var(--fg);
   font-weight: 600;
-}
-
-[data-style="paper"] .list.grouped {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  overflow: visible;
-}
-
-[data-style="paper"] .list.grouped .session,
-[data-style="paper"] .list.grouped .project {
-  padding: 11px 0;
 }
 
 [data-style="paper"] .connect-body .group {
@@ -1907,4 +1904,25 @@ pre.frame {
   color: var(--accent);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* ---- landscape and other short viewports ---- */
+/* A list that stretches to the device's widest axis is unreadable: cap the
+   reading column, keep the floating tabbar inside it, and give the last row
+   the clearance the tabbar's shadow needs. */
+@media (max-height: 500px) {
+  /* Everything the body scrolls — search, heads, lists — reads in one column,
+     the tabbar included. The scroll container's own bottom padding already
+     clears the floating tabbar's shadow. */
+  .body > * {
+    max-width: 720px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  .tabbar {
+    max-width: 720px;
+    width: calc(100% - 24px);
+    margin-inline: auto;
+  }
 }

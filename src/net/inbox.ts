@@ -338,6 +338,6 @@ export function inboxMessage(code: string): string {
     case "inbox.item_too_large":
       return "这条太大了。";
     default:
-      return `没发出去：${code}`;
+      return `这条没发出去（${code}）。检查连接后再试。`;
   }
 }

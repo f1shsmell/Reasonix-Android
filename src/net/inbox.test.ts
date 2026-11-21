@@ -310,4 +310,11 @@ describe("inboxMessage", () => {
     expect(inboxMessage("steer.already_applied")).toContain("用过");
     expect(inboxMessage("something.new")).toContain("something.new");
   });
+
+  it("keeps an unknown code readable without showing it as the whole answer", () => {
+    const text = inboxMessage("mock.unknown");
+    expect(text).toContain("没发出去");
+    expect(text).toContain("（mock.unknown）");
+    expect(text).not.toContain("：mock.unknown");
+  });
 });

@@ -593,6 +593,22 @@ describe("Home", () => {
       expect(block?.textContent).toContain("去回答");
     });
 
+    it("marks the row itself 待处理 where the list is scanned, above the plain 运行中", () => {
+      // Session b rides runtime r2, the one with a blocked decision.
+      render({
+        pending: pending({ items: [waiting()] }),
+      });
+      const rows = Array.from(container.querySelectorAll(".list .session")).map(
+        (row) => row.textContent ?? "",
+      );
+      const marked = rows.find((text) => text.includes("待处理"));
+      // Session b rides runtime r2, the blocked one; 修一下登录 is idle.
+      expect(marked?.includes("b") ?? false).toBe(true);
+      // The plain running pill must not swallow the more urgent one.
+      expect(marked?.includes("运行中") ?? true).toBe(false);
+      expect(rows.some((text) => text.includes("运行中"))).toBe(false);
+    });
+
     it("marks a new decision with its computer and how long it has waited", () => {
       render({
         pending: pending({

@@ -315,11 +315,14 @@ function Chevron() {
 function RecentItem({
   row,
   busy,
+  waiting,
   onOpen,
   onMenu,
 }: {
   row: RecentRow;
   busy: boolean;
+  /** A decision on this conversation is waiting for the person. */
+  waiting: boolean;
   onOpen: () => void;
   onMenu: () => void;
 }) {
@@ -353,7 +356,13 @@ function RecentItem({
             {session.unread ? (
               <span className="dot accent" role="img" aria-label="有新回答" title="有新回答" />
             ) : null}
-            {session.runtimeId ? <span className="pill">运行中</span> : null}
+            {waiting ? (
+              <span className="pill attention" role="img" aria-label="等你处理">
+                待处理
+              </span>
+            ) : session.runtimeId ? (
+              <span className="pill">运行中</span>
+            ) : null}
           </span>
           <span className="session-meta">
             {busy ? "正在打开…" : [project.name, relativeTime(session.lastActiveAt)].filter(Boolean).join(" · ")}
@@ -687,6 +696,9 @@ export function Home({
   fleet,
   onOpenFleet,
 }: HomeProps) {
+  // The sessions a decision is blocked on, so their rows say 待处理 — the
+  // NeedsYou card already says it, but the list is what a person scans first.
+  const pendingRuntimeIds = new Set(pending.items.map((item) => item.runtimeId));
   const relayHealth = useRelayHealth();
   const [sessionQuery, setSessionQuery] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
@@ -996,10 +1008,6 @@ export function Home({
 
             {tab === "projects" ? (
               <>
-                <div className="section-head home-head">
-                  <h2>项目</h2>
-                  <span className="meta">{shownProjects.length}</span>
-                </div>
                 <input
                   className="search"
                   type="search"
@@ -1008,6 +1016,10 @@ export function Home({
                   placeholder="搜索项目"
                   aria-label="搜索项目"
                 />
+                <div className="section-head home-head">
+                  <h2>项目</h2>
+                  <span className="meta">{shownProjects.length}</span>
+                </div>
               </>
             ) : null}
 
@@ -1060,6 +1072,7 @@ export function Home({
                         key={`${row.project.root}\u0000${row.session.path}`}
                         row={row}
                         busy={busy === row.session.path}
+                        waiting={pendingRuntimeIds.has(row.session.runtimeId ?? "")}
                         onOpen={() => void open(row.project, row.session)}
                         onMenu={() => setMenu(row)}
                       />

@@ -32,7 +32,6 @@ vi.mock("@capacitor/barcode-scanner", () => ({
 }));
 vi.mock("../native/login", () => ({ NativeLogin: { open: vi.fn(async () => {}) } }));
 vi.mock("../native/pair", () => ({ NativePair: { pair: vi.fn() } }));
-vi.mock("../native/webmode", () => ({ WebMode: { open: vi.fn(async () => {}) } }));
 vi.mock("../native/turn", () => ({
   loadBackgroundStatus: vi.fn(async () => null),
   openBatterySettings: vi.fn(),
@@ -71,8 +70,6 @@ vi.mock("../net/server", () => ({
   startAccount: vi.fn(),
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
-  studioWebUrl: vi.fn(() => ""),
-  studioAppUrl: vi.fn(() => ""),
   probeUpstream: vi.fn(),
   probeDoor: vi.fn(async () => ({ ok: true as const, machine: "" })),
   readMachineIdentity: vi.fn(async () => null),

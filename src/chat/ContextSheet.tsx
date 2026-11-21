@@ -45,7 +45,7 @@ function readFailure(code: string): string {
     case "runtime.gone":
       return "这个会话已经关掉了，回列表里重新打开。";
     default:
-      return `读不到上下文用量：${code}`;
+      return `读不到上下文用量（${code}），稍后再试。`;
   }
 }
 
@@ -67,7 +67,7 @@ function foldFailure(code: string): string {
       // so the sentence covers both without parsing that text.
       return "压缩没完成。如果这一轮还在跑，等它停下来再试。";
     default:
-      return `压缩不了：${code}`;
+      return `压缩没完成（${code}）。`;
   }
 }
 

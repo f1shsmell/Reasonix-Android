@@ -144,4 +144,24 @@ public class AskStatusTest {
         assertTrue(status.text.contains("先做哪个"));
         assertTrue(status.signature.contains("d2"));
     }
+
+    @Test
+    public void askBody_truncatesALongQuestion_andKeepsTheCount() {
+        AskStatus status = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d1\",\"kind\":\"ask\",\"questions\":[{\"prompt\":\""
+                        + "很".repeat(200)
+                        + "\"}]},{\"id\":\"d2\",\"kind\":\"ask\",\"questions\":[{\"prompt\":\"第二个\"}]}]}");
+        String body = TurnNotificationText.askBody(status);
+        assertTrue(body.startsWith("很"));
+        assertTrue(body.contains("…"));
+        assertTrue("truncated body must stay bounded", body.length() <= 130);
+        assertTrue(body.contains("还有 1 个"));
+    }
+
+    @Test
+    public void askBody_leavesShortQuestionsAlone() {
+        AskStatus status = AskStatus.parse(
+                "{\"decisions\":[{\"id\":\"d1\",\"kind\":\"ask\",\"questions\":[{\"prompt\":\"用哪个方案\"}]}]}");
+        assertEquals("用哪个方案", TurnNotificationText.askBody(status));
+    }
 }
