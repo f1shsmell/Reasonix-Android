@@ -2603,3 +2603,39 @@ html[data-chat-font="xl"] {
 .voice-live-text {
   flex: 1;
 }
+
+/* ---- landscape and other short viewports ---- */
+/* Nothing above assumes the phone is upright. When it is not, the composer's
+   height budget and the transcript's gutters are what decide whether there is
+   a conversation to read at all: at 760×390 the composer ate 46% of the
+   screen. The same 720px reading column the home lists use keeps lines
+   scannable instead of stretching edge to edge. */
+@media (max-height: 500px) {
+  .composer {
+    width: min(calc(100% - 24px), 720px);
+    margin-inline: auto;
+    padding: 6px 10px 5px;
+  }
+
+  .composer textarea {
+    min-height: 26px;
+    max-height: 88px;
+    padding-block: 3px;
+    font-size: 14px;
+  }
+
+  .chat-head {
+    width: min(calc(100% - 20px), 720px);
+    margin-inline: auto;
+  }
+
+  .transcript {
+    padding: 8px 12px calc(var(--chat-dock, 92px) + 8px);
+  }
+
+  .row {
+    max-width: 720px;
+    align-self: center;
+    width: 100%;
+  }
+}

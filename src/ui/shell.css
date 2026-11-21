@@ -1898,3 +1898,24 @@ pre.frame {
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* ---- landscape and other short viewports ---- */
+/* A list that stretches to the device's widest axis is unreadable: cap the
+   reading column, keep the floating tabbar inside it, and give the last row
+   the clearance the tabbar's shadow needs. */
+@media (max-height: 500px) {
+  /* Everything the body scrolls — search, heads, lists — reads in one column,
+     the tabbar included. The scroll container's own bottom padding already
+     clears the floating tabbar's shadow. */
+  .body > * {
+    max-width: 720px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  .tabbar {
+    max-width: 720px;
+    width: calc(100% - 24px);
+    margin-inline: auto;
+  }
+}

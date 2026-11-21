@@ -238,6 +238,14 @@ async function main() {
       await sleep(200);
     }
 
+    if (options.probe) {
+      const probed = await send("Runtime.evaluate", {
+        expression: options.probe,
+        returnByValue: true,
+      });
+      console.log("PROBE:", JSON.stringify(probed.result?.result?.value ?? probed, null, 1));
+    }
+
     const written = [];
     for (const theme of ["light", "dark"]) {
       const file = join(outDir, `${prefix}-${theme}.png`);
