@@ -12,6 +12,8 @@ import { setKernelTransport } from "../transport";
 const ORIGIN = "http://mock.local";
 const BASE = "/rt/demo";
 const now = Date.now();
+import type { HistoryMessage } from "../../wire/history";
+
 const params = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams();
@@ -129,7 +131,7 @@ const notesMessages = [
     fenced code block, a table, an inline formula and a quote. Without the
     run the three folds draw the same picture and a review cannot tell them
     apart. */
-export const richMessages = [
+export const richMessages: HistoryMessage[] = [
   { role: "user", content: "把重试逻辑改成指数退避，写清楚参数表和公式，再给个对比表格。", msgIndex: 0 },
   {
     role: "assistant",
