@@ -211,7 +211,7 @@ async function main() {
     });
     await send("Page.navigate", { url });
     await waitForSelector(send, ".chat-head");
-    await waitForSelector(send, '[aria-label="打开 Studio"]');
+    await waitForSelector(send, '[aria-label="更多"]');
     await sleep(600);
 
     if (hide) {

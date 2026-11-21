@@ -21,8 +21,6 @@ import {
 } from "../net/server";
 import type { DeviceGrant, ProxyConfig, RemoteDevice } from "../net/server";
 import { RequestTimeout } from "../net/http";
-import { WebMode } from "../native/webmode";
-import { studioAppUrl, studioWebUrl } from "../net/server";
 import { forgetFleetPeer } from "../net/fleet";
 import { connectRelay, clearRelayRouting, RelayError } from "../net/relay";
 import { clearRelayDevice } from "../net/relayStore";
@@ -60,7 +58,6 @@ vi.mock("@capacitor/barcode-scanner", () => ({
 }));
 vi.mock("../native/login", () => ({ NativeLogin: { open: vi.fn(async () => {}) } }));
 vi.mock("../native/pair", () => ({ NativePair: { pair: vi.fn() } }));
-vi.mock("../native/webmode", () => ({ WebMode: { open: vi.fn(async () => {}) } }));
 vi.mock("../native/turn", () => ({
   loadBackgroundStatus: vi.fn(async () => null),
   openBatterySettings: vi.fn(),
@@ -101,8 +98,6 @@ vi.mock("../net/server", () => ({
   startAccount: vi.fn(),
   pollAccount: vi.fn(),
   parseServerLink: vi.fn(),
-  studioWebUrl: vi.fn(() => ""),
-  studioAppUrl: vi.fn(() => ""),
   probeUpstream: vi.fn(),
   probeDoor: vi.fn(async () => ({ ok: true as const, machine: "" })),
   readMachineIdentity: vi.fn(async () => null),
@@ -1189,142 +1184,4 @@ describe("ConnectScreen verification", () => {
   });
 });
 
-describe("ConnectScreen full Studio", () => {
-  const loopback = "http://127.0.0.1:8788/";
-  const kernel = "http://192.168.5.2:56789";
 
-  beforeEach(() => {
-    // The real URL helpers are mocked at module scope; give these tests the
-    // two answers a LAN door would produce so the wiring itself is exercised.
-    vi.mocked(studioWebUrl).mockReturnValue(kernel);
-    vi.mocked(studioAppUrl).mockReturnValue(loopback);
-    vi.mocked(readProxyConfig).mockResolvedValue(config({ studioUrl: loopback }));
-  });
-
-  afterEach(() => {
-    // The file-wide beforeEach only calls clearAllMocks(), which keeps
-    // implementations. Without this reset the next describe would see a
-    // "完整界面" section that its config never asked for.
-    vi.mocked(studioWebUrl).mockReturnValue("");
-    vi.mocked(studioAppUrl).mockReturnValue("");
-  });
-
-  it("opens the in-app Studio through the loopback proxy on a LAN door", async () => {
-    await renderScreen();
-    await pressRow("在应用内打开");
-
-    // A bare WebView on the kernel address is the "打不开完整界面" bug: it
-    // loses the VPN detour and the pairing cookie. The activity must be told
-    // to load the proxy's own origin and carry the UA marker.
-    expect(WebMode.open).toHaveBeenCalledWith({
-      url: loopback,
-      viaProxy: true,
-      origin: kernel,
-    });
-  });
-
-  it("hands the system browser the real kernel address", async () => {
-    await renderScreen();
-    await pressRow("在浏览器打开");
-
-    // The browser has no proxy cookie and cannot reach this app's 127.0.0.1.
-    expect(Browser.open).toHaveBeenCalledWith({ url: kernel });
-    expect(WebMode.open).not.toHaveBeenCalled();
-  });
-
-  it("says no address is known when the proxy cannot be read", async () => {
-    await renderScreen();
-    // The row is drawn from the config read at mount; the click reads again,
-    // and that second read is the one that finds nothing.
-    vi.mocked(readProxyConfig).mockResolvedValue(null);
-    await pressRow("在应用内打开");
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain("读不到这台电脑的 Studio 地址。");
-  });
-
-  it("falls back to the real address when no native WebView exists", async () => {
-    vi.mocked(WebMode.open).mockRejectedValueOnce(new Error("no activity"));
-    await renderScreen();
-    await pressRow("在应用内打开");
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // The browser fallback must not be handed the loopback URL it cannot use.
-    expect(Browser.open).toHaveBeenCalledWith({ url: kernel });
-  });
-});
-
-describe("ConnectScreen on an old WebView", () => {
-  const loopback = "http://127.0.0.1:8788/";
-  const kernel = "http://192.168.5.2:56789";
-  const jsdomAgent = navigator.userAgent;
-
-  beforeEach(() => {
-    vi.mocked(studioWebUrl).mockReturnValue(kernel);
-    vi.mocked(studioAppUrl).mockReturnValue(loopback);
-    vi.mocked(readProxyConfig).mockResolvedValue(config({ studioUrl: loopback }));
-  });
-
-  afterEach(() => {
-    vi.mocked(studioWebUrl).mockReturnValue("");
-    vi.mocked(studioAppUrl).mockReturnValue("");
-    // The agent is read at render time, so it has to be put back for the rest
-    // of the file: jsdom's own agent carries no Chrome token, which is what
-    // keeps every other test on the "unknown, say nothing" path.
-    Object.defineProperty(navigator, "userAgent", {
-      value: jsdomAgent,
-      configurable: true,
-    });
-  });
-
-  function setAgent(value: string): void {
-    Object.defineProperty(navigator, "userAgent", { value, configurable: true });
-  }
-
-  it("warns on the rows instead of opening a page that will look broken", async () => {
-    // The reported phone before its WebView was updated.
-    setAgent(
-      "Mozilla/5.0 (Linux; Android 12; Redmi K30 Pro Zoom Edition; wv) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.104 Mobile Safari/537.36",
-    );
-    await renderScreen();
-
-    // The row itself says why, rather than promising a working page.
-    expect(container.textContent).toContain("系统 WebView 是 Chrome 96");
-    // And the note names the way out.
-    expect(container.textContent).toContain("Android 系统 WebView");
-    // The browser row is offered as the working alternative.
-    expect(container.textContent).toContain("自带内核");
-  });
-
-  it("still opens the page, because half a page beats none", async () => {
-    setAgent("Mozilla/5.0 (Linux; Android 12; wv) Chrome/96.0.4664.104 Mobile Safari/537.36");
-    await renderScreen();
-    await pressRow("在应用内打开");
-
-    // A warning is not a block: the compatibility sheet already restores the
-    // colours and the height, so the page stays reachable.
-    expect(WebMode.open).toHaveBeenCalledWith({
-      url: loopback,
-      viaProxy: true,
-      origin: kernel,
-    });
-  });
-
-  it("says nothing on an engine new enough for the page", async () => {
-    setAgent(
-      "Mozilla/5.0 (Linux; Android 12; Redmi K30 Pro) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/158.0.8127.2 Mobile Safari/537.36",
-    );
-    await renderScreen();
-
-    expect(container.textContent).not.toContain("系统 WebView 是 Chrome");
-    expect(container.textContent).toContain("电脑上那套 Studio 页面");
-  });
-});

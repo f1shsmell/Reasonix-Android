@@ -30,7 +30,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LoginPlugin.class);
         registerPlugin(SpeechPlugin.class);
         registerPlugin(PairPlugin.class);
-        registerPlugin(WebModePlugin.class);
         registerPlugin(RelaySocketPlugin.class);
         registerPlugin(NetworkWatchPlugin.class);
         registerPlugin(TurnPlugin.class);

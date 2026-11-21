@@ -121,7 +121,7 @@ vi.mock("../net/connection", async (importOriginal) => ({
 }));
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: vi.fn(() => true) },
-  // `openStudio` reaches the WebMode/Browser plugins at import time.
+  // The Capacitor plugins are reached at import time by several modules.
   registerPlugin: vi.fn(() => ({ open: vi.fn(async () => {}) })),
 }));
 vi.mock("../native/speech", () => ({
