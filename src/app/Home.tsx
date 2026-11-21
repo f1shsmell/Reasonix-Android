@@ -28,6 +28,8 @@ import {
 } from "../net/pin";
 import type { TreeWrite } from "../net/pin";
 import { linkSummary, linkTone } from "../net/link";
+import { useRelayHealth } from "./useRelayHealth";
+import type { RelayHealth } from "./useRelayHealth";
 import type { LinkState } from "../net/link";
 import { connectionKey, loadConnections, moveConnection } from "../net/savedConnections";
 import type { SavedConnection } from "../net/savedConnections";
@@ -379,19 +381,33 @@ function RecentItem({
  * computer and whether it is reachable decide what every list below means, and
  * a link that has been reconnecting for a minute should not be invisible.
  */
-function LinkBar({ link, name: preferred, onOpen }: { link: LinkState; name?: string | undefined; onOpen: () => void }) {
+function LinkBar({
+  link,
+  name: preferred,
+  onOpen,
+  relayHealth,
+}: {
+  link: LinkState;
+  name?: string | undefined;
+  onOpen: () => void;
+  relayHealth: RelayHealth;
+}) {
   const name = preferred ?? link.name ?? (link.phase === "connected" ? "电脑" : "没有连接电脑");
+  // The link machine can read "connected" while the relay behind it rebuilds
+  // its socket; the chip must not repeat that claim during the healing window.
+  const recovering = relayHealth === "reconnecting" && link.phase === "connected";
+  const stateText = recovering ? "云端恢复中…" : linkSummary(link);
   return (
     <button
       type="button"
       className="linkbar"
       onClick={onOpen}
-      aria-label={`连接：${name}，${linkSummary(link)}`}
+      aria-label={`连接：${name}，${stateText}`}
     >
-      <span className={`dot ${linkTone(link)}`} aria-hidden="true" />
+      <span className={`dot ${recovering ? "warn" : linkTone(link)}`} aria-hidden="true" />
       <span className="linkbar-main">
         <span className="linkbar-name">{name}</span>
-        <span className="linkbar-state">{linkSummary(link)}</span>
+        <span className="linkbar-state">{stateText}</span>
       </span>
       <span className="chev" aria-hidden="true">
         <StudioIcon name="down" />
@@ -683,6 +699,7 @@ export function Home({
   // The sessions a decision is blocked on, so their rows say 待处理 — the
   // NeedsYou card already says it, but the list is what a person scans first.
   const pendingRuntimeIds = new Set(pending.items.map((item) => item.runtimeId));
+  const relayHealth = useRelayHealth();
   const [sessionQuery, setSessionQuery] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
   const [switchSheet, setSwitchSheet] = useState(false);
@@ -913,6 +930,7 @@ export function Home({
         <LinkBar
           link={link}
           name={linkName}
+          relayHealth={relayHealth}
           onOpen={() => {
             setSaved(loadConnections());
             setSwitchSheet(true);

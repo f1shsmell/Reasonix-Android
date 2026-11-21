@@ -7,8 +7,20 @@
  * screen or an endpoint module.
  */
 
+/**
+ * How a runtime's frames reach the phone: the LAN's native SSE, the relay's
+ * mux push lane, or the relay's polled fallback.
+ */
+export type EventChannel = "sse" | "mux" | "poll";
+
 export interface KernelEventSource {
   readonly readyState: number;
+  /**
+   * The lane this source settled on, set by the time `onopen` fires. A source
+   * that does not know (the browser's native EventSource) leaves it unset and
+   * the stream reports `sse`.
+   */
+  channel?: EventChannel;
   onopen: ((event: Event) => void) | null;
   onmessage: ((event: MessageEvent<string>) => void) | null;
   onerror: ((event: Event) => void) | null;
@@ -18,6 +30,12 @@ export interface KernelEventSource {
 export interface KernelTransport {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   eventSource(url: string, init?: EventSourceInit): KernelEventSource;
+  /**
+   * The relay link's health, when this transport owns one. The dev mock
+   * scripts recovery states through it; the production build leaves it unset
+   * and the caller reads the real link instead.
+   */
+  relayState?: () => "open" | "reconnecting" | "ended" | null;
 }
 
 const browserTransport: KernelTransport = {

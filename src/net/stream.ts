@@ -9,12 +9,12 @@
 
 import type { EventPayload } from "../wire/events";
 import { kernelTransport } from "./transport";
-import type { KernelEventSource } from "./transport";
+import type { EventChannel, KernelEventSource } from "./transport";
 
 export type StreamState =
   | { kind: "idle" }
   | { kind: "connecting" }
-  | { kind: "open" }
+  | { kind: "open"; channel?: EventChannel }
   | { kind: "retrying"; attempt: number; afterMs: number }
   | { kind: "closed"; reason: string };
 
@@ -155,7 +155,12 @@ export class RuntimeStream {
     source.onopen = () => {
       if (this.source !== source) return;
       this.attempt = 0;
-      this.handlers.onState({ kind: "open" });
+      // The channel is what the pane can tell the person: push over the mux or
+      // the polled fallback. A source that does not know — the browser's own
+      // EventSource on the LAN — leaves it unset, which every reader treats as
+      // the LAN's SSE.
+      const state: StreamState = { kind: "open", ...(source.channel ? { channel: source.channel } : {}) };
+      this.handlers.onState(state);
     };
 
     source.onmessage = (message: MessageEvent<string>) => {

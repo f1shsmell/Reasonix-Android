@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deviceFingerprint, pinDevice } from "./deviceTrust";
-import { RelayError, RelayEventSource, RelayLink, clearRelayRouting, connectRelay, isKernelPath } from "./relay";
+import {
+  RelayError,
+  RelayEventSource,
+  RelayLink,
+  clearRelayRouting,
+  connectRelay,
+  isKernelPath,
+  relayState,
+  watchRelayState,
+} from "./relay";
 import type { MuxFrameHandlers } from "./relayMux";
 
 type Handler = (event: {
@@ -593,6 +602,7 @@ describe("RelayEventSource over mux", () => {
     expect(rig.runtime()).toBe("r1");
     expect(rig.cursor()?.()).toBe(3);
     expect(opened).toHaveBeenCalledTimes(1);
+    expect(source.channel).toBe("mux");
     source.close();
     expect(rig.close).toHaveBeenCalledTimes(1);
   });
@@ -660,6 +670,9 @@ describe("RelayEventSource over mux", () => {
 
     expect(opened).toHaveBeenCalled();
     expect(seen).toEqual(['{"kind":"text","text":"hi","seq":1}']);
+    // The fallback is visible: a source that ended up polling says so, which
+    // is what the channel indicator on screen reads.
+    expect(source.channel).toBe("poll");
   });
 });
 
@@ -723,5 +736,24 @@ describe("RelayLink mux dispatch", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(frames).toEqual([{ kind: "text", seq: 1 }]);
     link.close();
+  });
+});
+
+describe("watchRelayState", () => {
+  // The adoption path (connectRelay wiring a link's changes into the module
+  // watchers) is exercised by the App tests; here the subscription mechanics
+  // run against a link-less module, where every state reads "none".
+  it("fires immediately and stops on unsubscribe", () => {
+    const first: Array<ReturnType<typeof relayState>> = [];
+    const second: Array<ReturnType<typeof relayState>> = [];
+    const stop = watchRelayState((state) => first.push(state));
+    watchRelayState((state) => second.push(state));
+    expect(first).toEqual(["none"]);
+    expect(second).toEqual(["none"]);
+
+    stop();
+    clearRelayRouting();
+    expect(first).toEqual(["none"]);
+    expect(second).toEqual(["none", "none"]);
   });
 });

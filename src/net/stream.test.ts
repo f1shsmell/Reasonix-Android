@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimeStream } from "./stream";
 import type { StreamState } from "./stream";
+import type { EventChannel } from "./transport";
 
 /** A stand-in for EventSource that a test drives frame by frame. */
 class FakeSource {
@@ -9,6 +10,7 @@ class FakeSource {
   onopen: (() => void) | null = null;
   onmessage: ((message: { data: string; lastEventId: string }) => void) | null = null;
   onerror: (() => void) | null = null;
+  channel: EventChannel | undefined;
   closed = false;
 
   constructor(url: string) {
@@ -67,6 +69,24 @@ describe("RuntimeStream", () => {
     expect(events).toEqual([{ kind: "text", text: "hi" }]);
     expect(cursors).toEqual([7]);
     expect(stream.cursor).toBe(7);
+  });
+
+  it("names the lane the source settled on", () => {
+    const { states, handlers } = makeHandlers();
+    const stream = new RuntimeStream("/rt/r1/events", handlers);
+    stream.start();
+    // The browser's own EventSource does not know — the LAN's SSE is the
+    // default every reader applies, and the state stays bare so old
+    // comparisons keep holding.
+    FakeSource.latest?.onopen?.();
+    expect(states.at(-1)).toEqual({ kind: "open" });
+
+    // A source that knows better — the relay's mux lane — is reported as-is.
+    const push = new RuntimeStream("/rt/r1/events", handlers);
+    push.start();
+    FakeSource.latest!.channel = "mux";
+    FakeSource.latest?.onopen?.();
+    expect(states.at(-1)).toEqual({ kind: "open", channel: "mux" });
   });
 
   it("ignores the id of an unnumbered frame", () => {

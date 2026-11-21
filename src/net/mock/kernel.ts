@@ -6,20 +6,30 @@
  * dev entry point; production builds never load this file.
  */
 
-import type { KernelEventSource, KernelTransport } from "../transport";
+import type { EventChannel, KernelEventSource, KernelTransport } from "../transport";
 import { setKernelTransport } from "../transport";
 
 const ORIGIN = "http://mock.local";
 const BASE = "/rt/demo";
 const now = Date.now();
+const params = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
 /** `?tour=1` scripts the states the README renders: waiting, running, slow. */
-const tour = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("tour") === "1";
+const tour = params.get("tour") === "1";
 /** `?rich=1` swaps the demo transcript for one with code, a table and a
     formula, and makes a submitted turn carry tool steps — the inputs the
     精简/详尽 fold and the markdown paths need to be judged. */
-const rich = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("rich") === "1";
+const rich = params.get("rich") === "1";
+/**
+ * `?cloud=1` scripts the cloud surfaces: the stream reports the mux push lane,
+ * and `?fallback=1` downgrades it to the polled path the old kernels get.
+ * `?lag=1` holds the relay link in its reconnecting state so the recovery
+ * indicators can be rendered and reviewed without a real dead link.
+ */
+const cloud = params.get("cloud") === "1";
+const fallback = params.get("fallback") === "1";
+const lag = params.get("lag") === "1";
 
 const runtime = {
   id: "demo",
@@ -218,6 +228,7 @@ const models = {
 
 class MockEventSource implements KernelEventSource {
   readyState = 0;
+  channel?: EventChannel;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
@@ -226,6 +237,7 @@ class MockEventSource implements KernelEventSource {
 
   constructor(url: string) {
     subscribers.add(this);
+    if (cloud) this.channel = fallback ? "poll" : "mux";
     setTimeout(() => {
       if (this.closed) return;
       this.readyState = 1;
@@ -842,6 +854,9 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
 const transport: KernelTransport = {
   fetch: mockFetch,
   eventSource: (streamUrl) => new MockEventSource(streamUrl),
+  ...(cloud
+    ? { relayState: (): "open" | "reconnecting" => (lag ? "reconnecting" : "open") }
+    : {}),
 };
 
 let installed = false;

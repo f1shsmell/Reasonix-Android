@@ -1,5 +1,6 @@
 import { readNetworkStatus } from "../native/networkWatch";
 import { readNativeDiagnostics } from "../native/turn";
+import { relayState } from "../net/relay";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { LinkState } from "../net/link";
 import type { ReachRow } from "../net/server";
@@ -63,6 +64,10 @@ export async function buildDiagnostics(input: DiagnosticInput): Promise<string> 
     `Reach: ${reachText(snapshot)}`,
     `Reach sweep: ${reachSweepText(reach)}`,
     `Stream: ${snapshot.stream.kind}`,
+    `Stream lane: ${
+      snapshot.stream.kind === "open" ? (snapshot.stream.channel ?? "sse") : "-"
+    }`,
+    `Relay: ${relayState()}`,
     `Runtimes: ${snapshot.runtimes.length}`,
     `Network: ${
       network

@@ -29,6 +29,7 @@ import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
 import { loadEnterPref } from "../app/enterPref";
+import { channelLabel, useRelayHealth } from "../app/useRelayHealth";
 import type { EnterPref } from "../app/enterPref";
 import { compactCount } from "../app/format";
 import { loadTodos, todoRevision } from "../net/todos";
@@ -1111,6 +1112,7 @@ export function ChatScreen({
   onFocusConsumed,
   onOpenBranch,
 }: ChatScreenProps) {
+  const relayHealth = useRelayHealth();
   const runtime = snapshot.runtimes.find((candidate) => candidate.id === runtimeId);
   /**
    * When the running turn started being watched; a restored turn has no start.
@@ -2188,6 +2190,20 @@ export function ChatScreen({
   };
 
 
+  // The dot must not claim health while the relay is quietly rebuilding: the
+  // link self-heals within ~30 s, and until then frames hold their last state.
+  // On a relay link the label also names the lane, so a stalled cloud session
+  // can be told apart from a polled one without leaving the chat.
+  const stream = snapshot.stream;
+  const streamOpen = stream.kind === "open";
+  const recovering = relayHealth === "reconnecting";
+  const lane = relayHealth === "none" ? "" : streamOpen ? channelLabel(stream.channel) : "";
+  const streamNote = recovering
+    ? "云端正在恢复"
+    : streamOpen
+      ? `事件流已连接${lane ? `（${lane}）` : ""}`
+      : "事件流未连接";
+
   return (
     <div className="chat" style={{ "--chat-dock": `${dockHeight}px` } as CSSProperties}>
       <div className="chat-head">
@@ -2198,11 +2214,16 @@ export function ChatScreen({
           <strong>{title ?? runtime.name}</strong>
           <span>
             <span
-              className={`dot ${snapshot.stream.kind === "open" ? "ok" : "warn"}`}
+              className={`dot ${streamOpen && !recovering ? "ok" : "warn"}`}
               role="img"
-              aria-label={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
-              title={snapshot.stream.kind === "open" ? "事件流已连接" : "事件流未连接"}
+              aria-label={streamNote}
+              title={streamNote}
             />
+            {lane ? (
+              <span className="lane" aria-hidden="true">
+                {lane}
+              </span>
+            ) : null}
             {runtime.readOnly ? "只读 · " : ""}
             {runtime.name}
           </span>
