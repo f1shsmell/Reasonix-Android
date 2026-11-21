@@ -66,9 +66,11 @@ const tree = [{
   total: 3,
   remaining: 0,
   sessions: [
-    { path: "/demo/.reasonix/demo.jsonl", name: "demo", title: "周末出行计划", turns: 4, lastActiveAt: now - 3_600_000 },
-    { path: "/demo/.reasonix/api.jsonl", name: "api", title: "接口设计草稿", turns: 2, lastActiveAt: now - 7_200_000 },
-    { path: "/demo/.reasonix/notes.jsonl", name: "notes", title: "读书笔记", turns: 3, lastActiveAt: now - 93_600_000 },
+    // runtimeId marks a session with an open pane — the kernel sets it, and
+    // the list's 运行中/待处理 pills join on it.
+    { path: "/demo/.reasonix/demo.jsonl", name: "demo", title: "周末出行计划", turns: 4, lastActiveAt: now - 3_600_000, runtimeId: "demo" },
+    { path: "/demo/.reasonix/api.jsonl", name: "api", title: "接口设计草稿", turns: 2, lastActiveAt: now - 7_200_000, runtimeId: "api" },
+    { path: "/demo/.reasonix/notes.jsonl", name: "notes", title: "读书笔记", turns: 3, lastActiveAt: now - 93_600_000, runtimeId: "notes" },
   ],
 }];
 
@@ -582,6 +584,7 @@ function mockFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
         title: "新会话",
         turns: 0,
         lastActiveAt: Date.now(),
+        runtimeId: id,
       });
       return Promise.resolve(json(view));
     }
