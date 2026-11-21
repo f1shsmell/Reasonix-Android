@@ -96,7 +96,7 @@ describe("ModelSheet", () => {
     expect(container.textContent).toContain("deepseek-flash");
     expect(container.textContent).toContain("128K 上下文");
     expect(container.textContent).toContain("看图");
-    expect(container.textContent).toContain("思考 low/high");
+    expect(container.textContent).toContain("思考 低/高");
     expect(container.textContent).toContain("默认");
   });
 
@@ -191,18 +191,18 @@ describe("ModelSheet", () => {
     const group = container.querySelector('[aria-label="思考强度"]');
     expect(group).toBeTruthy();
     const labels = Array.from(group?.querySelectorAll("button") ?? []).map((b) => b.textContent);
-    expect(labels).toEqual(["auto", "low", "high"]);
+    expect(labels).toEqual(["自动", "低", "高"]);
 
     // The status read said this conversation is on high, so that is the one
     // marked, not the model's declared default.
     const high = Array.from(group?.querySelectorAll("button") ?? []).find(
-      (b) => b.textContent === "high",
+      (b) => b.textContent === "高",
     );
     expect(high?.getAttribute("aria-pressed")).toBe("true");
 
     await act(async () => {
       (Array.from(group?.querySelectorAll("button") ?? []).find(
-        (b) => b.textContent === "low",
+        (b) => b.textContent === "低",
       ) as HTMLButtonElement).click();
     });
     await settle();
@@ -224,7 +224,7 @@ describe("ModelSheet", () => {
 
     const auto = Array.from(
       container.querySelectorAll('[aria-label="思考强度"] button'),
-    ).find((b) => b.textContent === "auto");
+    ).find((b) => b.textContent === "自动");
     expect(auto?.getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -255,7 +255,7 @@ describe("ModelSheet", () => {
 
     await act(async () => {
       (Array.from(container.querySelectorAll('[aria-label="思考强度"] button')).find(
-        (b) => b.textContent === "low",
+        (b) => b.textContent === "低",
       ) as HTMLButtonElement).click();
     });
     await settle();

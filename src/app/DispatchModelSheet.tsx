@@ -69,6 +69,9 @@ export function DispatchModelSheet({
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
+                <span className="model-mark" aria-hidden="true">
+                  {option.ref === model ? "✓" : ""}
+                </span>
               </button>
             ))}
           </div>

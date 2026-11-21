@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useBackCloser } from "../app/backStack";
 import { Segmented } from "../app/Segmented";
-import { currentModel, effortChoices, loadModels, modelShortName, switchEffort, switchModel } from "../net/models";
+import { currentModel, effortChoices, effortDisplayName, loadModels, modelShortName, switchEffort, switchModel } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
 import { loadStatus } from "../net/status";
 
@@ -61,7 +61,9 @@ function price(option: ModelOption): string {
 function facts(option: ModelOption): string {
   const parts = [price(option)];
   if (option.vision) parts.push("看图");
-  if (option.efforts && option.efforts.length > 0) parts.push(`思考 ${option.efforts.join("/")}`);
+  if (option.efforts && option.efforts.length > 0) {
+    parts.push(`思考 ${option.efforts.map(effortDisplayName).join("/")}`);
+  }
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -160,13 +162,13 @@ export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange
               value={choices.includes(effort) ? effort : "auto"}
               options={choices.map((choice) => ({
                 value: choice,
-                label: busy === `effort:${choice}` ? "…" : choice,
+                label: busy === `effort:${choice}` ? "…" : effortDisplayName(choice),
                 disabled: busy !== "",
               }))}
               onChange={(next) => void pickEffort(next)}
             />
             <p className="meta sheet-note">
-              只影响下一个回合；auto 让模型自己决定。
+              只影响下一个回合；「自动」让模型自己决定。
             </p>
           </>
         ) : null}
