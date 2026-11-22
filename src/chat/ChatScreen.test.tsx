@@ -1877,6 +1877,49 @@ describe("ChatScreen composer", () => {
     expect(container.textContent).toContain("图片太大");
   });
 
+  it("keeps a staged attachment when the person types a message", async () => {
+    // The chip is carried by the send, not spelled into the draft, so editing
+    // the draft must not be mistaken for deleting the reference.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/rt/r1/attachments")) {
+          return Promise.resolve(
+            json({
+              path: ".reasonix/attachments/photo.png",
+              ref: "@.reasonix/attachments/photo.png",
+              image: true,
+            }),
+          );
+        }
+        return Promise.resolve(json([]));
+      }),
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:photo");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+
+    render(snapshot());
+    await flush();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      value: [new File(["image"], "photo.png", { type: "image/png" })],
+      configurable: true,
+    });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+    await flush();
+    expect(container.querySelectorAll(".attachment")).toHaveLength(1);
+
+    typeDraft("看看这张");
+    typeDraft("看看这张图");
+
+    expect(container.querySelectorAll(".attachment")).toHaveLength(1);
+    expect(container.querySelector(".attachment")?.textContent).toContain("photo.png");
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
   it("appends a second pick instead of replacing the first", async () => {
     let call = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
