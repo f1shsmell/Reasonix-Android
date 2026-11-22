@@ -10,6 +10,19 @@ describe("fold preference", () => {
     expect(loadFoldMode()).toBe("standard");
   });
 
+  it("a ?fold= override pins the mode in a dev build", () => {
+    window.history.replaceState(null, "", "/?fold=compact");
+    expect(loadFoldMode()).toBe("compact");
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("an unknown ?fold= value falls back to the stored choice", () => {
+    localStorage.setItem(KEY, "full");
+    window.history.replaceState(null, "", "/?fold=nope");
+    expect(loadFoldMode()).toBe("full");
+    window.history.replaceState(null, "", "/");
+  });
+
   it("remembers each of the three modes", () => {
     for (const { value } of FOLD_CHOICES) {
       saveFoldMode(value);

@@ -2322,7 +2322,11 @@ describe("ChatScreen activity", () => {
     expect(container.querySelector(".activity-row")).toBeNull();
     const thought = container.querySelector<HTMLButtonElement>(".thought-row");
     expect(thought?.textContent).toContain("思考中");
-    expect(container.querySelector(".thought-body")).toBeNull();
+    // 不点开就是流式展示: the thought itself rides the closed strip, tail
+    // following the stream; opening swaps it for the bounded window.
+    const preview = container.querySelector(".thought-body.live");
+    expect(preview?.textContent).toContain("先看目录");
+    expect(preview?.getAttribute("aria-hidden")).toBe("true");
 
     render(
       snapshot({

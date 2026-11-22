@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * A turn's thinking as one folded line and, on tap, a bounded scrollable
- * window instead of the whole wall. Studio keeps a live thought to a six-line
- * tail window and a settled one behind a details fold; the phone gives both
- * the same height budget and lets the finger scroll it, following the tail
- * while the thought streams unless the reader scrolled away.
+ * window instead of the whole wall. While the thought still streams, the
+ * closed strip is not just a label: the text itself is shown live in a
+ * bounded tail that follows the stream, so the fold answers "thinking is
+ * process, not a secret" without opening anything. Studio keeps a live
+ * thought to a six-line tail window and a settled one behind a details fold;
+ * the phone gives both the same height budget and lets the finger scroll it,
+ * following the tail while the thought streams unless the reader scrolled
+ * away.
  */
 export function ThoughtStrip({
   text,
@@ -23,7 +27,10 @@ export function ThoughtStrip({
 
   useEffect(() => {
     const el = body.current;
-    if (!open || !running || !follow.current || el === null) return;
+    if (el === null || !running) return;
+    // A closed strip is a live preview, so it always rides the tail; an open
+    // window follows too, unless the reader scrolled away from the end.
+    if (open && !follow.current) return;
     el.scrollTop = el.scrollHeight;
   }, [text, open, running]);
 
@@ -61,6 +68,13 @@ export function ThoughtStrip({
         >
           {text}
           {running ? <span className="thought-caret" aria-hidden="true" /> : null}
+        </div>
+      ) : running ? (
+        // Not opened is the streaming display: the thought itself, tail first,
+        // decorative because the row above is the control that opens it all.
+        <div className="thought-body live" ref={body} aria-hidden="true">
+          {text}
+          <span className="thought-caret" aria-hidden="true" />
         </div>
       ) : null}
     </div>
