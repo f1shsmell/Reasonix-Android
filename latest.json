@@ -1,11 +1,11 @@
 {
-  "tag": "v0.7.1",
-  "version": "0.7.1",
-  "versionCode": 30,
-  "apk": "reasonix-for-android-0.7.1.apk",
-  "notes": "# 0.7.1\n\n这一版修掉 0.7.0 带进来的两个毛病：扫码一点就退回设置页，以及选好图片后一打字图片就没了。都是 0.7.0 的回归，0.6.0 没有。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 修复\n\n- **扫码不再闪退**：0.7.0 换了构建链后，打包时误删了扫码解码所需的一部分 MLKit 类，扫描器一打开就在第一帧解码时报错并自行关闭。现在重新保留这些类，扫码恢复正常。（关联 #203）\n- **打字不再清掉已选的图片**：选好图片或附件后，只要输入框内容一变，图片就会被当成「引用已被删除」而移除。现在输入文字不会再影响已选的图片和附件，只有点 × 或发送才会清掉。（关联 #203）\n\n## 升级须知\n\n- 只修 bug，没有接口或数据格式变化；从 0.7.0 覆盖安装即可，无需重新配对。",
+  "tag": "v0.7.2",
+  "version": "0.7.2",
+  "versionCode": 31,
+  "apk": "reasonix-for-android-0.7.2.apk",
+  "notes": "# 0.7.2\n\n这一版把扫码真正修好了。0.7.1 只修好了一半：扫描器不再闪退，但第一帧解码仍然失败，报「There was an error scanning the barcode with ML Kit」。0.7.2 补上了其余被误删的 ML Kit 类。\n\n> 可以直接在「设置 → 偏好 → 关于」检查并安装这一版，配对信息、连接记录和本地设置都会保留。\n\n## 修复\n\n- **扫码解码恢复正常**：0.7.1 漏保留了一部分扫码初始化要用到的 ML Kit 类（`BarcodeScanning`、`InputImage` 等），扫描器能打开、但每帧解码都报错。现在这些类连同它们依赖的实现一起保留，扫码可以正常识别二维码。（关联 #205）\n- 上一版的两个修复不变：扫码不再一点就退回设置页；输入框打字不会再清掉已选的图片。（关联 #203）\n\n## 升级须知\n\n- 只修 bug，没有接口或数据格式变化；从 0.7.0 / 0.7.1 覆盖安装即可，无需重新配对。",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.7.1/reasonix-for-android-0.7.1.apk",
-    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.7.1/reasonix-for-android-0.7.1.apk"
+    "https://gh-proxy.com/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.7.2/reasonix-for-android-0.7.2.apk",
+    "https://ghfast.top/https://github.com/f1shsmell/Reasonix-Android/releases/download/v0.7.2/reasonix-for-android-0.7.2.apk"
   ]
 }
