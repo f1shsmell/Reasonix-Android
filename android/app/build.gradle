@@ -110,6 +110,51 @@ tasks.configureEach { task ->
     }
 }
 
+// The scanner resolves MLKit's classes by reflection, so R8 cannot see the
+// callers and will drop them as unreachable — which only shows up as a crash
+// on a phone. AGP 9.4.1 did exactly that in 0.7.0: the first analysed frame
+// threw and the plugin reported "There was an error scanning the barcode with
+// ML Kit". The keep rules in proguard-rules.pro cover the packages; this task
+// reads R8's own report and refuses a build that removed one of them anyway,
+// so the CI release build catches a shrinker change the same day.
+tasks.register("verifyBarcodeKept") {
+    // R8 writes the removal report next to the release variant; this check runs
+    // after it and reads that report rather than the dex.
+    def usageFile = layout.buildDirectory.file("outputs/mapping/release/usage.txt")
+    doLast {
+        if (!usageFile.get().asFile.exists()) {
+            throw new GradleException("No R8 report at ${usageFile.get().asFile}; " +
+                    "run the release build before this check.")
+        }
+        def required = [
+                "com.google.mlkit.vision.barcode.BarcodeScanning",
+                "com.google.mlkit.vision.barcode.BarcodeScannerOptions\$Builder",
+                "com.google.mlkit.vision.common.InputImage",
+                "com.google.mlkit.vision.common.internal.ImageUtils",
+                "com.google.mlkit.vision.common.internal.MobileVisionBase",
+                "com.google.mlkit.vision.barcode.bundled.internal.ThickBarcodeScannerCreator",
+        ]
+        def removed = usageFile.get().asFile.readLines()
+        def gone = required.findAll { name ->
+            // usage.txt lists a removed class as "name:" on its own line.
+            removed.any { it.trim() == "${name}:" }
+        }
+        if (!gone.isEmpty()) {
+            throw new GradleException(
+                    "R8 removed MLKit classes the barcode scanner needs, which makes " +
+                    "scanning fail with 'There was an error scanning the barcode with ML Kit':\n  " +
+                    gone.join("\n  ") +
+                    "\nKeep them in android/app/proguard-rules.pro.")
+        }
+        logger.lifecycle("Barcode shrinker check: every required MLKit class survived R8.")
+    }
+}
+tasks.configureEach { task ->
+    if (task.name == "assembleRelease" || task.name == "bundleRelease") {
+        task.finalizedBy("verifyBarcodeKept")
+    }
+}
+
 try {
     def servicesJSON = file('google-services.json')
     if (servicesJSON.text) {
