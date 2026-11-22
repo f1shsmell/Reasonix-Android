@@ -30,3 +30,18 @@
 # and then the first analysed frame throws and OSBARCScannerActivity finishes
 # at once, which reads as "scan closes immediately". Keep the whole package.
 -keep class com.google.android.gms.internal.mlkit_vision_barcode_bundled.** { *; }
+
+# The same R8 also removed the public entry points the scanner calls:
+# BarcodeScanning.getClient(), BarcodeScannerOptions$Builder, and
+# InputImage/ImageUtils behind them. They are reached through MLKit's own
+# registry indirection, so R8's reachability walk misses them; without them the
+# scanner throws NoClassDefFoundError on its first frame, which the plugin
+# reports as "There was an error scanning the barcode with ML Kit".
+-keep class com.google.mlkit.** { *; }
+
+# MLKit's implementation classes live under gms.internal and are looked up by
+# the registrars above rather than called from visible code. R8 removes them
+# for the same reason; keep the packages the barcode stack actually uses.
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+-keep class com.google.android.gms.internal.mlkit_common.** { *; }
