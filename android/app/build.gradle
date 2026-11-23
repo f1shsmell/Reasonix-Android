@@ -79,7 +79,7 @@ dependencies {
     testImplementation "junit:junit:$junitVersion"
     // Notification behavior needs Android's NotificationManager; Robolectric
     // keeps it on the JVM so the build does not need an emulator.
-    testImplementation "org.robolectric:robolectric:4.18"
+    testImplementation "org.robolectric:robolectric:4.18.1"
     // Android's org.json is a stub in local unit tests; this gives AskStatus
     // the real parser without an instrumented run.
     testImplementation "org.json:json:20260814"
