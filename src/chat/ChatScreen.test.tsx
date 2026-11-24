@@ -984,7 +984,7 @@ describe("ChatScreen cache reading", () => {
     act(() => (container.querySelector('button[aria-label="更多"]') as HTMLButtonElement).click());
   }
 
-  it("states the session's cache hit rate in the head menu", async () => {
+  it("states the session's cache hit rate in the context sheet", async () => {
     stubKernel({
       history: [{ role: "user", content: "你好", msgIndex: 1 }],
       status: {
@@ -999,8 +999,16 @@ describe("ChatScreen cache reading", () => {
     await flush();
     openMenu();
 
-    const note = container.querySelector(".head-menu-note");
-    expect(note?.textContent).toContain("缓存命中率");
+    // A reading is not an action: it sits with the context numbers, not in a
+    // list of taps.
+    expect(container.querySelector(".head-menu-note")).toBeNull();
+    const contextRow = Array.from(container.querySelectorAll(".head-menu button")).find((node) =>
+      node.textContent?.includes("上下文"),
+    ) as HTMLButtonElement | undefined;
+    act(() => contextRow?.click());
+    await flush();
+
+    const note = container.querySelector('[data-testid="cache-note"]');
     expect(note?.textContent).toContain("75%");
     expect(note?.textContent).toContain("命中 750");
     expect(note?.textContent).toContain("未命中 250");
@@ -1018,7 +1026,15 @@ describe("ChatScreen cache reading", () => {
     await flush();
     openMenu();
 
-    expect(container.querySelector(".head-menu-note")?.textContent).toContain("还没有可统计的请求");
+    const contextRow = Array.from(container.querySelectorAll(".head-menu button")).find((node) =>
+      node.textContent?.includes("上下文"),
+    ) as HTMLButtonElement | undefined;
+    act(() => contextRow?.click());
+    await flush();
+
+    expect(container.querySelector('[data-testid="cache-note"]')?.textContent).toContain(
+      "还没有可统计的请求",
+    );
   });
 });
 

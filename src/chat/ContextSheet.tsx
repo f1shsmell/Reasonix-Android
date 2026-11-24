@@ -12,9 +12,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 import { compactContext, loadContext } from "../net/context";
 import type { ContextSnapshot } from "../net/context";
 import { compactCount } from "../app/format";
+import { cacheNote } from "./cacheRate";
 
 export interface ContextSheetProps {
   /** The runtime's request prefix, e.g. `/rt/r1`. */
@@ -22,6 +24,8 @@ export interface ContextSheetProps {
   /** The caller re-reads history once a fold lands; it rewrites the transcript. */
   onCompacted: () => void;
   onClose: () => void;
+  /** The session's cache split, as `/status` last reported it. */
+  cache?: { hit: number; miss: number; unknown: number; requests?: number } | null;
 }
 
 function percent(used: number, window: number): number {
@@ -88,13 +92,14 @@ const CLASSES: ReadonlyArray<{ key: CountedClass; label: string }> = [
   { key: "reply", label: "回答" },
 ];
 
-export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) {
+export function ContextSheet({ base, onCompacted, onClose, cache }: ContextSheetProps) {
   const [context, setContext] = useState<ContextSnapshot | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   /** What a fold did, when it did not simply succeed. */
   const [note, setNote] = useState("");
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
 
   const reload = useCallback(() => {
     setError("");
@@ -141,7 +146,11 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
     : [];
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet"
         role="dialog"
@@ -151,7 +160,7 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
       >
         <div className="sheet-head">
           <h2>上下文</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -159,7 +168,7 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
         {error ? <div className="notice error">{error}</div> : null}
         {note ? <div className="notice">{note}</div> : null}
 
-        {context === null && !error ? <div className="meta">正在读取上下文用量…</div> : null}
+        {context === null && !error ? <div className="meta"><span className="rx-spinner" aria-hidden="true" />正在读取上下文用量…</div> : null}
 
         {context !== null ? (
           <>
@@ -195,6 +204,13 @@ export function ContextSheet({ base, onCompacted, onClose }: ContextSheetProps) 
                 </ul>
               </>
             ) : null}
+
+            {/* The cache split is a reading about the same window, so it sits
+                with the numbers instead of among the menu's taps. */}
+            <p className="sheet-label">缓存命中率</p>
+            <p className="meta sheet-note" data-testid="cache-note">
+              {cacheNote(cache ?? null)}
+            </p>
 
             <button
               type="button"

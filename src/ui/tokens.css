@@ -26,7 +26,6 @@
   --accent-soft: rgba(123, 147, 255, 0.14);
   /* White on the user bubble clears AA. */
   --bubble-user: #4a6be0;
-  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #283043;
   /* Text on any filled accent button; --accent-fill is tuned for 5.1:1
      against it, so the five filled buttons cannot drift apart. */
@@ -52,11 +51,22 @@
   --radius: 14px;  --radius-lg: 22px;
   --tap: 44px;
   --pad: 16px;
+  /* One rhythm for every state change. `--dur-1` answers a press, `--dur-2`
+     carries a small surface in or out, `--dur-3` moves a whole view. Anything
+     slower than these is felt as waiting, not as polish. */
   --dur-1: 120ms;
   --dur-2: 200ms;
   --dur-3: 320ms;
+  /* Repeating work — a breathing dot, a streaming caret — runs on one slow
+     cycle. Two different tempos on one screen read as two different states. */
+  --dur-pulse: 1.2s;
+  /* The standard curve decelerates hard at the end: content arrives and
+     settles, it does not coast past its target. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
+  /* Leaving is the inverse: it starts moving at once and is gone. */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* A small overshoot, never a bounce: the thumb of a switch, a new badge. */
+  --ease-spring: cubic-bezier(0.34, 1.28, 0.5, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", system-ui, sans-serif;
@@ -88,7 +98,6 @@
     --accent-press: #3b55c9;
     --accent-soft: rgba(74, 107, 224, 0.1);
     --bubble-user: #4a6be0;
-    --bubble-user-rgb: 74, 107, 224;
     --seg-thumb: #e4e9f3;
     --on-fill: #ffffff;
     --scrim: rgba(6, 9, 15, 0.48);
@@ -130,7 +139,6 @@
   --accent-press: #3b55c9;
   --accent-soft: rgba(74, 107, 224, 0.1);
   --bubble-user: #4a6be0;
-  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #e4e9f3;
   --on-fill: #ffffff;
   --scrim: rgba(6, 9, 15, 0.48);
@@ -170,7 +178,6 @@
   --accent-press: #3b55c9;
   --accent-soft: rgba(var(--accent-rgb), 0.14);
   --bubble-user: #4a6be0;
-  --bubble-user-rgb: 74, 107, 224;
   --seg-thumb: #283043;
   --on-fill: #ffffff;
   --scrim: rgba(6, 9, 15, 0.48);
@@ -205,7 +212,7 @@
     --accent-fill: #7f5e26; --accent-fill-rgb: 127, 94, 38;
     --accent-press: #6a4d1c;
     --accent-soft: rgba(127, 94, 38, 0.12);
-    --bubble-user: #1e1b15; --bubble-user-rgb: 30, 27, 21;
+    --bubble-user: #1e1b15;
     --seg-thumb: #efe4cf;
     --on-fill: #fffaf0;
     --scrim: rgba(30, 25, 15, 0.42);
@@ -231,7 +238,7 @@
     --accent-fill: #d8b05e; --accent-fill-rgb: 216, 176, 94;
     --accent-press: #b8934a;
     --accent-soft: rgba(216, 176, 94, 0.15);
-    --bubble-user: #e9dfca; --bubble-user-rgb: 233, 223, 202;
+    --bubble-user: #e9dfca;
     --seg-thumb: #382d1c;
     --on-fill: #1b1710;
     --scrim: rgba(10, 8, 5, 0.58);
@@ -256,7 +263,7 @@
   --accent-fill: #7f5e26; --accent-fill-rgb: 127, 94, 38;
   --accent-press: #6a4d1c;
   --accent-soft: rgba(127, 94, 38, 0.12);
-  --bubble-user: #1e1b15; --bubble-user-rgb: 30, 27, 21;
+  --bubble-user: #1e1b15;
   --seg-thumb: #efe4cf;
   --on-fill: #fffaf0;
   --scrim: rgba(30, 25, 15, 0.42);
@@ -280,7 +287,7 @@
   --accent-fill: #d8b05e; --accent-fill-rgb: 216, 176, 94;
   --accent-press: #b8934a;
   --accent-soft: rgba(216, 176, 94, 0.15);
-  --bubble-user: #e9dfca; --bubble-user-rgb: 233, 223, 202;
+  --bubble-user: #e9dfca;
   --seg-thumb: #382d1c;
   --on-fill: #1b1710;
   --scrim: rgba(10, 8, 5, 0.58);
@@ -316,6 +323,11 @@ body {
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Switching appearance is one change of palette, not a flash: the page
+     crosses over instead of cutting. */
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    color var(--dur-3) var(--ease-out);
 }
 
 /* Literal colours, not custom properties: older Android WebViews ignore
@@ -349,7 +361,7 @@ button {
     background-color var(--dur-2) var(--ease-out),
     border-color var(--dur-2) var(--ease-out),
     color var(--dur-2) var(--ease-out),
-    opacity var(--dur-1) linear;
+    opacity var(--dur-2) var(--ease-out);
 }
 
 button:active {
@@ -407,6 +419,23 @@ summary:focus-visible {
   from { opacity: 0; }
 }
 
+/* A screen arriving. Opacity only: a transform here would become the
+   containing block for the fixed sheets a screen opens, and the sheet would
+   be positioned against the screen instead of the window. */
+@keyframes rx-page {
+  from { opacity: 0; }
+}
+
+/* A message the person just sent: it grows into place from the composer's
+   edge rather than sliding in from nowhere. Short, because it is a response
+   to their own tap and must feel immediate. */
+@keyframes rx-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
 @keyframes rx-rise {
   from {
     opacity: 0;
@@ -443,8 +472,57 @@ summary:focus-visible {
   }
 }
 
+/* Leaving is faster than arriving and does not settle: the surface is on its
+   way out, so it travels the last part of the distance and is gone. */
+@keyframes rx-sheet-out {
+  to {
+    opacity: 0;
+    transform: translateY(24px) scale(0.995);
+  }
+}
+
+@keyframes rx-fade-out {
+  to { opacity: 0; }
+}
+
 @keyframes rx-pulse {
   50% { opacity: 0.4; }
+}
+
+/**
+ * A spinner for a wait that has no number to show.
+ *
+ * A bare "正在读取…" line leaves the screen looking stuck; this is the one
+ * moving thing that says the wait is real and still running. Sized in em so it
+ * follows the text it sits beside.
+ */
+.rx-spinner {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border: 2px solid rgba(var(--fg-dim-rgb), 0.3);
+  border-top-color: var(--fg-dim);
+  border-radius: 50%;
+  animation: rx-spin 720ms linear infinite;
+}
+
+.rx-spinner.accent {
+  border-color: rgba(var(--accent-rgb), 0.24);
+  border-top-color: var(--accent);
+}
+
+@keyframes rx-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* A row of loading text: the spinner and the sentence share one line. */
+.rx-loading {
+  display: flex;
+  align-items: center;
+  color: var(--fg-dim);
 }
 
 /**

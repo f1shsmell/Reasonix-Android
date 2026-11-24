@@ -29,7 +29,7 @@ export interface NotificationPrefs {
 export const SETTINGS_DEFAULTS = {
   theme: "auto",
   uiStyle: "paper",
-  dispatchAfter: "recent",
+  dispatchAfter: "stay",
   enter: "newline",
   netPolicy: "auto",
   chatFont: "standard",

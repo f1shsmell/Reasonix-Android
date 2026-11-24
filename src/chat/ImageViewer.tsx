@@ -8,6 +8,7 @@
 import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 
 const MAX_SCALE = 4;
 const DOUBLE_TAP_SCALE = 2.5;
@@ -39,7 +40,8 @@ export function ImageViewer({
   /** The close button, a tap on the empty stage, and Android's back. */
   onClose: () => void;
 }) {
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState<Spot>({ x: 0, y: 0 });
   const stage = useRef<HTMLDivElement | null>(null);
@@ -141,11 +143,16 @@ export function ImageViewer({
       return;
     }
     lastTap.current = { at: now, x: tapped.x, y: tapped.y };
-    if (event.target === event.currentTarget) onClose();
+    if (event.target === event.currentTarget) exit.close();
   }
 
   return (
-    <div className="image-viewer" role="dialog" aria-modal="true" aria-label="图片预览">
+    <div
+      className={`image-viewer${exit.closing ? " closing" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+    >
       <div
         ref={stage}
         className="image-viewer-stage"
@@ -162,7 +169,12 @@ export function ImageViewer({
           style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
         />
       </div>
-      <button type="button" className="image-viewer-close" aria-label="关闭预览" onClick={onClose}>
+      <button
+        type="button"
+        className="image-viewer-close"
+        aria-label="关闭预览"
+        onClick={exit.close}
+      >
         ×
       </button>
     </div>

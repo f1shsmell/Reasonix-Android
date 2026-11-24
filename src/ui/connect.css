@@ -23,6 +23,9 @@
   padding: var(--rx-inset-top, env(safe-area-inset-top, 0px)) var(--pad)
     calc(24px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   background: transparent;
+  /* Settings arrive like every other screen. Opacity only, for the same
+     reason as the shell: a transform would re-anchor its fixed sheets. */
+  animation: rx-page var(--dur-2) var(--ease-out) both;
   /* A vertical scroll keeps the page, a horizontal drag is the pane switch. */
   touch-action: pan-y pinch-zoom;
 }
@@ -220,7 +223,7 @@
     transparent 68%
   );
   opacity: 0.4;
-  transition: opacity 0.35s ease;
+  transition: opacity var(--dur-3) var(--ease-out);
 }
 
 .link-hero[data-live] .link-hero-mark::before {
@@ -372,7 +375,7 @@
   color: var(--fg-dim);
   font-size: 16px;
   line-height: 1;
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 details[open] > .group-note summary::after,
@@ -490,6 +493,18 @@ button.setting:disabled {
 
 .setting.action.danger {
   color: var(--bad);
+}
+
+/* The sign-in button is the one real action on the account pane, so it is
+   drawn as one: full width under its group, not a centred line of text that
+   reads as a link. */
+.account-signin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
 }
 
 /* A remembered computer: the row switches to it, the × forgets it. The row is
@@ -661,6 +676,41 @@ label.setting .setting-title {
   white-space: nowrap;
 }
 
+/* An address is read and edited whole, so the row stacks instead of putting a
+   long URL in a column a few characters wide and cutting it with an ellipsis.
+   The value sits under its label, where the full string can be seen. */
+label.setting.setting-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+label.setting.setting-stacked .setting-title {
+  width: auto;
+  min-width: 0;
+}
+
+label.setting.setting-stacked .setting-sub {
+  order: 3;
+}
+
+label.setting.setting-stacked input {
+  flex: none;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 16px;
+  text-align: left;
+}
+
+label.setting.setting-stacked input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 /* ---- device code ---- */
 
 .grant {
@@ -709,7 +759,7 @@ label.setting .setting-title {
 }
 
 .manual-summary .chev {
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .manual-group[open] .manual-summary .chev {
@@ -767,7 +817,7 @@ label.setting .setting-title {
   display: block;
   height: 100%;
   background: var(--accent);
-  transition: width 0.2s linear;
+  transition: width var(--dur-2) var(--ease-out);
 }
 
 /* ---- switch ---- */
@@ -806,7 +856,9 @@ label.setting .setting-title {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  transition: transform var(--dur-2) var(--ease-out);
+  /* A switch is a small, deliberate move: a touch of overshoot says the
+     thumb landed, where a linear slide would read as a redraw. */
+  transition: transform var(--dur-2) var(--ease-spring);
 }
 
 .toggle[aria-checked="true"] .toggle-track {

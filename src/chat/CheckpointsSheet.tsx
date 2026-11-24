@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { commitRewind, loadCheckpoints, prepareRewind, rewindMessage } from "../net/rewind";
 import type { Checkpoint, RewindPlan } from "../net/rewind";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 
 function coverage(plan: RewindPlan): string {
   if (!plan.canFiles && !plan.canConversation) return plan.disabledReason ?? "这个检查点无法恢复";
@@ -35,7 +36,8 @@ export function CheckpointsSheet({
   const [plan, setPlan] = useState<RewindPlan | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
 
   const choose = useCallback(
     async (checkpoint: Checkpoint) => {
@@ -82,11 +84,15 @@ export function CheckpointsSheet({
       return;
     }
     onRewound();
-    onClose();
-  }, [base, busy, onClose, onRewound, plan]);
+    exit.close();
+  }, [base, busy, exit, onRewound, plan]);
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet checkpoints-sheet"
         role="dialog"
@@ -96,7 +102,7 @@ export function CheckpointsSheet({
       >
         <div className="sheet-head">
           <h2>检查点</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -104,7 +110,7 @@ export function CheckpointsSheet({
           内核在每一轮第一次写入前拍下快照。只能恢复编辑工具改过的文件；命令行的副作用不在其中。
         </p>
 
-        {list === null ? <p className="sheet-note loading">正在读取检查点…</p> : null}
+        {list === null ? <p className="sheet-note loading"><span className="rx-spinner" aria-hidden="true" />正在读取检查点…</p> : null}
         {list !== null && list.length === 0 ? (
           <p className="sheet-note">还没有可以回去的检查点。</p>
         ) : null}

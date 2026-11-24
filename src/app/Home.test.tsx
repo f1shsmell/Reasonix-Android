@@ -422,7 +422,10 @@ describe("Home", () => {
       await settle();
 
       expect(onDispatch).toHaveBeenCalledWith("/work/app", "修复登录白屏");
-      expect(container.querySelector(".dispatch-page")).toBeNull();
+      // The default is the form: the receipt is the answer, and the next task
+      // can be typed without navigating back here.
+      expect(container.querySelector(".dispatch-page")).toBeTruthy();
+      expect(container.textContent).toContain("已派发");
     });
 
     it("sends the chosen model and reasoning level with the task", async () => {
@@ -497,8 +500,8 @@ describe("Home", () => {
       expect(container.querySelector(".dispatch-page")).toBeNull();
     });
 
-    it("stays on the form when the destination is 不跳转", async () => {
-      localStorage.setItem("reasonix.dispatch-after", "stay");
+    it("stays on the form by default, so a second task costs one sentence", async () => {
+      // No stored choice: the default is the form, not a jump.
       const onDispatch = vi.fn(async () => ({ ok: true as const, runtimeId: "r9" }));
       const onOpenRuntime = vi.fn();
       render({ onDispatch, onOpenRuntime });

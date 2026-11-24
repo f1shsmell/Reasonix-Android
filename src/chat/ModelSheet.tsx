@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 import { Segmented } from "../app/Segmented";
 import { currentModel, effortChoices, effortDisplayName, loadModels, modelShortName, switchEffort, switchModel } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
@@ -73,7 +74,8 @@ export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange
   const [effort, setEffort] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +136,11 @@ export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange
   );
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet"
         role="dialog"
@@ -144,7 +150,7 @@ export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange
       >
         <div className="sheet-head">
           <h2>模型</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -173,7 +179,7 @@ export function ModelSheet({ base, fallback, onClose, onSwitched, onEffortChange
           </>
         ) : null}
 
-        {catalog === null && !error ? <div className="meta">正在读取可选模型…</div> : null}
+        {catalog === null && !error ? <div className="meta"><span className="rx-spinner" aria-hidden="true" />正在读取可选模型…</div> : null}
 
         {catalog !== null && catalog.models.length === 0 ? (
           <div className="meta">这台电脑没有可切换的模型。</div>

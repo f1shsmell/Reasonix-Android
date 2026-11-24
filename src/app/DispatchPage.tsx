@@ -5,6 +5,7 @@ import type { ModelCatalog, ModelOption } from "../net/models";
 import { speechSupported } from "../native/speech";
 import { useDictation } from "../chat/dictation";
 import { MicButton, VoiceLive } from "../chat/MicButton";
+import { StudioIcon } from "./StudioIcon";
 import { DispatchModelSheet } from "./DispatchModelSheet";
 
 export interface DispatchOptions {
@@ -24,19 +25,25 @@ export function DispatchPage({
   projects,
   computerName,
   notify,
+  online = true,
   onDispatch,
   onSent,
+  onOpenSent,
 }: {
   projects: TreeProject[];
   computerName?: string | undefined;
   /** The native watcher only reaches a LAN proxy; cloud has no background read. */
   notify: boolean;
+  /** Whether the computer is reachable right now; the hint dot reports it. */
+  online?: boolean;
   onDispatch: (
     root: string,
     prompt: string,
     options?: DispatchOptions,
   ) => Promise<DispatchResult>;
   onSent: (result: DispatchResult) => void;
+  /** Open the task that was just dispatched, when the caller kept it open. */
+  onOpenSent?: (result: DispatchResult) => void;
 }) {
   // Memoized, not computed bare: a fresh array every render would drag the
   // root-adoption effect below along on every keystroke and focus change.
@@ -57,6 +64,8 @@ export function DispatchPage({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  /** The task just sent, so its receipt can open it without a trip to the list. */
+  const [lastSent, setLastSent] = useState<DispatchResult | null>(null);
 
   // The tree can arrive after the tab opens. Adopt the first usable project
   // then, and fall back if the chosen one disappears.
@@ -96,7 +105,7 @@ export function DispatchPage({
     void loadGlobalModels().then((result) => {
       setModelsLoading(false);
       if (!result.ok) {
-        setModelsError(`读不到模型列表（${result.code}）。`);
+        setModelsError("读不到模型列表，稍后再试。");
         return;
       }
       setCatalog(result.catalog);
@@ -137,11 +146,16 @@ export function DispatchPage({
         const title = result.title ?? (prompt.split("\n", 1)[0] ?? "").trim();
         setText("");
         setSent(title ? `已派发：${title}` : "已派发，任务在后台运行。");
-        onSent({
+        const receipt = {
           ...result,
           root: result.root ?? root,
           title,
-        });
+        };
+        setLastSent(receipt);
+        onSent(receipt);
+        // The form is ready for the next task: the keyboard stays down and the
+        // project keeps its place, so a second dispatch costs one sentence.
+        inputRef.current?.blur();
         return;
       }
       setError(result.message ?? "没派出去，稍后再试。");
@@ -157,27 +171,47 @@ export function DispatchPage({
       <div className="dispatch-scroll">
         <header className="dispatch-head">
           <h1>派发任务</h1>
-          <p>选一个项目，描述要它做的事；派发后在电脑后台运行。</p>
+          <p>
+            {usable.length > 1
+              ? "选一个项目，描述要它做的事；派发后在电脑后台运行。"
+              : "描述要它做的事；派发后在电脑后台运行。"}
+          </p>
         </header>
 
-        <p className="field-label">项目</p>
-        <div className="dispatch-projects" role="listbox" aria-label="项目">
-          {usable.map((project) => (
-            <button
-              key={project.root}
-              type="button"
-              role="option"
-              aria-selected={project.root === root}
-              className={`dispatch-project${project.root === root ? " on" : ""}`}
-              onClick={() => {
-                setRoot(project.root);
-                setSent("");
-              }}
-            >
-              {project.name}
-            </button>
-          ))}
-        </div>
+        {/* With one project there is nothing to choose: naming it once is
+            enough, and a one-item picker asks for a decision that has already
+            been made. The chip stays for the multi-project case. */}
+        {usable.length > 1 ? (
+          <>
+            <p className="field-label">项目</p>
+            <div className="dispatch-projects" role="listbox" aria-label="项目">
+              {usable.map((project) => (
+                <button
+                  key={project.root}
+                  type="button"
+                  role="option"
+                  aria-selected={project.root === root}
+                  className={`dispatch-project${project.root === root ? " on" : ""}`}
+                  onClick={() => {
+                    setRoot(project.root);
+                    setSent("");
+                    setLastSent(null);
+                  }}
+                >
+                  {project.name}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : usable.length === 1 ? (
+          <>
+            <p className="field-label">项目</p>
+            <p className="dispatch-target" aria-label={`项目：${usable[0]?.name ?? ""}`}>
+              <StudioIcon name="folder" />
+              {usable[0]?.name}
+            </p>
+          </>
+        ) : null}
 
         {usable.length === 0 ? (
           <div className="notice">
@@ -187,16 +221,35 @@ export function DispatchPage({
         ) : null}
 
         {error ? <div className="notice error">{error}</div> : null}
-        {sent ? <div className="dispatch-sent" role="status">{sent}</div> : null}
+        {sent ? (
+          <div className="dispatch-sent" role="status">
+            {sent}
+            {lastSent?.runtimeId ? (
+              <button
+                type="button"
+                className="linkbtn"
+                onClick={() => {
+                  const result = lastSent;
+                  if (!result.runtimeId) return;
+                  onOpenSent?.(result);
+                }}
+              >
+                查看
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="dispatch-hint">
-          <span className="dot ok" aria-hidden="true" />
+          <span className={`dot ${online ? "ok" : "bad"}`} aria-hidden="true" />
           <div>
             <b>{computerName ?? "这台电脑"}</b>
             <br />
-            {notify
-              ? "任务在电脑后台运行；需要你处理或完成时会通知。"
-              : "云端连接暂不支持后台通知，完成后回来查看。"}
+            {!online
+              ? "现在连不上这台电脑；恢复连接后再派发。"
+              : notify
+                ? "任务在电脑后台运行；需要你处理或完成时会通知。"
+                : "云端连接暂不支持后台通知，完成后回来查看。"}
           </div>
         </div>
       </div>
@@ -240,9 +293,16 @@ export function DispatchPage({
             type="button"
             className="dispatch-send"
             onClick={() => void send()}
-            disabled={busy || !root || text.trim() === ""}
+            disabled={busy || !root || text.trim() === "" || !online}
           >
-            {busy ? "正在派发…" : "派发"}
+            {busy ? (
+              <>
+                <span className="rx-spinner" aria-hidden="true" />
+                正在派发…
+              </>
+            ) : (
+              "派发"
+            )}
           </button>
         </div>
       </div>

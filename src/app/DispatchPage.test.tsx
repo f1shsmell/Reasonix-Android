@@ -74,7 +74,7 @@ function mount(projects: TreeProject[]): void {
 }
 
 describe("DispatchPage", () => {
-  it("adopts the first project when the tree arrives after the page opened", () => {
+  it("names the only project instead of asking to pick it", () => {
     mount([]);
     expect(container.querySelectorAll('[role="option"]')).toHaveLength(0);
 
@@ -90,9 +90,9 @@ describe("DispatchPage", () => {
       );
     });
 
-    const option = container.querySelector('[role="option"]') as HTMLButtonElement;
-    expect(option.textContent).toContain("app");
-    expect(option.getAttribute("aria-selected")).toBe("true");
+    // One project is a fact: it is named, and there is nothing to tap.
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(container.querySelector(".dispatch-target")?.textContent).toContain("app");
 
     const input = container.querySelector(".dispatch-input") as HTMLTextAreaElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
@@ -101,6 +101,18 @@ describe("DispatchPage", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect((container.querySelector(".dispatch-send") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("offers a picker, and marks the chosen project, when there are several", () => {
+    mount([project, { ...project, root: "/work/other", name: "other" }]);
+
+    const options = Array.from(container.querySelectorAll('[role="option"]'));
+    expect(options.map((option) => option.textContent)).toEqual(["app", "other"]);
+    expect(options[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(options[1]?.getAttribute("aria-selected")).toBe("false");
+
+    act(() => (options[1] as HTMLButtonElement).click());
+    expect(options[1]?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("cancels dictation by tapping the live strip", async () => {

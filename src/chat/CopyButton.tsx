@@ -40,7 +40,8 @@ export function CopyButton({
     <button
       type="button"
       className={icon ? "copy icon" : "copy"}
-      aria-label={label}
+      data-state={state}
+      aria-label={state === "done" ? "已复制" : state === "failed" ? "复制失败" : label}
       title={label}
       onClick={() => {
         void write(text).then(
@@ -55,15 +56,19 @@ export function CopyButton({
         );
       }}
     >
-      {icon ? (
-        <StudioIcon name={mark} />
-      ) : state === "done" ? (
-        "已复制"
-      ) : state === "failed" ? (
-        "复制失败"
-      ) : (
-        label
-      )}
+      {/* The mark swaps on one element, so the confirmation is a change in
+          place rather than the row redrawing: the icon fades through. */}
+      <span className="copy-mark" key={state} aria-hidden="true">
+        {icon ? (
+          <StudioIcon name={mark} />
+        ) : state === "done" ? (
+          "已复制"
+        ) : state === "failed" ? (
+          "复制失败"
+        ) : (
+          label
+        )}
+      </span>
     </button>
   );
 }

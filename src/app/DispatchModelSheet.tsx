@@ -1,4 +1,5 @@
 import { useBackCloser } from "./backStack";
+import { useSheetExit } from "./presence";
 import { Segmented } from "./Segmented";
 import { effortChoices, effortDisplayName, modelShortName } from "../net/models";
 import type { ModelCatalog, ModelOption } from "../net/models";
@@ -29,11 +30,16 @@ export function DispatchModelSheet({
   onEffort: (effort: string) => void;
   onClose: () => void;
 }) {
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   const selected = catalog?.models.find((option) => option.ref === model);
   const efforts = effortChoices(selected);
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet dispatch-model-sheet"
         role="dialog"
@@ -43,13 +49,13 @@ export function DispatchModelSheet({
       >
         <div className="sheet-head">
           <h2>模型与思考</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
         <p className="group-note">只影响这次派发的任务，不改电脑上的默认模型。</p>
 
-        {loading ? <div className="centered"><div>正在读取模型…</div></div> : null}
+        {loading ? <div className="centered"><div><span className="rx-spinner" aria-hidden="true" />正在读取模型…</div></div> : null}
         {error ? <div className="notice error">{error}</div> : null}
 
         {catalog ? (
@@ -90,7 +96,7 @@ export function DispatchModelSheet({
         ) : null}
 
         <div className="sheet-foot">
-          <button type="button" className="primary" onClick={onClose}>
+          <button type="button" className="primary" onClick={exit.close}>
             完成
           </button>
         </div>

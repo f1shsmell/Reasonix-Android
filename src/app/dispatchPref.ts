@@ -9,9 +9,9 @@ import {
 export type { DispatchAfter };
 
 export const DISPATCH_AFTER_CHOICES: { value: DispatchAfter; label: string }[] = [
-  { value: "stay", label: "不跳转" },
-  { value: "recent", label: "最近" },
-  { value: "session", label: "派发的会话" },
+  { value: "stay", label: "留在表单" },
+  { value: "recent", label: "回到最近" },
+  { value: "session", label: "打开派发的会话" },
 ];
 
 export function loadDispatchAfter(): DispatchAfter {

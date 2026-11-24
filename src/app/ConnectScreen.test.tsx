@@ -254,6 +254,17 @@ function typeInto(selector: string, value: string): Promise<void> {
   });
 }
 
+/** Leave a field, which is when a value that needs no button is written. */
+function blur(selector: string): Promise<void> {
+  return act(async () => {
+    const input = container.querySelector(selector) as HTMLInputElement;
+    input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    input.dispatchEvent(new Event("blur", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 /** Drive a touch drag through the DOM, the way a finger would. */
 
 
@@ -484,19 +495,19 @@ describe("ConnectScreen", () => {
       await renderPrefs();
 
       await act(async () => {
-        button("不跳转").click();
+        button("回到最近").click();
         await Promise.resolve();
       });
-      expect(localStorage.getItem("reasonix.dispatch-after")).toBe("stay");
+      expect(localStorage.getItem("reasonix.dispatch-after")).toBe("recent");
 
       await act(async () => {
-        button("派发的会话").click();
+        button("打开派发的会话").click();
         await Promise.resolve();
       });
       expect(localStorage.getItem("reasonix.dispatch-after")).toBe("session");
 
       await act(async () => {
-        button("最近").click();
+        button("留在表单").click();
         await Promise.resolve();
       });
       expect(localStorage.getItem("reasonix.dispatch-after")).toBeNull();
@@ -859,12 +870,15 @@ describe("ConnectScreen account sign-in", () => {
       signedIn: false,
       identity: "https://rx.example.com",
     });
-    await press("保存地址");
+    // The address is one field with one place to type it: leaving it saves.
+    await blur('input[type="url"]');
 
     expect(setAccountIdentity).toHaveBeenCalledWith("https://rx.example.com/");
     // The proxy's normalised answer is what the pane shows, so a trailing
     // slash or a default port cannot make the same service look like two.
     expect(container.textContent).toContain("https://rx.example.com");
+    // And no second tap is asked for once the value is saved.
+    expect(container.textContent).not.toContain("保存地址");
   });
 
   it("forgets the service, which disables sign-in again", async () => {
@@ -872,7 +886,10 @@ describe("ConnectScreen account sign-in", () => {
     await press("账号");
 
     vi.mocked(setAccountIdentity).mockResolvedValue({ signedIn: false });
+    // Losing the service also loses the cloud link, so it asks once more.
     await press("忘记这个服务");
+    expect(setAccountIdentity).not.toHaveBeenCalled();
+    await press("确认忘记");
 
     expect(setAccountIdentity).toHaveBeenCalledWith("");
     expect(button("登录 Reasonix 账号").disabled).toBe(true);

@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 
 export function EditMessageSheet({
   text,
@@ -25,7 +26,8 @@ export function EditMessageSheet({
 }) {
   const [draft, setDraft] = useState(text);
   const box = useRef<HTMLTextAreaElement>(null);
-  useBackCloser(true, onCancel);
+  const exit = useSheetExit(onCancel);
+  useBackCloser(true, exit.close);
 
   useEffect(() => {
     const el = box.current;
@@ -35,7 +37,11 @@ export function EditMessageSheet({
   }, []);
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onCancel}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet edit-message"
         role="dialog"
@@ -45,7 +51,7 @@ export function EditMessageSheet({
       >
         <div className="sheet-head">
           <h2>编辑消息</h2>
-          <button type="button" className="iconbtn" onClick={onCancel} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>

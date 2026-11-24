@@ -171,7 +171,7 @@ function walk(node: ChangeNode, depth: number, walkState: Walk): ReactNode[] {
         <div className="wb-row-diff" style={{ marginLeft: -depth * 14 }}>
           {slot === undefined && <p className="wb-wait">读取中…</p>}
           {slot?.state === "loading" && <p className="wb-wait">读取中…</p>}
-          {slot?.state === "error" && <p className="wb-wait">{`没读出来：${slot.code ?? ""}`}</p>}
+          {slot?.state === "error" && <p className="wb-wait">没读出来，稍后再试。</p>}
           {slot?.state === "ready" && slot.diff && (
             <WorkbenchDiff
               diff={slot.diff.diff}
