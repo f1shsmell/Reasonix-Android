@@ -91,7 +91,7 @@ function dispatchFailure(result: SubmitResult): string {
     case "client.timeout":
       return "电脑没有及时回应，任务可能已经开始，先去列表确认。";
     default:
-      return `没派出去：${result.code ?? "unknown"}`;
+      return "没派出去，稍后再试。";
   }
 }
 
@@ -451,14 +451,14 @@ export function App() {
         const switched = await switchModel(opened.runtime.base, options.model);
         if (!switched.ok) {
           void closeRuntimeOn(opened.runtime.id);
-          return { ok: false, message: `没派出去：换模型失败（${switched.code}）。` };
+          return { ok: false, message: "没派出去：换模型失败，稍后再试。" };
         }
       }
       if (options?.effort) {
         const switched = await switchEffort(opened.runtime.base, options.effort);
         if (!switched.ok) {
           void closeRuntimeOn(opened.runtime.id);
-          return { ok: false, message: `没派出去：换思考等级失败（${switched.code}）。` };
+          return { ok: false, message: "没派出去：换思考等级失败，稍后再试。" };
         }
       }
       const sent = await submit(opened.runtime.base, prompt);
@@ -858,7 +858,7 @@ export function App() {
     screen = (
       <div className="centered">
         <div>
-          <strong>正在准备</strong>
+          <strong><span className="rx-spinner" aria-hidden="true" />正在准备</strong>
           检查这台手机上的连接。
         </div>
       </div>
@@ -989,7 +989,7 @@ export function App() {
       <Suspense
         fallback={
           <div className="centered">
-            <div>正在打开会话…</div>
+            <div><span className="rx-spinner" aria-hidden="true" />正在打开会话…</div>
           </div>
         }
       >

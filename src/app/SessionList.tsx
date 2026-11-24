@@ -348,7 +348,7 @@ export function SessionList({
     archiveLoading.current = false;
     if (!result.ok) {
       setArchiveList(null);
-      setArchiveError(result.code);
+      setArchiveError("读不到已归档的会话，稍后再试。");
       return;
     }
     const own = result.projects.find((entry) => entry.root === project.root);

@@ -945,7 +945,11 @@ describe("App", () => {
       root: "/work/app",
       runtimeId: "r9",
     });
-    expect(container.querySelector(".dispatch-page")).toBeNull();
+    // A dispatch no longer yanks the screen away: the receipt confirms it, the
+    // list picks the new pane up from the subscription, and the person stays
+    // on the form they were already using.
+    expect(container.querySelector(".dispatch-page")).toBeTruthy();
+    expect(container.textContent).toContain("已派发");
     expect(container.querySelector('[data-testid="chat"]')).toBeNull();
   });
 

@@ -17,8 +17,8 @@ import type { TreeWrite } from "../net/pin";
 import { treeWriteMessage } from "../net/pin";
 import type { TreeProject } from "../wire/tree";
 import { useBackCloser } from "./backStack";
+import { useSheetExit } from "./presence";
 import { swallowNextClick } from "./longPress";
-
 export interface SessionSheetProps {
   title: string;
   projectName: string;
@@ -75,9 +75,13 @@ export function SessionSheet({
   const [nextTitle, setNextTitle] = useState(title);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const exit = useSheetExit(onClose);
+  // The click that closes the sheet must not also land on the row underneath,
+  // and it must be swallowed before the exit starts rather than after it: the
+  // compatibility click arrives with the release, not with the unmount.
   const close = () => {
     swallowNextClick();
-    onClose();
+    exit.close();
   };
   useBackCloser(true, close);
 
@@ -101,7 +105,11 @@ export function SessionSheet({
     mode === "rename" ? "重命名会话" : mode === "delete" ? "删除会话" : mode === "move" ? "移动到项目" : title;
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={close}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={close}
+    >
       <section
         className="sheet session-sheet"
         role="dialog"

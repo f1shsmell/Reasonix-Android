@@ -38,6 +38,6 @@ export function ReachBanner({ snapshot }: { snapshot: ConnectionSnapshot }) {
     case "ok":
       return null;
     default:
-      return <div className="notice">正在连接…</div>;
+      return <div className="notice"><span className="rx-spinner" aria-hidden="true" />正在连接…</div>;
   }
 }

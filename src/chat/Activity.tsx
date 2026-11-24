@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 import type { ProcessStep } from "./process";
 import { processTitle } from "./process";
 import { ToolDetail } from "./Rows";
@@ -146,9 +147,14 @@ export function ProcessSheet({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet process-sheet"
         role="dialog"
@@ -158,7 +164,7 @@ export function ProcessSheet({
       >
         <div className="sheet-head">
           <h2>{title}</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>

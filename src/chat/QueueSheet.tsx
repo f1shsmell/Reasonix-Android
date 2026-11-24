@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 import { inboxMessage, loadInbox, loadInboxItem } from "../net/inbox";
 import type { InboxDetail, InboxItem, InboxSnapshot } from "../net/inbox";
 
@@ -93,7 +94,8 @@ export function QueueSheet({
   const [detail, setDetail] = useState<InboxDetail | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailBusy, setDetailBusy] = useState(false);
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
 
   /** A slower read of one item must not land on a newer one. */
   const request = useRef(0);
@@ -143,7 +145,11 @@ export function QueueSheet({
   );
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet queue-sheet"
         role="dialog"
@@ -153,7 +159,7 @@ export function QueueSheet({
       >
         <div className="sheet-head">
           <h2>排队</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -161,7 +167,7 @@ export function QueueSheet({
           这一轮结束后按顺序发出。点一行看完整内容；桌面端也能在这里暂停、改顺序或删掉一条。
         </p>
 
-        {snapshot === null && !error ? <p className="sheet-note">正在读取队列…</p> : null}
+        {snapshot === null && !error ? <p className="sheet-note"><span className="rx-spinner" aria-hidden="true" />正在读取队列…</p> : null}
         {snapshot !== null && snapshot.items.length === 0 && !error ? (
           <p className="sheet-note">队列是空的。</p>
         ) : null}
@@ -208,7 +214,7 @@ export function QueueSheet({
 
                   {expanded ? (
                     <div className="queue-detail">
-                      {detailBusy ? <p className="sheet-note">正在读取…</p> : null}
+                      {detailBusy ? <p className="sheet-note"><span className="rx-spinner" aria-hidden="true" />正在读取…</p> : null}
                       {detailError ? <p className="sheet-note bad">{detailError}</p> : null}
                       {blocked && (entry.blockReason || entry.blockCode) ? (
                         <p className="queue-block">

@@ -44,6 +44,7 @@ import { linkFailure } from "../net/link";
 import type { LinkError, LinkState } from "../net/link";
 import { ConnectionHero } from "./ConnectionHero";
 import { useBackCloser } from "./backStack";
+import { useSheetExit } from "./presence";
 import {
   clearRelayRouting,
   connectRelay,
@@ -253,6 +254,9 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
   const [signInError, setSignInError] = useState("");
   /** Where the self-hosted account service lives, as typed on this phone. */
   const [identityDraft, setIdentityDraft] = useState("");
+  /** The saved address the draft is being compared against, so an unchanged
+      field never offers a write. */
+  const [savedIdentity, setSavedIdentity] = useState("");
   /**
    * The owner's admin token, typed to approve one device code.
    *
@@ -262,6 +266,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
    */
   const [adminToken, setAdminToken] = useState("");
   const [accountBusy, setAccountBusy] = useState("");
+  /** Forgetting the service is destructive, so it takes a second tap. */
+  const [confirmForgetService, setConfirmForgetService] = useState(false);
   /** The device code is approved; the poll behind this screen is finishing. */
   const [approved, setApproved] = useState(false);
   const [theme, setThemeState] = useState<ThemeChoice>(() => loadTheme());
@@ -367,6 +373,8 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       setConfig(next);
       setAccount(next.account);
       setOrigin(next.origin);
+      setSavedIdentity(next.account.identity ?? "");
+      setIdentityDraft(next.account.identity ?? "");
       // A connection made before this list existed, or by recovery, is still
       // a place worth returning to.
       if (next.mode === "relay" && next.relayDevice) {
@@ -956,10 +964,15 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     try {
       const next = await setAccountIdentity(address);
       setAccount(next);
+      setSavedIdentity(next.identity ?? "");
       setIdentityDraft(next.identity ?? "");
       setGrant(null);
       setApproved(false);
     } catch (failure) {
+      // A refused address is put back to the one the proxy still holds: the
+      // field is the saved value, and leaving a rejected string in it would
+      // suggest it had been stored.
+      setIdentityDraft(savedIdentity);
       setSignInError(
         refusalCode(failure) === "proxy.bad_origin"
           ? "这个地址不是一个服务地址：要 http(s)://主机[:端口]，不带路径。"
@@ -968,7 +981,21 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     } finally {
       setAccountBusy("");
     }
-  }, []);
+  }, [savedIdentity]);
+
+  /**
+   * Save the address when the field is left, not when a button is found.
+   *
+   * The address is one value with one place to type it; asking for a second
+   * tap on a separate row made the screen look unfinished and left a disabled
+   * "保存地址" button that never said why. Blur is the moment the person is
+   * done with the field, and a value that did not change writes nothing.
+   */
+  const commitIdentity = useCallback(() => {
+    const next = identityDraft.trim();
+    if (accountBusy !== "" || next === savedIdentity) return;
+    void saveIdentity(next);
+  }, [accountBusy, identityDraft, saveIdentity, savedIdentity]);
 
   const signIn = useCallback(async () => {
     const identity = account.identity ?? "";
@@ -1201,8 +1228,13 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
     [current, disconnect, forgetAsk, forgetDoor],
   );
   // The forget sheet sits on the back stack like the trust one: back cancels
-  // it instead of closing the whole settings screen under it.
-  useBackCloser(forgetAsk !== null, () => settleForget(false));
+  // it instead of closing the whole settings screen under it. Both confirm
+  // sheets leave with the same exit every other surface uses; the confirmation
+  // itself still acts at once, because its result is what the person asked for.
+  const forgetExit = useSheetExit(() => settleForget(false));
+  const trustExit = useSheetExit(() => settleTrust(false));
+  useBackCloser(forgetAsk !== null, forgetExit.close);
+  useBackCloser(trustAsk !== null, trustExit.close);
 
   const known = config?.origin ?? "";
   /**
@@ -1935,43 +1967,76 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
             Shown even while signed in, because moving the phone to another
             deployment has to start here.
           */}
-          <label className="setting">
+          <label className="setting setting-stacked">
             <span className="setting-main">
               <span className="setting-title">服务地址</span>
-              <span className="setting-sub">
-                {account.identity ? account.identity : "还没设置：云端连接暂不可用"}
-              </span>
             </span>
             <input
               type="url"
               value={identityDraft}
               onChange={(event) => setIdentityDraft(event.target.value)}
+              onBlur={commitIdentity}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitIdentity();
+                  event.currentTarget.blur();
+                }
+              }}
               placeholder="https://accounts.example.com"
               inputMode="url"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
               autoComplete="url"
+              aria-label="账号服务地址"
               disabled={accountBusy !== ""}
             />
+            <span className="setting-sub">
+              {accountBusy === "正在保存地址"
+                ? "正在保存…"
+                : account.identity
+                  ? account.identity
+                  : "还没设置：云端连接暂不可用"}
+            </span>
           </label>
-          <button
-            type="button"
-            className="setting action"
-            onClick={() => void saveIdentity(identityDraft)}
-            disabled={accountBusy !== "" || identityDraft.trim() === (account.identity ?? "")}
-          >
-            {accountBusy === "正在保存地址" ? accountBusy + "…" : "保存地址"}
-          </button>
           {account.identity ? (
-            <button
-              type="button"
-              className="setting action danger"
-              onClick={() => void saveIdentity("")}
-              disabled={accountBusy !== ""}
-            >
-              忘记这个服务
-            </button>
+            confirmForgetService ? (
+              <>
+                <p className="group-note">
+                  忘记后，云端连接和已登录的账号都要重新设置；电脑上的 Studio 不受影响。
+                </p>
+                <button
+                  type="button"
+                  className="setting action danger"
+                  onClick={() => {
+                    setConfirmForgetService(false);
+                    void saveIdentity("");
+                  }}
+                  disabled={accountBusy !== ""}
+                >
+                  确认忘记
+                </button>
+                <button
+                  type="button"
+                  className="setting action"
+                  onClick={() => setConfirmForgetService(false)}
+                  disabled={accountBusy !== ""}
+                >
+                  取消
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="setting action danger"
+                onClick={() => setConfirmForgetService(true)}
+                disabled={accountBusy !== ""}
+              >
+                忘记这个服务
+              </button>
+            )
           ) : null}
         </section>
         {busy === "正在获取登录码" ? (
@@ -1992,6 +2057,7 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
                   <span className="setting-title">
                     {account.user?.label ?? account.user?.handle ?? "已登录"}
                   </span>
+                  <span className="setting-sub">云端连接与后台提醒用这个账号</span>
                 </span>
               </div>
               <button type="button" className="setting action danger" onClick={() => void signOut()}>
@@ -1999,16 +2065,35 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              className="setting action"
-              onClick={() => void signIn()}
-              disabled={busy !== "" || !account.identity}
-            >
-              {busy === "正在获取登录码" ? "正在获取登录码…" : "登录 Reasonix 账号"}
-            </button>
+            <div className="setting">
+              <span className="setting-main">
+                <span className="setting-title">还没有登录</span>
+                <span className="setting-sub">
+                  {account.identity
+                    ? "登录后可以用云端连接这台电脑。"
+                    : "先在上面填账号服务地址，才能登录。"}
+                </span>
+              </span>
+            </div>
           )}
         </section>
+        {account.signedIn ? null : (
+          <button
+            type="button"
+            className="primary account-signin"
+            onClick={() => void signIn()}
+            disabled={busy !== "" || !account.identity}
+          >
+            {busy === "正在获取登录码" ? (
+              <>
+                <span className="rx-spinner" aria-hidden="true" />
+                正在获取登录码…
+              </>
+            ) : (
+              "登录 Reasonix 账号"
+            )}
+          </button>
+        )}
 
         {grant ? (
           <section className="group grant">
@@ -2097,7 +2182,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       </div>
 
       {forgetAsk ? (
-        <div className="sheet-backdrop" role="presentation" onClick={() => settleForget(false)}>
+        <div
+          className={`sheet-backdrop${forgetExit.closing ? " closing" : ""}`}
+          role="presentation"
+          onClick={forgetExit.close}
+        >
           <div
             className="sheet"
             role="dialog"
@@ -2130,7 +2219,11 @@ export function ConnectScreen({ onConnected, onFailed, onDisconnected, onClose, 
       ) : null}
 
       {trustAsk ? (
-        <div className="sheet-backdrop" role="presentation" onClick={() => settleTrust(false)}>
+        <div
+          className={`sheet-backdrop${trustExit.closing ? " closing" : ""}`}
+          role="presentation"
+          onClick={trustExit.close}
+        >
           <div
             className="sheet trust-sheet"
             role="dialog"

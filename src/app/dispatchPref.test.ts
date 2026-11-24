@@ -4,8 +4,8 @@ import { loadDispatchAfter, saveDispatchAfter } from "./dispatchPref";
 beforeEach(() => localStorage.clear());
 
 describe("dispatch after", () => {
-  it("defaults to the recent view", () => {
-    expect(loadDispatchAfter()).toBe("recent");
+  it("defaults to staying on the form", () => {
+    expect(loadDispatchAfter()).toBe("stay");
   });
 
   it("remembers the chosen destination and falls back on an unknown value", () => {
@@ -13,14 +13,14 @@ describe("dispatch after", () => {
     expect(loadDispatchAfter()).toBe("session");
 
     localStorage.setItem("reasonix.dispatch-after", "elsewhere");
-    expect(loadDispatchAfter()).toBe("recent");
+    expect(loadDispatchAfter()).toBe("stay");
   });
 
   it("stores only a difference from the default", () => {
-    saveDispatchAfter("stay");
-    expect(localStorage.getItem("reasonix.dispatch-after")).toBe("stay");
-
     saveDispatchAfter("recent");
+    expect(localStorage.getItem("reasonix.dispatch-after")).toBe("recent");
+
+    saveDispatchAfter("stay");
     expect(localStorage.getItem("reasonix.dispatch-after")).toBeNull();
   });
 });

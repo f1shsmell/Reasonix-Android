@@ -16,6 +16,9 @@
   height: 100%;
   padding-top: var(--rx-inset-top, env(safe-area-inset-top, 0px));
   padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  /* Arriving at a screen is a fade, never a slide: the top level holds fixed
+     sheets, and a transform would re-anchor them to this element. */
+  animation: rx-page var(--dur-2) var(--ease-out) both;
 }
 
 .bar {
@@ -28,8 +31,10 @@
   @supports (color: color-mix(in srgb, red, blue)) {
   background: color-mix(in srgb, var(--bg) 76%, transparent);
   }
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  /* No `backdrop-filter` here: the screen's content scrolls in `.body`, below
+     this bar, so there is nothing behind it to blur. On a phone every blurred
+     layer is re-composited on each scroll frame, and paying that for no
+     visible difference is what turns a smooth list into a stuttering one. */
 }
 
 .bar h1 {
@@ -178,6 +183,11 @@
   height: 8px;
   border-radius: 50%;
   flex: none;
+  /* A status dot changes colour, not shape: the tint crosses over so a link
+     that recovers reads as recovered, not as a different dot. */
+  transition:
+    background-color var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
 }
 
 .dot.ok { background: var(--ok); }
@@ -186,7 +196,7 @@
 .dot.idle { background: var(--fg-dim); }
 .dot.busy {
   background: var(--accent);
-  animation: rx-pulse 1.4s var(--ease-in-out) infinite;
+  animation: rx-pulse var(--dur-pulse) var(--ease-in-out) infinite;
 }
 
 /* The current computer, one row under the title bar: a status the person can
@@ -548,7 +558,7 @@ pre.frame {
 [data-dragging] > * {
   animation: none;
   touch-action: none;
-  transition: transform 180ms var(--ease-out);
+  transition: transform var(--dur-2) var(--ease-out);
   will-change: transform;
 }
 
@@ -863,6 +873,16 @@ pre.frame {
   transform: scale(0.97);
 }
 
+/* A primary action that cannot run says so before the tap: without this the
+   filled button looks ready and a press does nothing, which reads as a bug. */
+.primary:disabled {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--fg-dim);
+  box-shadow: none;
+  opacity: 0.85;
+}
+
 .more {
   width: 100%;
   color: var(--fg-dim);
@@ -915,6 +935,12 @@ pre.frame {
    row" rather than as another conversation at the same level. */
 .list li.folded > .session {
   padding-left: 26px;
+}
+
+/* The rows under a fold arrive under the row they belong to: the movement
+   explains where they came from instead of the list growing in place. */
+.list li.folded {
+  animation: rx-rise var(--dur-2) var(--ease-out) both;
 }
 
 .list li.folded .session-name {
@@ -999,6 +1025,18 @@ pre.frame {
   margin-left: -18px;
   border-radius: 999px;
   background: var(--line);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+/* The exit. `useSheetExit` waits for exactly this long before it unmounts the
+   surface, so the sheet is seen leaving instead of being cut. */
+.sheet-backdrop.closing {
+  animation: rx-fade-out var(--dur-2) var(--ease-in) both;
+  pointer-events: none;
+}
+
+.sheet-backdrop.closing .sheet {
+  animation: rx-sheet-out var(--dur-2) var(--ease-in) both;
 }
 
 .sheet-head {
@@ -1437,6 +1475,7 @@ pre.frame {
 }
 
 .tabbar {
+  position: relative;
   flex: none;
   display: flex;
   gap: 4px;
@@ -1445,9 +1484,34 @@ pre.frame {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--bg-raised);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
   box-shadow: var(--shadow-1);
+  /* Opaque surface, nothing behind it: a blur here would be recomposited on
+     every scroll frame for no visible effect. */
+  --tab-index: 0;
+}
+
+/* The one mark that says where you are. It moves; the buttons only change
+   ink, which is the cheap half of the change. The element is one slot wide
+   (7px padding each side, 4px between the three), so `translateX(100% + 4px)`
+   lands it exactly on the next slot at any width. */
+.tab-indicator {
+  position: absolute;
+  bottom: 10px;
+  left: 7px;
+  display: flex;
+  justify-content: center;
+  width: calc((100% - 14px - 8px) / 3);
+  transform: translateX(calc(var(--tab-index) * (100% + 4px)));
+  transition: transform var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+
+.tab-indicator::before {
+  content: "";
+  width: 24px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
 }
 
 .tabbar button {
@@ -1465,6 +1529,15 @@ pre.frame {
   font: inherit;
   font-size: 10px;
   font-weight: 650;
+  transition:
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+/* A press answers before the view changes: the destination dips under the
+   finger, so a tap that is still travelling never looks ignored. */
+.tabbar button:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .tabbar .studio-icon {
@@ -1478,18 +1551,6 @@ pre.frame {
 
 .tabbar button.on {
   color: var(--accent);
-}
-
-.tabbar button.on::after {
-  content: "";
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  width: 24px;
-  height: 2px;
-  transform: translateX(-50%);
-  border-radius: 1px;
-  background: var(--accent);
 }
 
 [data-style="paper"] .tabbar {
@@ -1577,6 +1638,26 @@ pre.frame {
   color: var(--on-fill);
 }
 
+/* A single project is a fact, not a choice: it is named with the same chip
+   shape so the page keeps one visual language, but nothing invites a tap. */
+.dispatch-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.dispatch-target .studio-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--fg-dim);
+}
+
 .dispatch-card {
   margin-top: 2px;
   padding: 12px 14px 10px;
@@ -1660,15 +1741,6 @@ pre.frame {
 
 [data-style="paper"] .connect-body .group > * + * {
   border-top: 1px solid var(--line-soft);
-}
-
-.session-mark {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 3px;
-  background: var(--accent);
-  opacity: 0.55;
 }
 
 .project-mark {
@@ -1835,10 +1907,14 @@ pre.frame {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   margin: -6px 0;
   overflow: hidden;
   color: var(--fg-dim);
   font-size: 11px;
+  /* Height is set inline while the finger drags (that must be direct), but
+     the release and the refresh settle on the same curve as everything else. */
+  transition: height var(--dur-2) var(--ease-out);
 }
 
 .pull-hint.loading {
@@ -1898,12 +1974,28 @@ pre.frame {
 }
 
 .dispatch-sent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* The receipt's one follow-up: a plain link, because the receipt itself is the
+   confirmation and a second filled button would compete with 派发. */
+.dispatch-sent .linkbtn {
+  flex: none;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* ---- landscape and other short viewports ---- */
@@ -1924,5 +2016,24 @@ pre.frame {
     max-width: 720px;
     width: calc(100% - 24px);
     margin-inline: auto;
+  }
+}
+
+/* ---- a wide window ----
+   A phone UI stretched across a tablet or a desktop window puts the row's
+   title and its chevron a hand's width apart. The reading column is capped and
+   centred instead; the top bar and the tabbar follow the same column so the
+   screen still reads as one surface. */
+@media (min-width: 760px) {
+  .topline,
+  .body > *,
+  .tabbar {
+    width: 100%;
+    max-width: 720px;
+    margin-inline: auto;
+  }
+
+  .tabbar {
+    width: calc(100% - 24px);
   }
 }

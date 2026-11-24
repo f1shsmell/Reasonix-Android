@@ -20,7 +20,6 @@ import {
 } from "../net/approval";
 import type { SendState } from "../net/submit";
 import { clearDraft, loadDraft, saveDraft } from "./drafts";
-import { cachePercent } from "./cacheRate";
 import { MAX_FILE_MB, MAX_IMAGE_MB, isolateImageRefs, uploadFile, uploadImage } from "../net/attachments";
 import { answer, approve } from "../net/prompts";
 import { inboxMessage, receiptText, sendToInbox } from "../net/inbox";
@@ -28,10 +27,10 @@ import { useStreamHaptics } from "./streamHaptics";
 import { loadHistory } from "../net/history";
 import { loadReading, readingKey, saveReading } from "./reading";
 import { useBackCloser } from "../app/backStack";
+import { useSheetExit } from "../app/presence";
 import { loadEnterPref } from "../app/enterPref";
 import { channelLabel, useRelayHealth } from "../app/useRelayHealth";
 import type { EnterPref } from "../app/enterPref";
-import { compactCount } from "../app/format";
 import { loadTodos, todoRevision } from "../net/todos";
 import { startTurnNotification } from "../native/turn";
 import { speechSupported } from "../native/speech";
@@ -131,7 +130,7 @@ function imageMessage(code: string): string {
     case "client.offline":
       return "上传失败：连不上电脑。";
     default:
-      return `上传失败：${code}`;
+      return "上传失败，稍后再试。";
   }
 }
 
@@ -148,7 +147,7 @@ function fileMessage(code: string): string {
     case "client.offline":
       return "上传失败：连不上电脑。";
     default:
-      return `上传失败：${code}`;
+      return "上传失败，稍后再试。";
   }
 }
 
@@ -227,9 +226,14 @@ function AttachSheet({
 }) {
   const planHint =
     plan === undefined ? "读不到当前模式" : plan ? "已开启，点此关闭" : "先整理步骤，不写入文件";
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet attach-sheet"
         role="dialog"
@@ -239,7 +243,7 @@ function AttachSheet({
       >
         <div className="sheet-head">
           <h2>添加</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -295,7 +299,6 @@ function AttachSheet({
 function HeadMenu({
   model,
   approval,
-  cache,
   onClose,
   onReload,
   onModel,
@@ -307,7 +310,6 @@ function HeadMenu({
 }: {
   model: string;
   approval: string;
-  cache: { hit: number; miss: number; unknown: number } | null;
   onClose: () => void;
   onReload: () => void;
   onModel: () => void;
@@ -317,9 +319,14 @@ function HeadMenu({
   onContext: () => void;
   onWorkbench: () => void;
 }) {
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet head-menu"
         role="dialog"
@@ -329,7 +336,7 @@ function HeadMenu({
       >
         <div className="sheet-head">
           <h2>会话</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -371,12 +378,6 @@ function HeadMenu({
             </button>
           </li>
           <li>
-            <div className="head-menu-note">
-              <span>缓存命中率</span>
-              <small>{cacheNote(cache)}</small>
-            </div>
-          </li>
-          <li>
             <button type="button" onClick={onWorkbench}>
               <span>工作台</span>
               <small>变更、diff 与提交</small>
@@ -386,25 +387,6 @@ function HeadMenu({
       </section>
     </div>
   );
-}
-
-/**
- * The cache split as one line: the rate first, then the counts it came from.
- * Unsplit prompt is left out of the rate by `cachePercent`, so the counts are
- * the ledger's own and need no adjustment.
- */
-function cacheNote(
-  cache: { hit: number; miss: number; unknown: number; requests?: number } | null,
-): string {
-  if (!cache) return "还没有可统计的请求";
-  const percent = cachePercent(cache.hit, cache.miss, cache.unknown);
-  if (percent === null) return "还没有可统计的请求";
-  const ledger = `${percent}% · 命中 ${compactCount(cache.hit)} · 未命中 ${compactCount(cache.miss)}`;
-  // The request count is the one number the provider bills by, so it rides
-  // with the cache split rather than needing its own screen.
-  return cache.requests !== undefined && cache.requests > 0
-    ? `${ledger} · 请求 ${compactCount(cache.requests)}`
-    : ledger;
 }
 
 /**
@@ -426,7 +408,8 @@ function ApprovalSheet({
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
 
   const pick = async (mode: string) => {
     if (busy) return;
@@ -442,7 +425,11 @@ function ApprovalSheet({
   };
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet approval-sheet"
         role="dialog"
@@ -452,7 +439,7 @@ function ApprovalSheet({
       >
         <div className="sheet-head">
           <h2>工具批准</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -1695,7 +1682,7 @@ export function ChatScreen({
     const result = await setPlanMode(runtime.base, next);
     setPlanBusy(false);
     if (!result.ok) {
-      setPromptError(`没切到计划模式：${result.code}`);
+      setPromptError("没切到计划模式，稍后再试。");
       return;
     }
     setPlan(next);
@@ -2058,7 +2045,7 @@ export function ChatScreen({
         void answer(runtime.base, askId, answers)
           .then((result) => {
             if (!result.ok) {
-              setPromptError(`没答上：${result.code ?? "unknown"}`);
+              setPromptError("没答上，稍后再试。");
               return;
             }
             setPromptError("");
@@ -2080,7 +2067,7 @@ export function ChatScreen({
         void answer(runtime.base, askId, [entry])
           .then((result) => {
             if (!result.ok) {
-              setPromptError(`没答上：${result.code ?? "unknown"}`);
+              setPromptError("没答上，稍后再试。");
               return;
             }
             setPromptError("");
@@ -2097,7 +2084,7 @@ export function ChatScreen({
         void approve(runtime.base, approvalId, allow, session, persist)
           .then((result) => {
             if (!result.ok) {
-              setPromptError(`没处理成：${result.code ?? "unknown"}`);
+              setPromptError("没处理成，稍后再试。");
               return;
             }
             setPromptError("");
@@ -2148,12 +2135,12 @@ export function ChatScreen({
               </>
             ) : cached ? (
               <>
-                <strong>正在读取这个会话</strong>
+                <strong><span className="rx-spinner" aria-hidden="true" />正在读取这个会话</strong>
                 已缓存 {transcript.rows.length} 条，连接恢复后显示。
               </>
             ) : (
               <>
-                <strong>正在读取这个会话</strong>
+                <strong><span className="rx-spinner" aria-hidden="true" />正在读取这个会话</strong>
                 网络慢的时候要等一会儿，已经看过的内容会先显示。
               </>
             )}
@@ -2613,7 +2600,7 @@ export function ChatScreen({
                 aria-label="停止"
                 onClick={() => {
                   void cancel(runtime.base).then((result) => {
-                    if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "unknown")}`);
+                    if (!result.ok) setPromptError(`没停下来：${sendErrorText(result.code ?? "")}`);
                   });
                 }}
               >
@@ -2677,7 +2664,6 @@ export function ChatScreen({
         <HeadMenu
           model={shortRef(pickedModel || transcript.modelRef || statusModel || "")}
           approval={approval}
-          cache={cache}
           onClose={() => setHeadMenu(false)}
           onReload={() => {
             setHeadMenu(false);
@@ -2761,6 +2747,7 @@ export function ChatScreen({
       {contextSheet && runtime ? (
         <ContextSheet
           base={runtime.base}
+          cache={cache}
           onCompacted={() => reload()}
           onClose={() => setContextSheet(false)}
         />

@@ -10,6 +10,7 @@
  */
 
 import { useBackCloser } from "./backStack";
+import { useSheetExit } from "./presence";
 
 /** Inline emphasis and links carry no meaning once the target is gone. */
 function plain(line: string): string {
@@ -117,16 +118,17 @@ export function ReleaseNotesSheet({
   notes: string;
   onClose: () => void;
 }) {
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   const blocks = parseNotes(notes);
   // The note opens with "# 0.2.7", which the sheet title already says.
   if (blocks[0]?.kind === "heading" && blocks[0].text === version) blocks.shift();
 
   return (
     <div
-      className="sheet-backdrop release-notes-backdrop"
+      className={`sheet-backdrop release-notes-backdrop${exit.closing ? " closing" : ""}`}
       role="presentation"
-      onClick={onClose}
+      onClick={exit.close}
     >
       <section
         className="sheet release-notes"
@@ -137,7 +139,7 @@ export function ReleaseNotesSheet({
       >
         <div className="sheet-head">
           <h2>{version} 更新说明</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -162,7 +164,7 @@ export function ReleaseNotesSheet({
           })}
         </div>
         <div className="sheet-foot">
-          <button type="button" className="primary" onClick={onClose}>
+          <button type="button" className="primary" onClick={exit.close}>
             知道了
           </button>
         </div>

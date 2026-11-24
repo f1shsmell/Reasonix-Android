@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { ConnectionSnapshot } from "../net/connection";
 import type { TreeProject, TreeSession } from "../wire/tree";
 import { decisionLabel, decisionVerb } from "../net/status";
@@ -41,6 +42,7 @@ import { dragShift, dropEdge, useRowDrag } from "./useRowDrag";
 import type { RowDragHandlers } from "./useRowDrag";
 import { useLongPress } from "./longPress";
 import { useBackCloser } from "./backStack";
+import { motionReduced, useSheetExit } from "./presence";
 import { SessionSheet } from "./SessionSheet";
 import { BrandMark } from "./BrandMark";
 import { StudioIcon } from "./StudioIcon";
@@ -344,7 +346,6 @@ function RecentItem({
         }}
         {...press}
       >
-        <span className="session-mark" aria-hidden="true" />
         <span className="row-main">
           <span className="session-name">
             {pinned ? (
@@ -443,7 +444,8 @@ function SwitchSheet({
   onReorder: (rows: SavedConnection[]) => void;
 }) {
   const busy = link.phase === "connecting" || link.phase === "reconnecting";
-  useBackCloser(true, onClose);
+  const exit = useSheetExit(onClose);
+  useBackCloser(true, exit.close);
   // The sheet is the scroller: it caps its own height rather than sitting in
   // the page body, so a drag near its edge has to scroll it.
   const drag = useRowDrag<HTMLUListElement>({
@@ -456,7 +458,11 @@ function SwitchSheet({
     place: (key, index) => onReorder(moveConnection(key, index)),
   });
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className={`sheet-backdrop${exit.closing ? " closing" : ""}`}
+      role="presentation"
+      onClick={exit.close}
+    >
       <section
         className="sheet switch-sheet"
         role="dialog"
@@ -466,7 +472,7 @@ function SwitchSheet({
       >
         <div className="sheet-head">
           <h2>切换连接</h2>
-          <button type="button" className="iconbtn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="iconbtn" onClick={exit.close} aria-label="关闭">
             ×
           </button>
         </div>
@@ -923,6 +929,17 @@ export function Home({
     event.stopPropagation();
   };
 
+  /**
+   * Return to the top of the list.
+   *
+   * A smooth scroll is motion the person asked for by tapping the tab they are
+   * already on; when they have asked the system for less motion it becomes a
+   * jump, and the jump is what they wanted anyway.
+   */
+  const scrollToTop = () => {
+    bodyRef.current?.scrollTo({ top: 0, behavior: motionReduced() ? "auto" : "smooth" });
+  };
+
   return (
     <div className="shell">
       <div className="topline">
@@ -959,7 +976,16 @@ export function Home({
             className={`pull-hint${refreshing ? " loading" : ""}`}
             style={{ height: refreshing ? 36 : Math.round(pull) }}
           >
-            {refreshing ? "正在刷新…" : pullAmount.current >= 48 ? "松开刷新" : "下拉刷新"}
+            {refreshing ? (
+              <>
+                <span className="rx-spinner accent" aria-hidden="true" />
+                正在刷新…
+              </>
+            ) : pullAmount.current >= 48 ? (
+              "松开刷新"
+            ) : (
+              "下拉刷新"
+            )}
           </div>
         ) : null}
         {dispatchOpen ? null : <ReachBanner snapshot={snapshot} />}
@@ -970,8 +996,22 @@ export function Home({
               projects={tree.projects}
               computerName={linkName}
               notify={link.mode !== "cloud"}
+              online={link.phase === "connected"}
               onDispatch={onDispatch}
+              onOpenSent={(result) => {
+                if (!result.runtimeId) return;
+                setDispatchOpen(false);
+                onOpenRuntime(
+                  result.runtimeId,
+                  result.root ?? "",
+                  result.title ?? "派发的任务",
+                );
+              }}
               onSent={(result) => {
+                // The receipt is the answer; the form stays put unless the
+                // person has asked for a jump. Moving the screen out from under
+                // a successful send was what made a second dispatch cost a
+                // round trip back to this tab.
                 const after = loadDispatchAfter();
                 if (after === "recent") {
                   setDispatchOpen(false);
@@ -1045,7 +1085,7 @@ export function Home({
 
               {tree.status === "loading" && tree.projects.length === 0 ? (
                 <div className="centered">
-                  <div>正在读取项目…</div>
+                  <div><span className="rx-spinner" aria-hidden="true" />正在读取项目…</div>
                 </div>
               ) : null}
 
@@ -1114,14 +1154,30 @@ export function Home({
         )}
       </div>
 
-      <nav className="tabbar" aria-label="主导航">
+      <nav
+        className="tabbar"
+        aria-label="主导航"
+        style={
+          {
+            "--tab-index": dispatchOpen ? 2 : tab === "projects" ? 1 : 0,
+          } as CSSProperties
+        }
+      >
+        {/* One mark travels between the three destinations. Repainting a
+            different button's underline made the change read as a jump; a
+            single sliding mark says the views sit side by side. */}
+        <span className="tab-indicator" aria-hidden="true" />
         <button
           type="button"
           className={!dispatchOpen && tab === "recent" ? "on" : undefined}
           aria-current={!dispatchOpen && tab === "recent" ? "page" : undefined}
           onClick={() => {
+            const already = !dispatchOpen && tab === "recent";
             setDispatchOpen(false);
             onTabChange("recent");
+            // A second tap on the tab you are already on is the phone's way of
+            // asking to go back to the top; it is not a no-op.
+            if (already) scrollToTop();
           }}
         >
           <StudioIcon name="list" />
@@ -1132,8 +1188,10 @@ export function Home({
           className={!dispatchOpen && tab === "projects" ? "on" : undefined}
           aria-current={!dispatchOpen && tab === "projects" ? "page" : undefined}
           onClick={() => {
+            const already = !dispatchOpen && tab === "projects";
             setDispatchOpen(false);
             onTabChange("projects");
+            if (already) scrollToTop();
           }}
         >
           <StudioIcon name="grid" />
